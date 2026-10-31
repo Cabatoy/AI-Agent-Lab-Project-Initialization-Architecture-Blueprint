@@ -23,23 +23,13 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - Repo, mimari belgeler ve Podman Compose ile çalışan local prototip içeriyor; AWS provisioning veya production deployment yapılmadı.
 - Repo kökündeki `AI-Agent-Lab.sln` üç .NET projesini Visual Studio solution'ında bir araya getiriyor.
 - Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
-- `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi yönlendiriyor; bu iki adımda Chat mesajı göstermekten öte bir şey yapmıyor. `approve-podman` onayından sonra salt okunur Podman durum kontrolünü (`podman --version`, `machine list`, `compose version`, `compose ps`) kendisi çalıştırıyor; sorun bulunursa ve kullanıcı `approve-setup` ile açıkça onaylarsa `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi başlatıyor. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasında `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile de gösterebilir.
+- `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi yönlendiriyor; bu iki adımda Chat mesajı göstermekten öte bir şey yapmıyor. `approve-podman` onayından sonra salt okunur Podman durum kontrolünü (`podman --version`, `podman machine list`, `podman compose version`, `podman compose ps`) kendisi çalıştırıyor; sorun bulunursa ve kullanıcı `approve-setup` ile açıkça onaylarsa `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi başlatıyor. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasında `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile de gösterebilir.
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
 - Worker task detayını Control Plane'den alır, prompt üretir ve opsiyonel model provider üzerinden çağrı yapar. Podman AI Lab için önce `chat/completions`, sonra `completions` fallback'i dener; geçici hatalarda retry uygular.
 - `docker-compose.yml` içinde Worker için `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`, `MODEL_API_KEY`, `MODEL_TIMEOUT_SECONDS` ortam değişkenleri bulunur.
-- `scripts/local.ps1` ve `scripts/local.sh` artık `bootstrap-dev` komutunu destekler. Bu komut stack kurulumunu, AI Lab alias bağlamasını (`ai-lab`), `.env` üretimini ve smoke test'i otomatikler. `-Reset`/`--reset` ile veri silerek temiz başlangıç yapılabilir.
-- Local smoke test'te `task -> approve -> executing -> completed` akışı Podman AI Lab ile doğrulandı; model çıktısı `result` alanına yazıldı.
-
-## Açık Teknik Takip
-
-Önceki local bootstrap incelemesinde aşağıdaki noktalar çözülmeden kaldı; kod değişikliği yapılmadı:
-
-- Compose, Redis için yalnızca `service_started` bekliyor; Control Plane ve Worker başlangıçta Redis bağlantısı kuruyor. Başlangıç readiness davranışı doğrulanmalı.
-- `rebuild-all` ve `delete-all` `--rmi all` kullanıyor; `postgres` ve `redis` gibi paylaşılan upstream image'ların temizleme kapsamı doğrulanmalı.
-- Host portları sabit (`8080`, `5432`, `6379`); port çakışması halinde alternatif port keşfi yok.
-- `run.me` akışının temiz macOS checkout'unda ve yeni kullanıcı ortamında denenmesi gerekiyor.
-- AI Lab container adı/yaşam döngüsü değiştiğinde `ai-lab` alias bağlama adımı için ek görünürlük (ör. status çıktısında alias raporu) değerlendirilmeli.
+- `scripts/local.ps1` ve `scripts/local.sh` `bootstrap-dev` komutunu destekler. Bu komut stack kurulumunu, AI Lab alias bağlamasını (`ai-lab`), `.env` üretimini ve smoke test'i otomatikler. `-Reset`/`--reset` ile veri silerek temiz başlangıç yapılabilir.
+- `bootstrap-dev -Reset` uçtan uca çalıştırılarak sıfırdan local kurulum ve smoke test (`task -> approve -> completed`) doğrulandı.
 
 ## Önerilen Devam Sırası
 
-Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın. Kullanıcı açıkça izin verirse yalnızca salt okunur Podman durum kontrollerini yapın; machine durmuşsa başlatmadan raporlayıp durun. Sorun varsa setup/onarım için ayrı açık onay alıp yalnızca repository lifecycle scriptleriyle ilerleyin. Ardından `.env.example` dosyasını `.env` olarak kopyalayıp `task->approve->result` smoke test'ini çalıştırın. Bu bir öneridir; onaylanmış karar değildir.Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın. Kullanıcı açıkça izin verirse yalnızca salt okunur Podman durum kontrollerini yapın; machine durmuşsa başlatmadan raporlayıp durun. Sorun varsa setup/onarım için ayrı açık onay alıp yalnızca repository lifecycle scriptleriyle ilerleyin. Ardından Podman AI Lab için local `.env` değerlerini doğrulayıp task->approve->result akışını smoke test edin. Bu bir öneridir; onaylanmış karar değildir.
+Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın. Kullanıcı açıkça izin verirse yalnızca salt okunur Podman durum kontrollerini yapın; machine durmuşsa başlatmadan raporlayıp durun. Sorun varsa setup/onarım için ayrı açık onay alıp yalnızca repository lifecycle scriptleriyle ilerleyin. Ardından `bootstrap-dev` komutuyla `.env` ve smoke test otomasyonunu çalıştırın. Bu bir öneridir; onaylanmış karar değildir.
