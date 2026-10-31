@@ -53,6 +53,40 @@ bash ./run.me
 
 İlerleme depo kökündeki `.run-me-state.json` dosyasına kaydedilir ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; sohbet hafızası değildir. `reset`, Podman container'larına, volume'lere veya task kayıtlarına dokunmaz.
 
+## Konsol Çıktısı: Adım ve Cevap Örneği
+
+Aşağıdaki kısa örnek, `run.me` içindeki seçim adımlarını ve Chat'e gönderilen komutlara alınan yanıt türünü gösterir:
+
+1. Konsolda `repo review` yazılır.
+   - **Chat'e gönderilen komut:** `repo review`
+   - **Beklenen cevap özeti:** Repo yapısı, solution/proje listesi ve handoff ile tutarlılık kontrolü.
+2. Konsolda `done` yazılır.
+3. Konsolda `handoff check` yazılır.
+   - **Chat'e gönderilen komut:** `handoff check`
+   - **Beklenen cevap özeti:** `docs/continuation.md` ile mevcut dosyaların karşılaştırması, doğrulanan ve doğrulanmayan noktalar.
+4. Konsolda `approve-podman` yazılır.
+5. Konsolda `podman check` yazılır.
+   - **Chat'e gönderilen komut:** `podman check`
+   - **Beklenen cevap özeti:** `podman --version`, `podman machine list`, `podman compose version`, `podman compose ps` çıktılarının raporu.
+6. Sorun varsa konsolda `approve-setup`, ardından `setup repair` yazılır.
+   - **Chat'e gönderilen komut:** `setup repair`
+   - **Beklenen cevap özeti:** Yalnızca `scripts/local.ps1 new-build` / `scripts/local.sh new-build` sonucu.
+
+## Konsol Çalıştırmadan Doğrudan Chat Kullanımı
+
+`run.me` açmadan da aynı komutları doğrudan Chat mesajı olarak yazabilirsiniz:
+
+- `repo review`
+- `handoff check`
+- `podman check`
+- `setup repair`
+
+Bu kullanımda da aynı onay kapıları geçerlidir:
+
+- `podman check` öncesi açık Podman onayı,
+- `setup repair` öncesi ayrı setup/onarım onayı,
+- veri silen komutlar için (`rebuild-all`, `delete-all`) ayrıca açık onay.
+
 ## Local Task Smoke Test
 
 Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker şu an yalnızca kuyruk/durum smoke test'i yapar; task açıklamasını kullanarak kod üretmez.
