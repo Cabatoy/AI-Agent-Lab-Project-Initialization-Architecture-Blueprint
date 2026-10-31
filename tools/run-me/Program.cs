@@ -2,6 +2,8 @@ using System.Text.Json;
 
 var repositoryRoot = FindRepositoryRoot();
 var statePath = Path.Combine(repositoryRoot, ".run-me-state.json");
+var promptsPath = Path.Combine(repositoryRoot, "tools", "run-me", "prompts.tr.json");
+var prompts = LoadPrompts(promptsPath);
 var state = LoadState(statePath);
 var stopRequested = false;
 
@@ -19,6 +21,7 @@ if (args.Length > 0)
 
 Console.WriteLine("AI Agent Lab | Depo inceleme ve devam rehberi");
 Console.WriteLine("Bu araç komutları gösterir; dosya, Podman veya API işlemlerini kendisi çalıştırmaz.");
+Console.WriteLine("Chat mesajları `tools/run-me/prompts.tr.json` dosyasından okunur.");
 Console.WriteLine("Podman incelemesi için ayrı onay gerekir. Çıkmak için Ctrl+C veya quit kullanın.");
 
 while (!stopRequested)
@@ -39,6 +42,18 @@ while (!stopRequested)
         continue;
     }
 
+    if (TryGetStepNumberCommand(command, out var stepNumber))
+    {
+        PrintStepShortcut(stepNumber, prompts);
+        continue;
+    }
+
+    if (TryGetPromptCommand(command, out var promptKey))
+    {
+        PrintPromptMessage(promptKey, prompts);
+        continue;
+    }
+
     if (command is "help" or "?" or "--help")
     {
         PrintHelp();
@@ -56,7 +71,7 @@ while (!stopRequested)
         break;
     }
 
-    if (command == "approve-podman")
+    if (command is "approve-podman" or "approve podman")
     {
         if (state.CurrentStep != 2)
         {
@@ -71,7 +86,7 @@ while (!stopRequested)
         continue;
     }
 
-    if (command == "approve-setup")
+    if (command is "approve-setup" or "approve setup")
     {
         if (state.CurrentStep != 4)
         {
@@ -118,7 +133,7 @@ while (!stopRequested)
         {
             state = NewState();
             SaveState(statePath, state);
-            Console.WriteLine("Rehber adımları ve Podman inceleme onayı sıfırlandı.");
+            Console.WriteLine("Rehber adımları ve onaylar sıfırlandı.");
         }
 
         continue;
@@ -169,6 +184,22 @@ static WorkflowState LoadState(string statePath)
     return state;
 }
 
+static Dictionary<string, string> LoadPrompts(string promptsPath)
+{
+    if (!File.Exists(promptsPath))
+    {
+        throw new FileNotFoundException($"Prompt dosyası bulunamadı: {promptsPath}");
+    }
+
+    var prompts = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(promptsPath));
+    if (prompts is null || prompts.Count == 0)
+    {
+        throw new InvalidDataException($"Prompt dosyası boş veya geçersiz: {promptsPath}");
+    }
+
+    return prompts;
+}
+
 static WorkflowState NewState() => new() { WorkflowVersion = Workflow.Version };
 
 static void SaveState(string statePath, WorkflowState state)
@@ -193,6 +224,46 @@ static void PrintProgress(WorkflowState state)
     }
 }
 
+static bool TryGetStepNumberCommand(string command, out int stepNumber)
+{
+    stepNumber = 0;
+    var normalized = NormalizeCommand(command);
+
+    if (!normalized.StartsWith("step "))
+    {
+        return false;
+    }
+
+    return int.TryParse(normalized[5..], out stepNumber);
+}
+
+static bool TryGetPromptCommand(string command, out string promptKey)
+{
+    promptKey = string.Empty;
+    var normalized = NormalizeCommand(command);
+
+    return normalized switch
+    {
+        "repo review" => SetPromptKey("repo-review", out promptKey),
+        "handoff check" => SetPromptKey("handoff-check", out promptKey),
+        "podman check" => SetPromptKey("podman-check", out promptKey),
+        "setup repair" => SetPromptKey("setup-repair", out promptKey),
+        _ => false
+    };
+}
+
+static bool SetPromptKey(string key, out string promptKey)
+{
+    promptKey = key;
+    return true;
+}
+
+static string NormalizeCommand(string command)
+{
+    var compact = string.Join(' ', command.Trim().ToLowerInvariant().Replace('ı', 'i').Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    return compact;
+}
+
 static void PrintCurrentStep(WorkflowState state)
 {
     if (state.CurrentStep == Workflow.Steps.Length)
@@ -207,51 +278,80 @@ static void PrintCurrentStep(WorkflowState state)
     switch (state.CurrentStep)
     {
         case 0:
-            Console.WriteLine("Önce Copilot'un projeyi tanımasını sağlayacağız. Henüz hiçbir servis başlatılmayacak.");
-            PrintChatMessage("Bu projeyi yeni açtım. Önce .github/copilot-instructions.md dosyasını, README.md dosyasını ve proje dosyalarını incele. Proje ne yapıyor, eksik veya çelişkili dosya var mı, kısa ve anlaşılır anlat. Sadece dosyaları oku; hiçbir şeyi değiştirme, kurma veya başlatma. Podman, build veya ağ isteği çalıştırma.");
+            Console.WriteLine("Chat'e göndermek için `repo review` yazın.");
             break;
         case 1:
-            Console.WriteLine("Şimdi Copilot'a projede en son nerede kaldığımızı okutacağız.");
-            PrintChatMessage("docs/continuation.md dosyasını oku ve yazılanları mevcut proje dosyalarıyla karşılaştır. Neler tamamlanmış, neler bekliyor ve sırada ne öneriliyor? Kısaca anlat. Henüz değişiklik yapma veya komut çalıştırma; benim kararımı bekle.");
+            Console.WriteLine("Chat'e göndermek için `handoff check` yazın.");
             break;
         case 2:
-            Console.WriteLine("İsterseniz şimdi Podman'ın kurulu olup olmadığını ve servislerin durumunu kontrol ettirebiliriz.");
-            Console.WriteLine("Bu kontrol hiçbir şeyi başlatmaz, durdurmaz, değiştirmez veya silmez.");
-            Console.WriteLine("Bu adımda Chat'e mesaj göndermeniz gerekmiyor; kararınızı bu konsola yazın.");
+            Console.WriteLine("Bu adım onay adımıdır. Devam için `approve-podman` yazın.");
             break;
         case 3:
-            Console.WriteLine("Durum kontrolüne izin verdiniz. Copilot sonucu anlatacak; sonraki işlemi birlikte kararlaştıracağız.");
-            PrintChatMessage("Podman durumunu kontrol etmene izin veriyorum. Yalnızca podman --version, podman machine list, podman compose version ve podman compose ps komutlarını kullan. Podman kurulu değilse veya makine durmuşsa durumu anlatıp dur. Hiçbir şeyi başlatma, durdurma, değiştirme veya silme. scripts/local.ps1 status ve scripts/local.sh status kullanma; bunlar değişiklik yapabilir. Sonucu anlaşılır biçimde özetle ve sonraki işlem için kararımı bekle.");
+            Console.WriteLine("Chat'e göndermek için `podman check` yazın.");
             break;
         case 4:
-            Console.WriteLine("Durum sonucunu gördükten sonra karar verin: sorun yoksa akışı burada kapatın, sorun varsa setup/onarım izni verin.");
-            Console.WriteLine("Bu adımda Chat'e mesaj göndermeniz gerekmiyor; kararınızı bu konsola yazın.");
+            Console.WriteLine("Bu adım karar adımıdır: sorun varsa `approve-setup`, yoksa `done` yazın.");
             break;
         case 5:
-            Console.WriteLine("Setup/onarım izni verdiniz. Copilot yalnızca repository scriptleriyle gerekli işlemi yapacak ve sonucu raporlayacak.");
-            PrintChatMessage("Podman akışında sorun var. Gerekli setup/onarım için izin veriyorum. Yalnızca repository scriptlerini kullan: Windows için ./scripts/local.ps1 new-build, macOS/Linux için ./scripts/local.sh new-build. Windows tarafında user-mode networking değişikliği istenirse etkisini açıkla, ayrı açık onayımı al, sonra -AllowWslNetworkingChange ile yeniden dene. Hiçbir silme komutu çalıştırma. Sonucu anlaşılır biçimde özetle ve sonraki kararım için bekle.");
+            Console.WriteLine("Chat'e göndermek için `setup repair` yazın.");
             break;
     }
 
     if (state.CurrentStep < 2)
     {
-        Console.WriteLine("Copilot'un yanıtını bekleyin ve okuyun.");
-        Console.WriteLine("Sonra BU KONSOLA dönüp done yazın ve Enter'a basın. done komutunu Chat'e göndermeyin.");
+        Console.WriteLine("Copilot'un yanıtını bekleyin ve okuyun. Sonra BU KONSOLA `done` yazın.");
     }
     else if (state.CurrentStep == 2)
     {
-        Console.WriteLine("İzin vermek için BU KONSOLA approve-podman yazıp Enter'a basın.");
-        Console.WriteLine("İstemiyorsanız quit yazın. Bu onay yalnızca durum kontrolü içindir.");
+        Console.WriteLine("Bu onay yalnızca salt okunur durum kontrolü içindir.");
     }
     else if (state.CurrentStep == 4)
     {
-        Console.WriteLine("Sorun varsa BU KONSOLA approve-setup yazıp Enter'a basın.");
-        Console.WriteLine("Sorun yoksa done yazın; akış tamamlanır.");
+        Console.WriteLine("Setup/onarım izni ayrı onay gerektirir.");
     }
     else
     {
-        Console.WriteLine("Copilot'un yanıtını okuyunca BU KONSOLA done yazıp Enter'a basın.");
+        Console.WriteLine("Copilot'un yanıtını okuyunca BU KONSOLA `done` yazın.");
     }
+}
+
+static void PrintStepShortcut(int stepNumber, Dictionary<string, string> prompts)
+{
+    switch (stepNumber)
+    {
+        case 1:
+            PrintPromptMessage("repo-review", prompts);
+            return;
+        case 2:
+            PrintPromptMessage("handoff-check", prompts);
+            return;
+        case 3:
+            Console.WriteLine("Adım 3 onay adımıdır. `approve-podman` yazın.");
+            return;
+        case 4:
+            PrintPromptMessage("podman-check", prompts);
+            return;
+        case 5:
+            Console.WriteLine("Adım 5 karar/onay adımıdır. Sorun varsa `approve-setup`, yoksa `done` yazın.");
+            return;
+        case 6:
+            PrintPromptMessage("setup-repair", prompts);
+            return;
+        default:
+            Console.WriteLine("Geçersiz adım numarası. Kullanım: `step <1-6>`.");
+            return;
+    }
+}
+
+static void PrintPromptMessage(string promptKey, Dictionary<string, string> prompts)
+{
+    if (!prompts.TryGetValue(promptKey, out var message) || string.IsNullOrWhiteSpace(message))
+    {
+        Console.WriteLine($"Prompt tanımı bulunamadı: `{promptKey}`. `tools/run-me/prompts.tr.json` dosyasını kontrol edin.");
+        return;
+    }
+
+    PrintChatMessage(message);
 }
 
 static void PrintChatMessage(string message)
@@ -268,14 +368,19 @@ static void PrintChatMessage(string message)
 static void PrintHelp()
 {
     Console.WriteLine("Komutlar:");
-    Console.WriteLine("  help, ?          Tüm komutları göster");
-    Console.WriteLine("  status            Adımlardaki ilerlemeyi göster");
-    Console.WriteLine("  done              Mevcut depo/sohbet adımını tamamla");
-    Console.WriteLine("  approve-podman    Salt okunur Podman durum kontrolünü onayla");
-    Console.WriteLine("  approve-setup     Sorun varsa setup/onarım komutlarını onayla");
-    Console.WriteLine("  reset             Rehber ilerlemesini sıfırla (onay istenir)");
-    Console.WriteLine("  quit, exit        Kaydedilmiş ilerlemeyle çık");
-    Console.WriteLine("  Ctrl+C            Güvenli biçimde çık; ilerleme korunur");
+    Console.WriteLine("  help, ?            Tüm komutları göster");
+    Console.WriteLine("  status             Adımlardaki ilerlemeyi göster");
+    Console.WriteLine("  step <n>           İstenen adımı doğrudan çağırır (1-6)");
+    Console.WriteLine("  repo review        Proje dosya inceleme promptu");
+    Console.WriteLine("  handoff check      continuation karşılaştırma promptu");
+    Console.WriteLine("  podman check       Salt okunur Podman kontrol promptu");
+    Console.WriteLine("  setup repair       Setup/onarım promptu");
+    Console.WriteLine("  done               Mevcut depo/sohbet adımını tamamla");
+    Console.WriteLine("  approve-podman     Salt okunur Podman durum kontrolünü onayla");
+    Console.WriteLine("  approve-setup      Sorun varsa setup/onarım komutlarını onayla");
+    Console.WriteLine("  reset              Rehber ilerlemesini sıfırla (onay istenir)");
+    Console.WriteLine("  quit, exit         Kaydedilmiş ilerlemeyle çık");
+    Console.WriteLine("  Ctrl+C             Güvenli biçimde çık; ilerleme korunur");
 }
 
 internal sealed class WorkflowState
@@ -288,15 +393,15 @@ internal sealed class WorkflowState
 
 internal static class Workflow
 {
-    public const int Version = 3;
+    public const int Version = 5;
 
     public static readonly string[] Steps =
     [
-        "Copilot'a projeyi tanıt",
-        "Nerede kaldığımızı öğren",
-        "Podman durum kontrolüne izin ver",
-        "Podman durumunu Copilot'a kontrol ettir",
-        "Sorun varsa setup/onarım izni ver",
-        "Setup/onarımı Copilot'a uygulat"
+        "Copilot'a projeyi tanıt (repo review)",
+        "Nerede kaldığımızı öğren (handoff check)",
+        "Podman durum kontrolüne izin ver (approve-podman)",
+        "Podman durumunu Copilot'a kontrol ettir (podman check)",
+        "Sorun varsa setup/onarım izni ver (approve-setup)",
+        "Setup/onarımı Copilot'a uygulat (setup repair)"
     ];
 }

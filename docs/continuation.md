@@ -23,7 +23,7 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - Repo, mimari belgeler ve Podman Compose ile çalışan local prototip içeriyor; AWS provisioning veya production deployment yapılmadı.
 - Repo kökündeki `AI-Agent-Lab.sln` üç .NET projesini Visual Studio solution'ında bir araya getiriyor.
 - Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
-- `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi, son olarak açık onayla salt okunur Podman durum kontrolünü yönlendiriyor. Sorun çıkarsa setup/onarım komutları için ayrı kullanıcı onayı ister. Hiçbir komutu kendileri çalıştırmıyor.
+- `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi, son olarak açık onayla salt okunur Podman durum kontrolünü yönlendiriyor. Sorun çıkarsa setup/onarım komutları için ayrı kullanıcı onayı ister. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasından `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile gösterir. Hiçbir komutu kendileri çalıştırmıyor.
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
 - Worker şu an yalnızca kuyruk ve task durum geçişi smoke test'i yapar; task açıklamasını kullanarak kod üretmez veya gerçek ajan işi yürütmez.
 - Güncel console akışı .NET 8 ile izole output klasörüne derlendi; geçici checkout'ta `approve-podman` kapısı ve start komutu üretmeme davranışı smoke test edildi. Setup/onarım için ayrı onay kapısı eklendi. macOS runtime doğrulaması henüz yapılmadı.
