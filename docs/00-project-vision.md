@@ -24,7 +24,8 @@ Platform, tek bir müşteri uygulamasına gömülü olmayacaktır. İlk müşter
 
 ## Kapsam dışı ve sınırlar
 
-- Bu aşamada platform uygulaması yazılmayacak, araç kurulmayacak ve AWS kaynağı oluşturulmayacaktır.
+- Local Podman prototipi, container yaşam döngüsünü ve ilk task workflow'unu doğrulayan sınırlı bir geliştirme aracıdır; üretim platformu değildir.
+- Kullanıcı açıkça onaylamadıkça AWS kaynağı oluşturulmaz/provision edilmez, ücretli servis başlatılmaz veya deploy yapılmaz.
 - Platform, kişisel bilgisayar, ev ağı veya evde barındırılan servis olmadan çalışabilmelidir.
 - Üretim dağıtımı açık insan onayı gerektirir.
 - Pazaryerinin güvenlik, gizlilik, yaş güvencesi, moderasyon ve yasal uyum ihtiyaçları ilk tasarımdan itibaren ele alınır; ürün kapsamı ve ilgili hukuk alanları ayrıca netleştirilir.

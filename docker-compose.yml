@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentlab-postgres
+    environment:
+      POSTGRES_USER: agentlab
+      POSTGRES_PASSWORD: agentlab
+      POSTGRES_DB: agentlab
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentlab -d agentlab"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentlab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  control-plane:
+    build:
+      context: ./agent-lab/control-plane
+      dockerfile: Dockerfile
+    container_name: agentlab-control-plane
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab
+      ConnectionStrings__Redis: redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  agent-worker:
+    build:
+      context: ./agent-lab/agent-worker
+      dockerfile: Dockerfile
+    container_name: agentlab-worker
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      CONTROL_PLANE_URL: http://control-plane:8080
+      ConnectionStrings__Redis: redis:6379
+      TASK_QUEUE_KEY: agentlab:task-queue
+    depends_on:
+      - control-plane
+      - redis
+
+volumes:
+  postgres-data:
+  redis-data:

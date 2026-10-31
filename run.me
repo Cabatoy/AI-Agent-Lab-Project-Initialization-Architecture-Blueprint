@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if ! command -v dotnet >/dev/null 2>&1; then
+  echo 'The .NET 8 SDK is required. Install it, then rerun this launcher.' >&2
+  exit 1
+fi
+
+cd "$repository_root"
+exec dotnet run --project "$repository_root/tools/run-me/RunMe.csproj" -- "$@"
