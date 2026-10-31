@@ -26,6 +26,7 @@ AI Agent Lab, birden fazla bağımsız yazılım projesini yapay zekâ ajanları
 - Windows ve macOS katkısını ve taşınabilir göreli bağlantıları gözet.
 - Local container runtime kararı Podman'dır; Docker yalnızca Podman Compose'un kullandığı uyumlu Compose sağlayıcısı olarak görünebilir.
 - `scripts/local.ps1` ve `scripts/local.sh` local stack lifecycle komutlarının tek kaynağıdır. Komut anlamını README ve scriptlerle birlikte güncelle.
+- `run.me` ve `run.me.ps1` yalnızca Copilot Chat için adım adım rehberlik eder; Podman/API işlemlerini kendileri çalıştırmaz. Lifecycle davranışını bu launcher'lara kopyalama.
 - `rebuild-all` ve `delete-all` kalıcı local volume verisini siler. İşlemi çalıştırmadan önce veri etkisini belirt ve açık onay al; scriptin confirmation bayrağını atlama.
 - Windows user-mode networking ayarı diğer WSL dağıtımlarının ağını etkileyebilir. `-AllowWslNetworkingChange` bayrağını yalnızca etkisini açıklayıp açık onay aldıktan sonra kullan.
 - Local Podman machine, Podman AI Lab veya geliştirici cihazı cloud çalışma zamanı için zorunlu bağımlılığa dönüşmemelidir. AI Lab henüz Worker'a entegre değildir.

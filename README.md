@@ -17,6 +17,7 @@ Depo, mimari belgelerin yanında Podman ile çalıştırılabilen bir local prot
 - [Mimari taslak](docs/04-architecture-blueprint.md)
 - [Uygulama yol haritası](docs/05-implementation-roadmap.md)
 - [Maliyet ve altyapı](docs/06-cost-and-infrastructure.md)
+- [Local Copilot akış rehberi](docs/local-onboarding.md)
 - [Mimari karar kayıtları](docs/decisions/README.md)
 
 Gelecekteki AI coding oturumlarının proje bağlamı için [.github/copilot-instructions.md](.github/copilot-instructions.md) dosyasına bakın.
@@ -48,15 +49,17 @@ Servisler:
 - `postgres` -> `localhost:5432`
 - `redis` -> `localhost:6379`
 
-İlk akış testi, Chat'teki `/new-build` promptuyla başlatılabilir. İstekleri elle denemek için:
+Adım adım Copilot task smoke test'i için depo kökünde Windows'ta `./run.me.ps1`, macOS/Linux'ta `bash ./run.me` çalıştırın. Rehber ve komutlar için [local onboarding](docs/local-onboarding.md) sayfasına bakın. Elle denemelerde Control Plane adresi olarak lifecycle scriptinin yazdırdığı adresi kullanın; Windows/WSL'de bu adres `localhost` yerine Podman machine IP'si olabilir.
+
+İstekleri elle denemek için:
 
 1. Task oluştur:
-   - `POST http://localhost:8080/tasks`
+   - `POST <CONTROL_PLANE_URL>/tasks`
    - Body: `{ "title": "İlk görev", "description": "Local workflow testi" }`
 2. Task onayla (kuyruğa girer):
-   - `POST http://localhost:8080/tasks/{taskId}/approve`
+   - `POST <CONTROL_PLANE_URL>/tasks/{taskId}/approve`
 3. Task durumlarını izle:
-   - `GET http://localhost:8080/tasks`
+   - `GET <CONTROL_PLANE_URL>/tasks/{taskId}`
 
 Task durumu sırası: `Draft -> Approved -> Executing -> Completed`.
 
