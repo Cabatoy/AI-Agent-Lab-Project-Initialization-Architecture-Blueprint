@@ -52,6 +52,11 @@ services:
       CONTROL_PLANE_URL: http://control-plane:8080
       ConnectionStrings__Redis: redis:6379
       TASK_QUEUE_KEY: agentlab:task-queue
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-disabled}
+      MODEL_ENDPOINT: ${MODEL_ENDPOINT:-}
+      MODEL_NAME: ${MODEL_NAME:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
     depends_on:
       - control-plane
       - redis
