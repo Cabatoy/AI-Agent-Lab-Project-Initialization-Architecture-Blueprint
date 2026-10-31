@@ -78,11 +78,25 @@ Servisler:
 3. Task durumlarını izle:
    - `GET <CONTROL_PLANE_URL>/tasks/{taskId}`
 
-Task durumu sırası: `Draft -> Approved -> Executing -> Completed`.
+Task durumu sırası: `Draft -> Approved -> Executing -> Completed`. Hata durumunda `Failed` aşamasına da geçilebilir.
 
 Durdurma:
 
 - `podman compose down` container'ları durdurur ama PostgreSQL/Redis volume verilerini korur.
+
+## Local model provider (opsiyonel)
+
+Worker, model çağrısı için opsiyonel bir provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz. Podman AI Lab gibi OpenAI-uyumlu local endpoint ile deneme yapmak için repo kökünde kişisel bir `.env` dosyası kullanın:
+
+```env
+MODEL_PROVIDER=podman-ai-lab
+MODEL_ENDPOINT=http://host.containers.internal:11434
+MODEL_NAME=<local-model-name>
+MODEL_API_KEY=
+MODEL_TIMEOUT_SECONDS=30
+```
+
+Ardından stack'i `new-build` ile başlatıp task akışını test edin. `.env` içindeki kişisel/secret değerleri paylaşmayın.
 
 ## Chat komutları
 
@@ -97,4 +111,4 @@ VS Code Chat'te `/new-build`, `/local-status`, `/rebuild-all` veya `/delete-all`
 
 > **WSL ağ uyarısı:** Windows `new-build`/`rebuild-all`, user-mode networking ayarını yalnızca `-AllowWslNetworkingChange` verildiğinde etkinleştirir. Bu ayar aktif Podman machine varken diğer WSL dağıtımlarının ağını da etkileyebilir.
 
-Local komutlar AWS hesabına bağlanmaz veya cloud kaynağı oluşturmaz. Podman AI Lab ile local model denemesi isteğe bağlıdır; henüz Worker'a model sağlayıcısı entegre edilmemiştir.
+Local komutlar AWS hesabına bağlanmaz veya cloud kaynağı oluşturmaz. Podman AI Lab ile local model denemesi isteğe bağlıdır; Worker'daki provider katmanı yalnızca local prototip denemesi içindir ve production sağlayıcı kararı değildir.

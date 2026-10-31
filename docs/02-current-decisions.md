@@ -38,7 +38,7 @@ Bu kayıt yalnızca brief'te açıkça kesinleşmiş kararları içerir. “Öne
 
 ## Henüz karar olmayan teknoloji adayları
 
-ASP.NET Core/.NET, PostgreSQL, Entity Framework Core, SignalR, Next.js/TypeScript, Redis, S3, Terraform, ECS/Fargate, LangGraph, Semantic Kernel ve Temporal adaydır. Podman yalnızca local prototip için kesinleşmiştir; cloud container platformu kararı değildir. Podman AI Lab local model deneyi için opsiyoneldir ve Worker'a entegre edilmiş değildir.
+ASP.NET Core/.NET, PostgreSQL, Entity Framework Core, SignalR, Next.js/TypeScript, Redis, S3, Terraform, ECS/Fargate, LangGraph, Semantic Kernel ve Temporal adaydır. Podman yalnızca local prototip için kesinleşmiştir; cloud container platformu kararı değildir. Podman AI Lab local model deneyi için opsiyoneldir; Worker'da opsiyonel provider iskeleti bulunur ancak production model/runtime kararı değildir.
 
 ## Karar kayıt kuralı
 

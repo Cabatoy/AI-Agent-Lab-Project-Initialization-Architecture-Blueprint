@@ -25,7 +25,8 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
 - `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi yönlendiriyor; bu iki adımda Chat mesajı göstermekten öte bir şey yapmıyor. `approve-podman` onayından sonra salt okunur Podman durum kontrolünü (`podman --version`, `machine list`, `compose version`, `compose ps`) kendisi çalıştırıyor; sorun bulunursa ve kullanıcı `approve-setup` ile açıkça onaylarsa `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi başlatıyor. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasından `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile de gösterebilir.
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
-- Worker şu an yalnızca kuyruk ve task durum geçişi smoke test'i yapar; task açıklamasını kullanarak kod üretmez veya gerçek ajan işi yürütmez.
+- Worker artık task detayını Control Plane'den alır, prompt üretir ve model çağrısını opsiyonel provider katmanı üzerinden dener. Varsayılan provider `disabled` durumundadır; `MODEL_PROVIDER=podman-ai-lab` ve ilgili `MODEL_*` ayarları verilirse OpenAI-uyumlu endpoint'e istek atar.
+- `docker-compose.yml` içinde Worker için `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`, `MODEL_API_KEY`, `MODEL_TIMEOUT_SECONDS` ortam değişkenleri eklendi. Model entegrasyonu local prototip denemesidir; production sağlayıcısı kararı değildir.
 - Güncel console akışı .NET 8 ile izole output klasörüne derlendi; geçici checkout'ta `approve-podman` kapısı ve start komutu üretmeme davranışı smoke test edildi. Setup/onarım için ayrı onay kapısı eklendi. macOS runtime doğrulaması henüz yapılmadı.
 
 ## Açık Teknik Takip
@@ -37,7 +38,9 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - `rebuild-all` ve `delete-all` `--rmi all` kullanıyor; `postgres` ve `redis` gibi paylaşılan upstream image'ların temizleme kapsamı doğrulanmalı.
 - Host portları sabit (`8080`, `5432`, `6379`); port çakışması halinde alternatif port keşfi yok.
 - `run.me` akışının temiz macOS checkout'unda ve yeni kullanıcı ortamında denenmesi gerekiyor.
+- `.env` dosyası örnek değerlerle repoya eklendi. Sonraki adımda kişisel değerleri repodan ayırmak için `.env.example` + `.gitignore` düzeniyle ilerlenmeli.
+- Podman AI Lab endpoint doğrulaması (container içinden erişim, model adı ve timeout) her geliştirici makinesinde smoke test ile teyit edilmeli.
 
 ## Önerilen Devam Sırası
 
-Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın. Kullanıcı açıkça izin verirse yalnızca salt okunur Podman durum kontrollerini yapın; machine durmuşsa başlatmadan raporlayıp durun. Sorun varsa setup/onarım için ayrı açık onay alıp yalnızca repository lifecycle scriptleriyle ilerleyin. Sonraki kapsamı sonuçları kullanıcıyla konuştuktan sonra belirleyin. Bu bir öneridir; onaylanmış karar değildir.
+Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın. Kullanıcı açıkça izin verirse yalnızca salt okunur Podman durum kontrollerini yapın; machine durmuşsa başlatmadan raporlayıp durun. Sorun varsa setup/onarım için ayrı açık onay alıp yalnızca repository lifecycle scriptleriyle ilerleyin. Ardından Podman AI Lab için local `.env` değerlerini doğrulayıp task->approve->result akışını smoke test edin. Bu bir öneridir; onaylanmış karar değildir.

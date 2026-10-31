@@ -89,7 +89,7 @@ Bu kullanımda da aynı onay kapıları geçerlidir:
 
 ## Local Task Smoke Test
 
-Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker şu an yalnızca kuyruk/durum smoke test'i yapar; task açıklamasını kullanarak kod üretmez.
+Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker kuyruk/durum akışını sürdürür; opsiyonel model provider ayarları (`MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`) verilirse task açıklamasından prompt üretip model sonucunu `result` alanına yazmayı dener.
 
 ## Örnek run.me Oturumu
 
