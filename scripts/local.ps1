@@ -105,6 +105,49 @@ function Get-ApiBaseUrl {
     return $candidates[-1]
 }
 
+function Get-AiLabContainerName {
+    $containers = & podman ps --format '{{.Names}} {{.Image}}' 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $containers) {
+        return $null
+    }
+
+    $candidate = $containers |
+        Where-Object { $_ -match 'podman-ai-lab|llama-stack|instructlab|llama\.cpp' } |
+        Select-Object -First 1
+
+    if (-not $candidate) {
+        return $null
+    }
+
+    return ($candidate -split '\s+')[0]
+}
+
+function Connect-AiLabAlias {
+    param(
+        [string]$NetworkName = 'enterprise_default',
+        [string]$Alias = 'ai-lab'
+    )
+
+    $aiLabContainerName = Get-AiLabContainerName
+    if (-not $aiLabContainerName) {
+        return
+    }
+
+    $connectOutput = & podman network connect --alias $Alias $NetworkName $aiLabContainerName 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "AI Lab alias is ready: http://$Alias:8000"
+        return
+    }
+
+    $outputText = ($connectOutput -join [Environment]::NewLine)
+    if ($outputText -match 'already exists|already connected|is already connected|name already in use') {
+        Write-Host "AI Lab alias already attached: http://$Alias:8000"
+        return
+    }
+
+    Write-Warning "AI Lab alias attach skipped: $outputText"
+}
+
 if (($Action -eq 'rebuild-all' -or $Action -eq 'delete-all') -and -not $ConfirmDataRemoval) {
     throw 'This operation removes local task data. Rerun with -ConfirmDataRemoval after confirming.'
 }
@@ -120,6 +163,7 @@ try {
         'new-build' {
             Invoke-Compose @('down', '--remove-orphans')
             Invoke-Compose @('up', '-d', '--build')
+            Connect-AiLabAlias
             $apiBaseUrl = Get-ApiBaseUrl
             Write-Host "Control Plane: $apiBaseUrl"
             Write-Host 'Task data is preserved.'
@@ -128,6 +172,7 @@ try {
             Invoke-Compose @('down', '--remove-orphans', '--rmi', 'all', '--volumes')
             Invoke-Compose @('build', '--no-cache')
             Invoke-Compose @('up', '-d')
+            Connect-AiLabAlias
             Write-Host "Control Plane: $(Get-ApiBaseUrl)"
             Write-Host 'Local task data was removed and all project images were rebuilt without cache.'
         }

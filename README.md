@@ -86,15 +86,17 @@ Durdurma:
 
 ## Local model provider (opsiyonel)
 
-Worker, model çağrısı için opsiyonel bir provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz. Podman AI Lab gibi OpenAI-uyumlu local endpoint ile deneme yapmak için repo kökünde kişisel bir `.env` dosyası kullanın:
+Worker, model çağrısı için opsiyonel bir provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz. Podman AI Lab gibi OpenAI-uyumlu local endpoint ile deneme yapmak için `.env.example` dosyasını `.env` olarak kopyalayıp kişisel değerleri düzenleyin:
 
 ```env
 MODEL_PROVIDER=podman-ai-lab
-MODEL_ENDPOINT=http://host.containers.internal:11434
-MODEL_NAME=<local-model-name>
+MODEL_ENDPOINT=http://ai-lab:8000
+MODEL_NAME=/models/hf.ibm-granite.granite-8b-code-instruct
 MODEL_API_KEY=
-MODEL_TIMEOUT_SECONDS=30
+MODEL_TIMEOUT_SECONDS=180
 ```
+
+`new-build` ve `rebuild-all` komutları, Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias'ı ile bağlamayı dener. Böylece rastgele container adlarına bağımlılık azaltılır. Worker model çağrısında önce `chat/completions`, ardından `completions` fallback'i dener; geçici hatalarda kısa retry uygular.
 
 Ardından stack'i `new-build` ile başlatıp task akışını test edin. `.env` içindeki kişisel/secret değerleri paylaşmayın.
 

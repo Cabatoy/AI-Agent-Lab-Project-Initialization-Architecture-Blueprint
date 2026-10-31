@@ -63,16 +63,47 @@ get_api_base_url() {
   printf '%s' "$candidate"
 }
 
+get_ai_lab_container_name() {
+  podman ps --format '{{.Names}} {{.Image}}' \
+    | awk 'BEGIN{IGNORECASE=1} /podman-ai-lab|llama-stack|instructlab|llama\.cpp/ { print $1; exit }'
+}
+
+connect_ai_lab_alias() {
+  local network_name='enterprise_default'
+  local alias_name='ai-lab'
+  local container_name
+  local connect_output
+
+  container_name="$(get_ai_lab_container_name || true)"
+  if [[ -z "$container_name" ]]; then
+    return
+  fi
+
+  if connect_output="$(podman network connect --alias "$alias_name" "$network_name" "$container_name" 2>&1)"; then
+    printf 'AI Lab alias is ready: http://%s:8000\n' "$alias_name"
+    return
+  fi
+
+  if [[ "$connect_output" == *"already exists"* || "$connect_output" == *"already connected"* || "$connect_output" == *"name already in use"* ]]; then
+    printf 'AI Lab alias already attached: http://%s:8000\n' "$alias_name"
+    return
+  fi
+
+  printf 'AI Lab alias attach skipped: %s\n' "$connect_output" >&2
+}
+
 case "$action" in
   new-build)
     podman compose down --remove-orphans
     podman compose up -d --build
+    connect_ai_lab_alias
     printf 'Control Plane: %s\nTask data is preserved.\n' "$(get_api_base_url)"
     ;;
   rebuild-all)
     podman compose down --remove-orphans --rmi all --volumes
     podman compose build --no-cache
     podman compose up -d
+    connect_ai_lab_alias
     printf 'Control Plane: %s\nLocal task data was removed and all project images were rebuilt without cache.\n' "$(get_api_base_url)"
     ;;
   delete-all)

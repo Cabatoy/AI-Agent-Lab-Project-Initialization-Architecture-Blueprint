@@ -89,7 +89,7 @@ Bu kullanımda da aynı onay kapıları geçerlidir:
 
 ## Local Task Smoke Test
 
-Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker kuyruk/durum akışını sürdürür; opsiyonel model provider ayarları (`MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`) verilirse task açıklamasından prompt üretip model sonucunu `result` alanına yazmayı dener.
+Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker kuyruk/durum akışını sürdürür; opsiyonel model provider ayarları (`MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`) verilirse task açıklamasından prompt üretip model sonucunu `result` alanına yazar. `new-build`/`rebuild-all` Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias bağlamayı dener, bu yüzden `.env` içinde `MODEL_ENDPOINT=http://ai-lab:8000` tercih edilir.
 
 ## Örnek run.me Oturumu
 

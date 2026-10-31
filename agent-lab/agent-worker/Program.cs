@@ -48,6 +48,7 @@ internal sealed class Worker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            Guid? currentTaskId = null;
             try
             {
                 var taskIdValue = await redisDb.ListLeftPopAsync(_queueKey);
@@ -63,6 +64,9 @@ internal sealed class Worker : BackgroundService
                     continue;
                 }
 
+                currentTaskId = taskId;
+                _logger.LogInformation("Task dequeued: {TaskId}", taskId);
+
                 await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1, null, null, stoppingToken);
 
                 var taskPayload = await GetTaskAsync(http, taskId, stoppingToken);
@@ -73,15 +77,30 @@ internal sealed class Worker : BackgroundService
                 }
 
                 var prompt = BuildPrompt(taskPayload.Title, taskPayload.Description);
-                var modelResult = await _modelClient.GenerateAsync(prompt, stoppingToken);
+                var modelExecution = await GenerateWithRetryAsync(prompt, stoppingToken);
 
-                if (!modelResult.Success)
+                if (!modelExecution.Result.Success)
                 {
-                    await UpdateStatusAsync(http, taskId, TaskStatuses.Failed, 1, null, modelResult.ErrorMessage ?? "Model call failed.", stoppingToken);
+                    await UpdateStatusAsync(
+                        http,
+                        taskId,
+                        TaskStatuses.Failed,
+                        modelExecution.AttemptCount,
+                        null,
+                        modelExecution.Result.ErrorMessage ?? "Model call failed.",
+                        stoppingToken);
                     continue;
                 }
 
-                await UpdateStatusAsync(http, taskId, TaskStatuses.Completed, 1, modelResult.Content, null, stoppingToken);
+                await UpdateStatusAsync(
+                    http,
+                    taskId,
+                    TaskStatuses.Completed,
+                    modelExecution.AttemptCount,
+                    modelExecution.Result.Content,
+                    null,
+                    stoppingToken);
+
                 _logger.LogInformation("Task processed: {TaskId}", taskId);
             }
             catch (OperationCanceledException)
@@ -91,9 +110,47 @@ internal sealed class Worker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Worker loop error");
+
+                if (currentTaskId.HasValue)
+                {
+                    try
+                    {
+                        await UpdateStatusAsync(http, currentTaskId.Value, TaskStatuses.Failed, 1, null, ex.Message, stoppingToken);
+                    }
+                    catch (Exception statusEx)
+                    {
+                        _logger.LogWarning(statusEx, "Failed to update task status after worker exception. TaskId={TaskId}", currentTaskId.Value);
+                    }
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    private async Task<ModelExecutionResult> GenerateWithRetryAsync(string prompt, CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 3;
+        ModelResult? lastFailure = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var result = await _modelClient.GenerateAsync(prompt, cancellationToken);
+            if (result.Success)
+            {
+                return new ModelExecutionResult(result, attempt);
+            }
+
+            lastFailure = result;
+            _logger.LogWarning("Model attempt {Attempt}/{MaxAttempts} failed: {Error}", attempt, maxAttempts, result.ErrorMessage);
+
+            if (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken);
+            }
+        }
+
+        return new ModelExecutionResult(lastFailure ?? ModelResult.Fail("Model call failed."), maxAttempts);
     }
 
     private async Task UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken)
@@ -195,35 +252,87 @@ internal sealed class PodmanAiLabModelClient : IModelClient
 
     public async Task<ModelResult> GenerateAsync(string prompt, CancellationToken cancellationToken)
     {
-        var payload = JsonSerializer.Serialize(new
+        var chatPayload = JsonSerializer.Serialize(new
         {
             model = _model,
             messages = new[]
             {
                 new { role = "user", content = prompt }
             },
-            temperature = 0.2
+            temperature = 0.2,
+            stream = false,
+            max_tokens = 256
         });
 
-        using var request = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync("/v1/chat/completions", request, cancellationToken);
+        var chatResult = await SendAndParseAsync("/v1/chat/completions", chatPayload, cancellationToken);
+        if (chatResult.Success)
+        {
+            return chatResult;
+        }
+
+        var completionPayload = JsonSerializer.Serialize(new
+        {
+            model = _model,
+            prompt,
+            temperature = 0.2,
+            stream = false,
+            max_tokens = 256
+        });
+
+        var completionResult = await SendAndParseAsync("/v1/completions", completionPayload, cancellationToken);
+        if (completionResult.Success)
+        {
+            return completionResult;
+        }
+
+        return ModelResult.Fail($"Chat fallback failed: {chatResult.ErrorMessage} | Completion fallback failed: {completionResult.ErrorMessage}");
+    }
+
+    private async Task<ModelResult> SendAndParseAsync(string route, string jsonPayload, CancellationToken cancellationToken)
+    {
+        using var request = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+        using var response = await _httpClient.PostAsync(route, request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
         if (!response.IsSuccessStatusCode)
         {
-            return ModelResult.Fail($"Model endpoint failed with {(int)response.StatusCode}.");
+            return ModelResult.Fail($"{route} returned {(int)response.StatusCode}: {responseBody}");
         }
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-
+        using var document = JsonDocument.Parse(responseBody);
         if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
         {
-            return ModelResult.Fail("Model response has no choices.");
+            return ModelResult.Fail($"{route} returned no choices.");
         }
 
-        var content = choices[0].GetProperty("message").GetProperty("content").GetString();
+        var content = ExtractContent(choices[0]);
         return string.IsNullOrWhiteSpace(content)
-            ? ModelResult.Fail("Model returned empty content.")
-            : ModelResult.Ok(content);
+            ? ModelResult.Fail($"{route} returned empty content.")
+            : ModelResult.Ok(content.Trim());
+    }
+
+    private static string? ExtractContent(JsonElement firstChoice)
+    {
+        if (firstChoice.TryGetProperty("text", out var textElement))
+        {
+            var text = textElement.GetString();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        if (firstChoice.TryGetProperty("message", out var messageElement)
+            && messageElement.TryGetProperty("content", out var messageContentElement))
+        {
+            var messageContent = messageContentElement.GetString();
+            if (!string.IsNullOrWhiteSpace(messageContent))
+            {
+                return messageContent;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -248,3 +357,5 @@ internal static class TaskStatuses
     public const string Completed = "Completed";
     public const string Failed = "Failed";
 }
+
+internal sealed record ModelExecutionResult(ModelResult Result, int AttemptCount);

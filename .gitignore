@@ -3,3 +3,5 @@
 **/obj/
 .run-me-state.json
 .fake
+.env
+task.json
