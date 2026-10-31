@@ -2,3 +2,4 @@
 **/bin/
 **/obj/
 .run-me-state.json
+.fake

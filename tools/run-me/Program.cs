@@ -71,11 +71,33 @@ while (!stopRequested)
         continue;
     }
 
+    if (command == "approve-setup")
+    {
+        if (state.CurrentStep != 4)
+        {
+            Console.WriteLine("Bu onay yalnızca Podman setup/onarım adımında kullanılabilir.");
+            continue;
+        }
+
+        state.PodmanSetupApproved = true;
+        state.CurrentStep++;
+        SaveState(statePath, state);
+        Console.WriteLine("Podman setup/onarım komutlarını çalıştırma izni verildi.");
+        continue;
+    }
+
     if (command == "done")
     {
         if (state.CurrentStep == 2)
         {
             Console.WriteLine("Podman komutlarını göstermeden önce `approve-podman` yazıp salt okunur incelemeyi onaylayın.");
+            continue;
+        }
+
+        if (state.CurrentStep == 4 && !state.PodmanSetupApproved)
+        {
+            state.CurrentStep = Workflow.Steps.Length;
+            SaveState(statePath, state);
             continue;
         }
 
@@ -138,7 +160,8 @@ static WorkflowState LoadState(string statePath)
     }
 
     if (state.CurrentStep < 0 || state.CurrentStep > Workflow.Steps.Length ||
-        (state.CurrentStep >= 3 && !state.PodmanInspectionApproved))
+        (state.CurrentStep >= 3 && !state.PodmanInspectionApproved) ||
+        (state.CurrentStep >= 5 && !state.PodmanSetupApproved))
     {
         throw new InvalidDataException($"İlerleme dosyası geçersiz: {statePath}. Dosyayı düzeltin veya silip yeni akış başlatın.");
     }
@@ -200,6 +223,14 @@ static void PrintCurrentStep(WorkflowState state)
             Console.WriteLine("Durum kontrolüne izin verdiniz. Copilot sonucu anlatacak; sonraki işlemi birlikte kararlaştıracağız.");
             PrintChatMessage("Podman durumunu kontrol etmene izin veriyorum. Yalnızca podman --version, podman machine list, podman compose version ve podman compose ps komutlarını kullan. Podman kurulu değilse veya makine durmuşsa durumu anlatıp dur. Hiçbir şeyi başlatma, durdurma, değiştirme veya silme. scripts/local.ps1 status ve scripts/local.sh status kullanma; bunlar değişiklik yapabilir. Sonucu anlaşılır biçimde özetle ve sonraki işlem için kararımı bekle.");
             break;
+        case 4:
+            Console.WriteLine("Durum sonucunu gördükten sonra karar verin: sorun yoksa akışı burada kapatın, sorun varsa setup/onarım izni verin.");
+            Console.WriteLine("Bu adımda Chat'e mesaj göndermeniz gerekmiyor; kararınızı bu konsola yazın.");
+            break;
+        case 5:
+            Console.WriteLine("Setup/onarım izni verdiniz. Copilot yalnızca repository scriptleriyle gerekli işlemi yapacak ve sonucu raporlayacak.");
+            PrintChatMessage("Podman akışında sorun var. Gerekli setup/onarım için izin veriyorum. Yalnızca repository scriptlerini kullan: Windows için ./scripts/local.ps1 new-build, macOS/Linux için ./scripts/local.sh new-build. Windows tarafında user-mode networking değişikliği istenirse etkisini açıkla, ayrı açık onayımı al, sonra -AllowWslNetworkingChange ile yeniden dene. Hiçbir silme komutu çalıştırma. Sonucu anlaşılır biçimde özetle ve sonraki kararım için bekle.");
+            break;
     }
 
     if (state.CurrentStep < 2)
@@ -211,6 +242,11 @@ static void PrintCurrentStep(WorkflowState state)
     {
         Console.WriteLine("İzin vermek için BU KONSOLA approve-podman yazıp Enter'a basın.");
         Console.WriteLine("İstemiyorsanız quit yazın. Bu onay yalnızca durum kontrolü içindir.");
+    }
+    else if (state.CurrentStep == 4)
+    {
+        Console.WriteLine("Sorun varsa BU KONSOLA approve-setup yazıp Enter'a basın.");
+        Console.WriteLine("Sorun yoksa done yazın; akış tamamlanır.");
     }
     else
     {
@@ -236,6 +272,7 @@ static void PrintHelp()
     Console.WriteLine("  status            Adımlardaki ilerlemeyi göster");
     Console.WriteLine("  done              Mevcut depo/sohbet adımını tamamla");
     Console.WriteLine("  approve-podman    Salt okunur Podman durum kontrolünü onayla");
+    Console.WriteLine("  approve-setup     Sorun varsa setup/onarım komutlarını onayla");
     Console.WriteLine("  reset             Rehber ilerlemesini sıfırla (onay istenir)");
     Console.WriteLine("  quit, exit        Kaydedilmiş ilerlemeyle çık");
     Console.WriteLine("  Ctrl+C            Güvenli biçimde çık; ilerleme korunur");
@@ -246,17 +283,20 @@ internal sealed class WorkflowState
     public int WorkflowVersion { get; set; }
     public int CurrentStep { get; set; }
     public bool PodmanInspectionApproved { get; set; }
+    public bool PodmanSetupApproved { get; set; }
 }
 
 internal static class Workflow
 {
-    public const int Version = 2;
+    public const int Version = 3;
 
     public static readonly string[] Steps =
     [
         "Copilot'a projeyi tanıt",
         "Nerede kaldığımızı öğren",
         "Podman durum kontrolüne izin ver",
-        "Podman durumunu Copilot'a kontrol ettir"
+        "Podman durumunu Copilot'a kontrol ettir",
+        "Sorun varsa setup/onarım izni ver",
+        "Setup/onarımı Copilot'a uygulat"
     ];
 }

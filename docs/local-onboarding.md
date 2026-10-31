@@ -29,7 +29,9 @@ bash ./run.me
 2. **Sohbeti kaldığı yerden sürdür:** İkinci istek `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını karşılaştırıp güncel repo durumunu ve sıradaki noktayı özetletir. Handoff öneridir; onaylanmış karar değildir. Dosya değişikliği veya Podman işlemi yapılmaz. Sonucu gördükten sonra `done` yazın.
 3. **Podman incelemesine izin ver:** Rehber `approve-podman` yazmanızı ister. Bu onay yalnızca durum komutlarının gösterilmesine/çalıştırılmasına izin verir; machine başlatma, ayar değiştirme, build, container başlatma, volume silme veya prune izni değildir. İzin vermiyorsanız `quit` veya `Ctrl+C` ile çıkın.
 4. **Salt okunur durumu kontrol et:** Copilot'a yalnızca `podman --version`, `podman machine list`, `podman compose version` ve `podman compose ps` komutlarını çalıştırmasını söyleyin. Machine durmuşsa başlatmayın; sonucu raporlayıp durun. `scripts/local.ps1 status` machine başlatabileceği için bu kontrolde kullanmayın.
-5. **Sonuçları konuşun:** Kontrol sonuçlarını Copilot sohbetine verin. Stack başlatma, `new-build`, ayar değişikliği veya başka bir işe başlamadan önce ayrı kapsam ve açık onay alın. Bu rehber otomatik olarak sonraki işlemi başlatmaz.
+5. **Sonucu değerlendir ve karar ver:** Sorun yoksa akışı `done` ile tamamlayın. Sorun varsa run.me konsolunda `approve-setup` yazarak yalnızca gerekli setup/onarım komutlarına ayrı açık onay verin.
+6. **Onaylı setup/onarım uygula:** `approve-setup` sonrası Copilot'a yalnızca repository scriptleriyle işlem yaptırın (`./scripts/local.ps1 new-build` veya `./scripts/local.sh new-build`). Windows'ta user-mode networking değişikliği gerekirse etkiyi ayrıca açıklatın ve ayrı açık onay verin; onaysız ağ ayarı değişikliği yaptırmayın.
+7. **Sonuçları konuşun:** Setup/onarım sonucunu Copilot'tan özetletin. `rebuild-all` veya `delete-all` gibi veri silen işlemlere geçmeden önce kapsamı ayrıca onaylayın.
 
 ## Rehber Komutları
 
@@ -39,6 +41,7 @@ bash ./run.me
 | `status` | Adım ilerlemesini gösterir |
 | `done` | Dosya/sohbet adımını tamamlayıp ilerler |
 | `approve-podman` | Yalnızca salt okunur Podman durum kontrolüne izin verir |
+| `approve-setup` | Sorun varsa setup/onarım komutlarına ayrı açık onay verir |
 | `reset` | Onay alarak yalnızca rehber ilerlemesini sıfırlar |
 | `quit` veya `exit` | Kaydedilmiş ilerlemeyle çıkar |
 | `Ctrl+C` | Güvenli biçimde çıkar; ilerleme korunur |
