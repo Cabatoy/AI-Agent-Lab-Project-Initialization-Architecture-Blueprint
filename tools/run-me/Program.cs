@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 
 var repositoryRoot = FindRepositoryRoot();
@@ -20,9 +22,9 @@ if (args.Length > 0)
 }
 
 Console.WriteLine("AI Agent Lab | Depo inceleme ve devam rehberi");
-Console.WriteLine("Bu araç komutları gösterir; dosya, Podman veya API işlemlerini kendisi çalıştırmaz.");
+Console.WriteLine("Dosya/handoff adımları yalnızca Chat mesajı gösterir; onaylandıktan sonra Podman durum kontrolü ve gerekirse setup/onarım bu araç tarafından çalıştırılır.");
 Console.WriteLine("Chat mesajları `tools/run-me/prompts.tr.json` dosyasından okunur.");
-Console.WriteLine("Podman incelemesi için ayrı onay gerekir. Çıkmak için Ctrl+C veya quit kullanın.");
+Console.WriteLine("Podman incelemesi ve setup/onarım için ayrı açık onay gerekir. Çıkmak için Ctrl+C veya quit kullanın.");
 
 while (!stopRequested)
 {
@@ -82,7 +84,18 @@ while (!stopRequested)
         state.PodmanInspectionApproved = true;
         state.CurrentStep++;
         SaveState(statePath, state);
-        Console.WriteLine("Salt okunur Podman incelemesine izin verildi. Başlatma veya ayar değiştirme izni verilmedi.");
+        Console.WriteLine("Salt okunur Podman incelemesine izin verildi. Şimdi durum kontrolü çalıştırılıyor.");
+        var inspectionHealthy = RunPodmanInspection();
+        if (state.CurrentStep < Workflow.Steps.Length)
+        {
+            state.CurrentStep++;
+            if (inspectionHealthy)
+            {
+                Console.WriteLine("Podman kurulumu sağlıklı; setup/onarım adımı gerekmiyor.");
+                state.CurrentStep = Workflow.Steps.Length;
+            }
+            SaveState(statePath, state);
+        }
         continue;
     }
 
@@ -95,9 +108,11 @@ while (!stopRequested)
         }
 
         state.PodmanSetupApproved = true;
-        state.CurrentStep++;
         SaveState(statePath, state);
-        Console.WriteLine("Podman setup/onarım komutlarını çalıştırma izni verildi.");
+        Console.WriteLine("Podman setup/onarım komutunu çalıştırma izni verildi. Komut başlatılıyor.");
+        RunPodmanSetupRepair(repositoryRoot);
+        state.CurrentStep = Workflow.Steps.Length;
+        SaveState(statePath, state);
         continue;
     }
 
@@ -287,13 +302,13 @@ static void PrintCurrentStep(WorkflowState state)
             Console.WriteLine("Bu adım onay adımıdır. Devam için `approve-podman` yazın.");
             break;
         case 3:
-            Console.WriteLine("Chat'e göndermek için `podman check` yazın.");
+            Console.WriteLine("Bu adım `approve-podman` onayı sırasında otomatik çalıştırılır.");
             break;
         case 4:
-            Console.WriteLine("Bu adım karar adımıdır: sorun varsa `approve-setup`, yoksa `done` yazın.");
+            Console.WriteLine("Podman kontrolünde sorun bulundu: devam için `approve-setup` yazın, atlamak için `done` yazın.");
             break;
         case 5:
-            Console.WriteLine("Chat'e göndermek için `setup repair` yazın.");
+            Console.WriteLine("Bu adım `approve-setup` onayı sırasında otomatik çalıştırılır.");
             break;
     }
 
@@ -365,6 +380,79 @@ static void PrintChatMessage(string message)
     Console.WriteLine();
 }
 
+static bool RunPodmanInspection()
+{
+    Console.WriteLine();
+    Console.WriteLine("Salt okunur Podman durum kontrolü çalıştırılıyor...");
+
+    var versionOk = RunCommand("podman", "--version");
+    var machineOk = RunCommand("podman", "machine list");
+    var composeOk = RunCommand("podman", "compose version");
+    var psOk = RunCommand("podman", "compose ps");
+
+    var healthy = versionOk && machineOk && composeOk && psOk;
+    if (!healthy)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Podman kurulumunda veya makine durumunda eksik/hata tespit edildi.");
+    }
+
+    return healthy;
+}
+
+static void RunPodmanSetupRepair(string repositoryRoot)
+{
+    Console.WriteLine();
+    Console.WriteLine("Repository lifecycle scripti çalıştırılıyor (new-build)...");
+
+    if (OperatingSystem.IsWindows())
+    {
+        var scriptPath = Path.Combine(repositoryRoot, "scripts", "local.ps1");
+        RunCommand("pwsh", $"-File \"{scriptPath}\" new-build", repositoryRoot);
+    }
+    else
+    {
+        var scriptPath = Path.Combine(repositoryRoot, "scripts", "local.sh");
+        RunCommand("bash", $"\"{scriptPath}\" new-build", repositoryRoot);
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Windows/WSL user-mode networking değişikliği gerekiyorsa script durup bildirir;");
+    Console.WriteLine("bu durumda etkisini onayladıktan sonra `-AllowWslNetworkingChange` ile scripti elle yeniden çalıştırın.");
+}
+
+static bool RunCommand(string fileName, string arguments, string? workingDirectory = null)
+{
+    Console.WriteLine();
+    Console.WriteLine($"> {fileName} {arguments}");
+
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = fileName,
+        Arguments = arguments,
+        UseShellExecute = false,
+        WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory
+    };
+
+    try
+    {
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            Console.WriteLine($"Komut başlatılamadı: {fileName}");
+            return false;
+        }
+
+        process.WaitForExit();
+        return process.ExitCode == 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Komut çalıştırılamadı: {ex.Message}");
+        return false;
+    }
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("Komutlar:");
@@ -373,11 +461,11 @@ static void PrintHelp()
     Console.WriteLine("  step <n>           İstenen adımı doğrudan çağırır (1-6)");
     Console.WriteLine("  repo review        Proje dosya inceleme promptu");
     Console.WriteLine("  handoff check      continuation karşılaştırma promptu");
-    Console.WriteLine("  podman check       Salt okunur Podman kontrol promptu");
-    Console.WriteLine("  setup repair       Setup/onarım promptu");
+    Console.WriteLine("  podman check       Salt okunur Podman kontrol promptu (referans; approve-podman otomatik çalıştırır)");
+    Console.WriteLine("  setup repair       Setup/onarım promptu (referans; approve-setup otomatik çalıştırır)");
     Console.WriteLine("  done               Mevcut depo/sohbet adımını tamamla");
-    Console.WriteLine("  approve-podman     Salt okunur Podman durum kontrolünü onayla");
-    Console.WriteLine("  approve-setup      Sorun varsa setup/onarım komutlarını onayla");
+    Console.WriteLine("  approve-podman     Salt okunur Podman durum kontrolünü onayla ve hemen çalıştır");
+    Console.WriteLine("  approve-setup      Setup/onarım komutunu onayla ve hemen çalıştır (scripts/local.*  new-build)");
     Console.WriteLine("  reset              Rehber ilerlemesini sıfırla (onay istenir)");
     Console.WriteLine("  quit, exit         Kaydedilmiş ilerlemeyle çık");
     Console.WriteLine("  Ctrl+C             Güvenli biçimde çık; ilerleme korunur");
@@ -400,8 +488,8 @@ internal static class Workflow
         "Copilot'a projeyi tanıt (repo review)",
         "Nerede kaldığımızı öğren (handoff check)",
         "Podman durum kontrolüne izin ver (approve-podman)",
-        "Podman durumunu Copilot'a kontrol ettir (podman check)",
+        "Podman durumu otomatik kontrol edildi (podman check)",
         "Sorun varsa setup/onarım izni ver (approve-setup)",
-        "Setup/onarımı Copilot'a uygulat (setup repair)"
+        "Setup/onarım otomatik uygulandı (setup repair)"
     ];
 }
