@@ -41,6 +41,20 @@ Yeni bir Copilot sohbetinde `docs/continuation.md` dosyasını okuyup oradaki s�
 
 Önkoşul: Podman Desktop ve `podman compose` tarafından kullanılabilen bir Compose provider (ör. `podman-compose` veya Docker Compose v2 CLI) kurulu olmalı. Compose provider yalnızca istemci aracıdır; container engine Podman olarak kalır. İlk kurulumda repo scripti Podman machine yoksa oluşturur, durmuşsa başlatır; Windows'ta user-mode networking'i yalnızca ayrıca onaylanırsa, WSL ortamında `pids` cgroup delegasyonunu gerektiğinde ayarlar.
 
+Hızlı bootstrap için Windows'ta şu komutu kullanabilirsiniz:
+
+```powershell
+./scripts/local.ps1 bootstrap-dev
+```
+
+Bu komut stack'i kurar, AI Lab container bulunursa `ai-lab` alias'ını bağlar, `.env` dosyasını uygun değerlerle yazar ve smoke test çalıştırır. Veriyi sıfırlayarak temiz başlangıç istenirse:
+
+```powershell
+./scripts/local.ps1 bootstrap-dev -Reset
+```
+
+`-Reset` modunda local volume verisi silinir.
+
 İlk indirme akışında `run.me` önce dosyaları ve handoff'u kontrol ettirir, sonra yalnızca açık onayla Podman durumunu salt okunur inceler. Aşağıdaki lifecycle komutları machine/stack başlatabilir; bunları çalıştırmak için durum incelemesinden ayrı onay alın.
 
 Windows PowerShell:

@@ -2,16 +2,31 @@
 set -euo pipefail
 
 action="${1:-}"
-confirmation="${2:-}"
+shift || true
+
+confirm_data_removal=false
+reset_mode=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --confirm-data-removal)
+      confirm_data_removal=true
+      ;;
+    --reset)
+      reset_mode=true
+      ;;
+  esac
+done
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd -- "$script_dir/.." && pwd)"
 
-if [[ "$action" != "new-build" && "$action" != "rebuild-all" && "$action" != "delete-all" && "$action" != "status" ]]; then
-  printf 'Usage: %s {new-build|rebuild-all|delete-all|status} [--confirm-data-removal]\n' "$0" >&2
+if [[ "$action" != "new-build" && "$action" != "rebuild-all" && "$action" != "delete-all" && "$action" != "status" && "$action" != "bootstrap-dev" ]]; then
+  printf 'Usage: %s {new-build|rebuild-all|delete-all|status|bootstrap-dev} [--confirm-data-removal] [--reset]\n' "$0" >&2
   exit 2
 fi
 
-if [[ ( "$action" == "rebuild-all" || "$action" == "delete-all" ) && "$confirmation" != "--confirm-data-removal" ]]; then
+if [[ ( "$action" == "rebuild-all" || "$action" == "delete-all" ) && "$confirm_data_removal" != true ]]; then
   echo 'This operation removes local task data. Rerun with --confirm-data-removal after confirming.' >&2
   exit 2
 fi
@@ -76,20 +91,21 @@ connect_ai_lab_alias() {
 
   container_name="$(get_ai_lab_container_name || true)"
   if [[ -z "$container_name" ]]; then
-    return
+    return 1
   fi
 
   if connect_output="$(podman network connect --alias "$alias_name" "$network_name" "$container_name" 2>&1)"; then
     printf 'AI Lab alias is ready: http://%s:8000\n' "$alias_name"
-    return
+    return 0
   fi
 
   if [[ "$connect_output" == *"already exists"* || "$connect_output" == *"already connected"* || "$connect_output" == *"name already in use"* ]]; then
     printf 'AI Lab alias already attached: http://%s:8000\n' "$alias_name"
-    return
+    return 0
   fi
 
   printf 'AI Lab alias attach skipped: %s\n' "$connect_output" >&2
+  return 1
 }
 
 disconnect_ai_lab_from_network() {
@@ -107,11 +123,95 @@ disconnect_ai_lab_from_network() {
     return
   fi
 
-  if [[ "$disconnect_output" == *"is not connected"* || "$disconnect_output" == *"no such network"* || "$disconnect_output" == *"network not found"* ]]; then
+  if [[ "$disconnect_output" == *"is not connected"* || "$disconnect_output" == *"no such network"* || "$disconnect_output" == *"network not found"* || "$disconnect_output" == *"no static ips provided"* ]]; then
     return
   fi
 
   printf 'AI Lab network detach skipped: %s\n' "$disconnect_output" >&2
+}
+
+get_ai_lab_model_id() {
+  local payload
+  payload="$(podman run --rm --network enterprise_default curlimages/curl:8.10.1 -sS -m 20 http://ai-lab:8000/v1/models 2>/dev/null || true)"
+  if [[ -z "$payload" ]]; then
+    return
+  fi
+
+  printf '%s' "$payload" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+set_local_env_file() {
+  local model_id="${1:-}"
+  local env_path="$repository_root/.env"
+
+  if [[ -z "$model_id" ]]; then
+    cat > "$env_path" <<EOF
+MODEL_PROVIDER=disabled
+MODEL_ENDPOINT=
+MODEL_NAME=
+MODEL_API_KEY=
+MODEL_TIMEOUT_SECONDS=180
+EOF
+    echo '.env created with MODEL_PROVIDER=disabled because AI Lab model id could not be detected.' >&2
+    return
+  fi
+
+  cat > "$env_path" <<EOF
+MODEL_PROVIDER=podman-ai-lab
+MODEL_ENDPOINT=http://ai-lab:8000
+MODEL_NAME=$model_id
+MODEL_API_KEY=
+MODEL_TIMEOUT_SECONDS=180
+EOF
+
+  echo '.env updated for AI Lab endpoint and detected model.'
+}
+
+wait_control_plane() {
+  local attempt
+  local max_attempts=20
+  local base
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    base="$(get_api_base_url)"
+    if curl --silent --fail --max-time 3 "$base/health" >/dev/null; then
+      printf '%s' "$base"
+      return 0
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
+invoke_smoke_test() {
+  local base="$1"
+  local create_response task_id approve_response state_response state
+
+  create_response="$(curl --silent --show-error -X POST "$base/tasks" -H 'Content-Type: application/json' --data-raw '{"title":"LLM bootstrap smoke test","description":"kisa bir uygulama plani uret"}')"
+  task_id="$(printf '%s' "$create_response" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+
+  if [[ -z "$task_id" ]]; then
+    echo 'Smoke test could not parse task id.' >&2
+    return
+  fi
+
+  approve_response="$(curl --silent --show-error -X POST "$base/tasks/$task_id/approve")"
+  printf 'Smoke test approve: %s\n' "$approve_response"
+
+  for i in $(seq 1 20); do
+    sleep 2
+    state_response="$(curl --silent --show-error "$base/tasks/$task_id")"
+    state="$(printf '%s' "$state_response" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
+    if [[ "$state" == 'Completed' || "$state" == 'Failed' ]]; then
+      printf 'Smoke test task: %s\n' "$task_id"
+      printf 'Smoke test status: %s\n' "$state"
+      printf '%s\n' "$state_response"
+      return
+    fi
+  done
+
+  echo 'Smoke test did not reach Completed/Failed within timeout.' >&2
 }
 
 case "$action" in
@@ -119,7 +219,7 @@ case "$action" in
     disconnect_ai_lab_from_network
     podman compose down --remove-orphans
     podman compose up -d --build
-    connect_ai_lab_alias
+    connect_ai_lab_alias || true
     printf 'Control Plane: %s\nTask data is preserved.\n' "$(get_api_base_url)"
     ;;
   rebuild-all)
@@ -127,7 +227,7 @@ case "$action" in
     podman compose down --remove-orphans --rmi all --volumes
     podman compose build --no-cache
     podman compose up -d
-    connect_ai_lab_alias
+    connect_ai_lab_alias || true
     printf 'Control Plane: %s\nLocal task data was removed and all project images were rebuilt without cache.\n' "$(get_api_base_url)"
     ;;
   delete-all)
@@ -138,5 +238,37 @@ case "$action" in
   status)
     podman compose ps
     printf 'Control Plane: %s\n' "$(get_api_base_url)"
+    ;;
+  bootstrap-dev)
+    if [[ "$reset_mode" == true ]]; then
+      echo 'Reset mode enabled: local task data will be removed.'
+      disconnect_ai_lab_from_network
+      podman compose down --remove-orphans --rmi all --volumes
+    else
+      disconnect_ai_lab_from_network
+      podman compose down --remove-orphans
+    fi
+
+    podman compose up -d --build
+    if connect_ai_lab_alias; then
+      model_id="$(get_ai_lab_model_id || true)"
+    else
+      model_id=''
+    fi
+
+    set_local_env_file "$model_id"
+
+    if base_url="$(wait_control_plane)"; then
+      printf 'Control Plane: %s\n' "$base_url"
+    else
+      echo 'Control Plane health check timed out.' >&2
+      exit 1
+    fi
+
+    if [[ -n "$model_id" ]]; then
+      invoke_smoke_test "$base_url"
+    else
+      echo 'Smoke test skipped because AI Lab model id was not detected and provider was set to disabled.' >&2
+    fi
     ;;
 esac

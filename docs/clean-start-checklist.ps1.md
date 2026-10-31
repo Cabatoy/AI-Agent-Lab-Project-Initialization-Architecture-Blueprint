@@ -1,6 +1,15 @@
 # Temiz Ba?lang?ç (Windows PowerShell)
 
-A?a??daki ak??, local ortam? s?f?rlay?p stack'i temizden ba?lat?r ve uçtan uca smoke test çal??t?r?r.
+Yeni önerilen tek komut ak???:
+
+```powershell
+cd C:\Enterprise
+./scripts/local.ps1 bootstrap-dev -Reset
+```
+
+Bu komut local stack'i s?f?rlar, yeniden kurar, AI Lab bulunursa `ai-lab` alias'?n? ba?lar, `.env` dosyas?n? yazar ve smoke test çal??t?r?r.
+
+Manuel ad?m ad?m ak?? gerekiyorsa a?a??daki komut setini kullan?n:
 
 ```powershell
 # 0) Repo köküne geç
