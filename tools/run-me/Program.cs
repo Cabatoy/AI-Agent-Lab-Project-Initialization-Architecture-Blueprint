@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Diagnostics;
 using System.Text.Json;
 
 var repositoryRoot = FindRepositoryRoot();
@@ -191,7 +190,7 @@ static WorkflowState LoadState(string statePath)
 
     if (state.CurrentStep < 0 || state.CurrentStep > Workflow.Steps.Length ||
         (state.CurrentStep >= 3 && !state.PodmanInspectionApproved) ||
-        (state.CurrentStep >= 5 && !state.PodmanSetupApproved))
+        (state.CurrentStep == 5 && !state.PodmanSetupApproved))
     {
         throw new InvalidDataException($"İlerleme dosyası geçersiz: {statePath}. Dosyayı düzeltin veya silip yeni akış başlatın.");
     }
