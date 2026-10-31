@@ -40,7 +40,7 @@ Bu yol haritası sıfırdan üretime giden planı anlatır; bir satın alma, kur
 - **Amaç:** Git, Podman Desktop/Compose, .NET SDK, Node.js, AWS CLI ve Terraform için desteklenen sürüm/kurulum sözleşmesini belirlemek.
 - **Önkoşullar:** İlk teknoloji kararları ve CI sürümleri netleşmeli.
 - **Tedarik:** Araçların lisans/işletim maliyeti kontrol edilecek; satın alma varsayılmaz.
-- **Kurulum kılavuzu:** `run.me` rehberi Copilot Chat üzerinden local task smoke test'ini adım adım yönlendirir; Podman machine ve stack lifecycle'ı repo scriptleri yönetir. Podman Desktop kurulumu, desteklenen sürümler ve OS başına onboarding ayrıca belgelenir.
+- **Kurulum kılavuzu:** `run.me` önce dosya denetimi ve handoff'tan sohbeti sürdürmeyi, açık onaydan sonra salt okunur Podman durum kontrolünü yönlendirir. Stack lifecycle'ı repo scriptleri yönetir; başlangıç için ayrıca onay gerekir. Podman Desktop kurulumu, desteklenen sürümler ve OS başına onboarding ayrıca belgelenir.
 - **Mimari:** Yerel geliştirme isteğe bağlıdır; CI ve cloud iş akışları temel doğrulama yolu olmalıdır.
 - **AI Agent görevleri:** Sürüm uyumu ve onboarding belgelerini üretmek, doğrulanmış komutları test etmek.
 - **İnsan eylemleri:** Windows/macOS akışlarını gözden geçirip pratikliğini onaylamak.

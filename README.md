@@ -17,14 +17,26 @@ Depo, mimari belgelerin yanında Podman ile çalıştırılabilen bir local prot
 - [Mimari taslak](docs/04-architecture-blueprint.md)
 - [Uygulama yol haritası](docs/05-implementation-roadmap.md)
 - [Maliyet ve altyapı](docs/06-cost-and-infrastructure.md)
+- [Devam noktası ve yeni sohbet rehberi](docs/continuation.md)
 - [Local Copilot akış rehberi](docs/local-onboarding.md)
 - [Mimari karar kayıtları](docs/decisions/README.md)
 
 Gelecekteki AI coding oturumlarının proje bağlamı için [.github/copilot-instructions.md](.github/copilot-instructions.md) dosyasına bakın.
 
+## Depoyu indirdikten sonra
+
+1. Depoyu klonlayıp IDE'de depo kökünü açın. VS Code'da **File > Open Folder** kullanın. Visual Studio'da tüm dosyaları incelemek için **Open > Folder** kullanın; repoda şu an `.sln` yok, C# projesi üzerinde çalışmak için ilgili `.csproj` dosyasını açın.
+2. Önce dosya denetimi ve sohbet handoff'u için `run.me` rehberini başlatın. Bu aşamalarda Podman çalıştırılmaz.
+3. VS Code repo talimatlarını `.github/copilot-instructions.md` dosyasından yükler. Visual Studio sürümüne göre davranış değişebileceğinden Copilot Chat'ten bu dosyayı ve [devam rehberini](docs/continuation.md) açıkça okumasını isteyin.
+4. Podman durum kontrolü ancak rehberde `approve-podman` ile açıkça onaylandıktan sonra yapılır. Bu onay yalnızca salt okunur kontroller içindir; machine/stack başlatma veya ayar değiştirme için ayrıca onay gerekir.
+
+Yeni bir Copilot sohbetinde `docs/continuation.md` dosyasını okuyup oradaki sıradaki kontrol noktasından devam etmesini isteyin. Sohbet geçmişi Git'e kaydedilmez; dosya güncel proje handoff'unun kalıcı kaynağıdır.
+
 ## Local Podman kurulumu
 
 Önkoşul: Podman Desktop ve `podman compose` tarafından kullanılabilen bir Compose provider (ör. `podman-compose` veya Docker Compose v2 CLI) kurulu olmalı. Compose provider yalnızca istemci aracıdır; container engine Podman olarak kalır. İlk kurulumda repo scripti Podman machine yoksa oluşturur, durmuşsa başlatır; Windows'ta user-mode networking'i yalnızca ayrıca onaylanırsa, WSL ortamında `pids` cgroup delegasyonunu gerektiğinde ayarlar.
+
+İlk indirme akışında `run.me` önce dosyaları ve handoff'u kontrol ettirir, sonra yalnızca açık onayla Podman durumunu salt okunur inceler. Aşağıdaki lifecycle komutları machine/stack başlatabilir; bunları çalıştırmak için durum incelemesinden ayrı onay alın.
 
 Windows PowerShell:
 
@@ -49,7 +61,7 @@ Servisler:
 - `postgres` -> `localhost:5432`
 - `redis` -> `localhost:6379`
 
-Adım adım Copilot task smoke test'i için depo kökünde Windows'ta `./run.me.ps1`, macOS/Linux'ta `bash ./run.me` çalıştırın. Rehber ve komutlar için [local onboarding](docs/local-onboarding.md) sayfasına bakın. Elle denemelerde Control Plane adresi olarak lifecycle scriptinin yazdırdığı adresi kullanın; Windows/WSL'de bu adres `localhost` yerine Podman machine IP'si olabilir.
+İlk depo incelemesi, handoff ve onaylı Podman durum kontrolü için depo kökünde Windows'ta `./run.me.ps1`, macOS/Linux'ta `bash ./run.me` çalıştırın. Bu rehber stack'i başlatmaz. Sonradan ayrıca onaylanan local task smoke test'i ve komutlar için [local onboarding](docs/local-onboarding.md) sayfasına bakın.
 
 İstekleri elle denemek için:
 

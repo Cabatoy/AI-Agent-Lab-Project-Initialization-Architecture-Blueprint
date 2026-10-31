@@ -26,7 +26,7 @@
 ## Sonuçlar
 
 - Yeni katkıcı Podman Desktop'ı kurduktan sonra repo Chat promptları veya scriptleriyle local stack'i hazırlayabilir.
-- `run.me` ve `run.me.ps1`, Windows/macOS katkıcıları için Copilot task smoke test'ini adım adım gösterir; lifecycle komutlarını çalıştırma sorumluluğu mevcut scriptlerde kalır.
+- `run.me` ve `run.me.ps1`, yeni checkout'ta dosya denetimi ve handoff'tan sonra açık onaylı salt okunur Podman durum kontrolünü yönlendirir; lifecycle komutlarını çalıştırma sorumluluğu mevcut scriptlerde kalır.
 - Windows/WSL'de API adresi `localhost` değil Podman machine IP'si olabilir; user-mode networking host erişimini sağlar ve script adresi keşfedip yazdırır. User-mode networking Podman machine çalışırken diğer WSL dağıtımlarının ağını da etkileyebilir; bu nedenle otomatik ve onaysız etkinleştirilmez.
 - Cgroup workaround yalnızca gerektiğinde uygulanır; WSL dışındaki sistemlerde ilgili cgroup yolu bulunmazsa atlanır.
 - Local model çalıştırmak donanım belleği/CPU/GPU ve disk kullanır; AI Lab/model kurulumu base stack'in önkoşulu değildir.

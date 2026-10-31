@@ -4,6 +4,8 @@
 
 AI Agent Lab, birden fazla bağımsız yazılım projesini yapay zekâ ajanlarıyla planlamayı ve geliştirmeyi hedefleyen bir platformdur. İlk müşteri projesi pazaryeridir ve platformdan bağımsız kalmalıdır. Repo mimari belgeler ve Podman ile çalıştırılan local prototip içerir. Kullanıcı önce local akışı doğrulayıp ardından AWS'e taşımayı planlıyor; cloud provisioning henüz yapılmadı.
 
+Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [devam noktasını](../docs/continuation.md) oku ve repo ile karşılaştır. Bu dosya güncel handoff kaynağıdır; sohbet geçmişinin otomatik olarak korunduğunu varsayma. Önerilen sonraki adımları onaylanmış karar gibi ele alma.
+
 ## Dil ve iletişim
 
 - Konuşmaları, açıklamaları, önerileri, soruları ve proje belgelerini doğal Türkçe yaz.
@@ -26,7 +28,7 @@ AI Agent Lab, birden fazla bağımsız yazılım projesini yapay zekâ ajanları
 - Windows ve macOS katkısını ve taşınabilir göreli bağlantıları gözet.
 - Local container runtime kararı Podman'dır; Docker yalnızca Podman Compose'un kullandığı uyumlu Compose sağlayıcısı olarak görünebilir.
 - `scripts/local.ps1` ve `scripts/local.sh` local stack lifecycle komutlarının tek kaynağıdır. Komut anlamını README ve scriptlerle birlikte güncelle.
-- `run.me` ve `run.me.ps1` yalnızca Copilot Chat için adım adım rehberlik eder; Podman/API işlemlerini kendileri çalıştırmaz. Lifecycle davranışını bu launcher'lara kopyalama.
+- `run.me` ve `run.me.ps1` dosya denetimi ve handoff'tan sonra `approve-podman` kapısıyla yalnızca salt okunur Podman durum kontrolü önerir; hiçbir komutu kendileri çalıştırmaz. Başlatma, durdurma, ayar değiştirme, build veya silme için ayrı açık onay gerekir. Lifecycle davranışını bu launcher'lara kopyalama.
 - `rebuild-all` ve `delete-all` kalıcı local volume verisini siler. İşlemi çalıştırmadan önce veri etkisini belirt ve açık onay al; scriptin confirmation bayrağını atlama.
 - Windows user-mode networking ayarı diğer WSL dağıtımlarının ağını etkileyebilir. `-AllowWslNetworkingChange` bayrağını yalnızca etkisini açıklayıp açık onay aldıktan sonra kullan.
 - Local Podman machine, Podman AI Lab veya geliştirici cihazı cloud çalışma zamanı için zorunlu bağımlılığa dönüşmemelidir. AI Lab henüz Worker'a entegre değildir.
@@ -37,4 +39,5 @@ AI Agent Lab, birden fazla bağımsız yazılım projesini yapay zekâ ajanları
 - [Açık sorular](../docs/03-open-questions.md) karara bağlanmamış başlıkları tutar.
 - Mimari bir karar değiştiğinde ilgili karar kaydını ve etkilenen blueprint, roadmap, maliyet veya ilke belgelerini aynı değişiklikte güncelle.
 - Local Podman prototipi, lifecycle komutları ve devam bağlamı için [README](../README.md), [kararlar](../docs/02-current-decisions.md) ve [ADR-001](../docs/decisions/adr-001-podman-local-prototype.md) kaydını güncel tut.
+- Büyük bir milestone tamamlandığında [devam noktasını](../docs/continuation.md) güncelle: doğrulanmış durum, açık teknik işler ve önerilen bir sonraki kontrol noktası. Mimari kararları ve açık soruları kendi kayıtlarında tut.
 - AWS, GitHub, framework, fiyat veya mevzuata ilişkin zamana duyarlı iddiaları doğrulamadan kesin bilgi gibi sunma.

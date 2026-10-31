@@ -17,9 +17,9 @@ if (args.Length > 0)
     return;
 }
 
-Console.WriteLine("AI Agent Lab | Copilot yerel akış rehberi");
-Console.WriteLine("Bu araç komutları gösterir; Podman veya API çağrılarını kendisi çalıştırmaz.");
-Console.WriteLine("İlerleme her değişiklikte kaydedilir. Çıkmak için Ctrl+C veya quit kullanın.");
+Console.WriteLine("AI Agent Lab | Depo inceleme ve devam rehberi");
+Console.WriteLine("Bu araç komutları gösterir; dosya, Podman veya API işlemlerini kendisi çalıştırmaz.");
+Console.WriteLine("Podman incelemesi için ayrı onay gerekir. Çıkmak için Ctrl+C veya quit kullanın.");
 
 while (!stopRequested)
 {
@@ -56,29 +56,26 @@ while (!stopRequested)
         break;
     }
 
-    if (command.StartsWith("url ", StringComparison.OrdinalIgnoreCase))
+    if (command == "approve-podman")
     {
-        SetControlPlaneUrl(command[4..].Trim(), state, statePath);
-        continue;
-    }
+        if (state.CurrentStep != 2)
+        {
+            Console.WriteLine("Bu onay yalnızca Podman incelemesi adımında kullanılabilir.");
+            continue;
+        }
 
-    if (command.StartsWith("task ", StringComparison.OrdinalIgnoreCase))
-    {
-        SetTaskId(command[5..].Trim(), state, statePath);
+        state.PodmanInspectionApproved = true;
+        state.CurrentStep++;
+        SaveState(statePath, state);
+        Console.WriteLine("Salt okunur Podman incelemesine izin verildi. Başlatma veya ayar değiştirme izni verilmedi.");
         continue;
     }
 
     if (command == "done")
     {
-        if (state.CurrentStep == 0 && state.ControlPlaneUrl is null)
+        if (state.CurrentStep == 2)
         {
-            Console.WriteLine("Önce scriptin yazdırdığı adresi `url <adres>` komutuyla kaydedin.");
-            continue;
-        }
-
-        if (state.CurrentStep == 1 && state.TaskId is null)
-        {
-            Console.WriteLine("Önce Copilot yanıtındaki task ID'yi `task <id>` komutuyla kaydedin.");
+            Console.WriteLine("Podman komutlarını göstermeden önce `approve-podman` yazıp salt okunur incelemeyi onaylayın.");
             continue;
         }
 
@@ -97,9 +94,9 @@ while (!stopRequested)
         var confirmation = Console.ReadLine();
         if (confirmation is "y" or "Y" or "yes" or "YES")
         {
-            state = new WorkflowState();
+            state = NewState();
             SaveState(statePath, state);
-            Console.WriteLine("Rehber ilerlemesi sıfırlandı.");
+            Console.WriteLine("Rehber adımları ve Podman inceleme onayı sıfırlandı.");
         }
 
         continue;
@@ -128,17 +125,28 @@ static WorkflowState LoadState(string statePath)
 {
     if (!File.Exists(statePath))
     {
-        return new WorkflowState();
+        return NewState();
     }
 
     var state = JsonSerializer.Deserialize<WorkflowState>(File.ReadAllText(statePath));
-    if (state is null || state.CurrentStep < 0 || state.CurrentStep > Workflow.Steps.Length)
+    if (state is null || state.WorkflowVersion != Workflow.Version)
+    {
+        Console.WriteLine("Rehber akışı güncellendi; eski ilerleme yeni adımlarla uyumlu olmadığından baştan başlatılıyor.");
+        var newState = NewState();
+        SaveState(statePath, newState);
+        return newState;
+    }
+
+    if (state.CurrentStep < 0 || state.CurrentStep > Workflow.Steps.Length ||
+        (state.CurrentStep >= 3 && !state.PodmanInspectionApproved))
     {
         throw new InvalidDataException($"İlerleme dosyası geçersiz: {statePath}. Dosyayı düzeltin veya silip yeni akış başlatın.");
     }
 
     return state;
 }
+
+static WorkflowState NewState() => new() { WorkflowVersion = Workflow.Version };
 
 static void SaveState(string statePath, WorkflowState state)
 {
@@ -177,52 +185,40 @@ static void PrintCurrentStep(WorkflowState state)
     switch (state.CurrentStep)
     {
         case 0:
-            Console.WriteLine("/new-build");
-            Console.WriteLine("Scriptin yazdırdığı Control Plane adresini `url <adres>` ile kaydedin.");
+            Console.WriteLine("@workspace Önce salt okunur depo denetimi yap. `.github/copilot-instructions.md`, `README.md`, `docs/continuation.md`, karar/açık-soru/yol-haritası belgeleri, `docker-compose.yml`, `scripts/` ve üç `.csproj` dosyasını incele; `git status --short` çalıştır. `bin/` ve `obj/` çıktıları hariç tut. Podman, build, ağ, dosya değişikliği veya kurulum komutu çalıştırma. Doğrulanmış durumu ve tutarsızlıkları özetle.");
             break;
         case 1:
-            Console.WriteLine($"@workspace POST {state.ControlPlaneUrl}/tasks adresine {{ \"title\": \"Local workflow testi\", \"description\": \"Copilot akış kontrolü\" }} gövdesiyle task oluştur. Henüz onaylama; dönen task ID'yi bildir.");
-            Console.WriteLine("Task ID geldikten sonra `task <id>` yazın, ardından `done` ile ilerleyin.");
+            Console.WriteLine("@workspace `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını oku. Handoff'taki durumu mevcut repo ile karşılaştır, önerilen devam noktasını doğrula ve sıradaki işi kısaca bildir. Henüz dosya değiştirme veya Podman komutu çalıştırma; kullanıcı yönlendirmesini bekle.");
             break;
         case 2:
-            Console.WriteLine($"@workspace POST {state.ControlPlaneUrl}/tasks/{state.TaskId}/approve çağrısıyla bu task'i onayla ve sonucu bildir.");
-            Console.WriteLine("Copilot onayı doğruladıktan sonra `done` yazın.");
+            Console.WriteLine("Podman incelemesi henüz onaylanmadı.");
+            Console.WriteLine("`approve-podman` yalnızca aşağıdaki salt okunur durum kontrollerini göstermek için izin verir.");
+            Console.WriteLine("Bu onay machine başlatma/durdurma, ayar değiştirme, build, volume silme veya prune izni değildir.");
             break;
         case 3:
-            Console.WriteLine($"@workspace GET {state.ControlPlaneUrl}/tasks/{state.TaskId} çağrısıyla task durumunu kontrol et. `Completed` olana kadar tekrar kontrol et.");
-            Console.WriteLine("Durum `Completed` olduğunda `done` yazın.");
+            Console.WriteLine("@workspace Yalnızca onaylanmış salt okunur Podman durum kontrolünü yap:");
+            Console.WriteLine("  podman --version");
+            Console.WriteLine("  podman machine list");
+            Console.WriteLine("  podman compose version");
+            Console.WriteLine("  podman compose ps");
+            Console.WriteLine("Machine durmuşsa başlatma; durumu raporlayıp dur. `scripts/local.ps1 status` machine başlatabileceği için kullanma.");
+            Console.WriteLine("Başlatma, ayar değişikliği, build, up/down, volume silme veya prune yapma.");
+            Console.WriteLine("Sonuçları Copilot sohbetine gönderin; sonraki işlem için ayrıca konuşup onay verin.");
             break;
     }
 
-    Console.WriteLine("Adımı tamamladığınızı onaylayıp ilerlemek için `done` yazın.");
-}
-
-static void SetControlPlaneUrl(string value, WorkflowState state, string statePath)
-{
-    if (!Uri.TryCreate(value, UriKind.Absolute, out var address) ||
-        (address.Scheme != Uri.UriSchemeHttp && address.Scheme != Uri.UriSchemeHttps) ||
-        address.AbsolutePath != "/" || !string.IsNullOrEmpty(address.Query) || !string.IsNullOrEmpty(address.Fragment))
+    if (state.CurrentStep < 2)
     {
-        Console.WriteLine("Geçerli bir kök adres girin. Örnek: url http://localhost:8080");
-        return;
+        Console.WriteLine("Adımı tamamladığınızı onaylayıp ilerlemek için `done` yazın.");
     }
-
-    state.ControlPlaneUrl = address.ToString().TrimEnd('/');
-    SaveState(statePath, state);
-    Console.WriteLine($"Control Plane adresi kaydedildi: {state.ControlPlaneUrl}");
-}
-
-static void SetTaskId(string value, WorkflowState state, string statePath)
-{
-    if (!Guid.TryParse(value, out var taskId))
+    else if (state.CurrentStep == 2)
     {
-        Console.WriteLine("Task ID geçerli bir GUID olmalı.");
-        return;
+        Console.WriteLine("Salt okunur Podman incelemesine izin vermek için `approve-podman` yazın; istemiyorsanız `quit` ile çıkın.");
     }
-
-    state.TaskId = taskId.ToString();
-    SaveState(statePath, state);
-    Console.WriteLine($"Task ID kaydedildi: {state.TaskId}");
+    else
+    {
+        Console.WriteLine("Kontrolleri tamamladıktan sonra `done` yazın. Bu rehber Podman'ı başlatmaz.");
+    }
 }
 
 static void PrintHelp()
@@ -230,9 +226,8 @@ static void PrintHelp()
     Console.WriteLine("Komutlar:");
     Console.WriteLine("  help, ?          Tüm komutları göster");
     Console.WriteLine("  status            Adımlardaki ilerlemeyi göster");
-    Console.WriteLine("  url <adres>       Control Plane kök adresini kaydet");
-    Console.WriteLine("  task <guid>       Oluşturulan task ID'sini kaydet");
-    Console.WriteLine("  done              Mevcut adımı onayla ve ilerle");
+    Console.WriteLine("  done              Mevcut depo/sohbet adımını tamamla");
+    Console.WriteLine("  approve-podman    Salt okunur Podman durum kontrolünü onayla");
     Console.WriteLine("  reset             Rehber ilerlemesini sıfırla (onay istenir)");
     Console.WriteLine("  quit, exit        Kaydedilmiş ilerlemeyle çık");
     Console.WriteLine("  Ctrl+C            Güvenli biçimde çık; ilerleme korunur");
@@ -240,18 +235,20 @@ static void PrintHelp()
 
 internal sealed class WorkflowState
 {
+    public int WorkflowVersion { get; set; }
     public int CurrentStep { get; set; }
-    public string? ControlPlaneUrl { get; set; }
-    public string? TaskId { get; set; }
+    public bool PodmanInspectionApproved { get; set; }
 }
 
 internal static class Workflow
 {
+    public const int Version = 2;
+
     public static readonly string[] Steps =
     [
-        "Stack'i başlat",
-        "Task oluştur",
-        "Task'i onayla",
-        "Task sonucunu doğrula"
+        "Dosyaları salt okunur kontrol et",
+        "Copilot sohbetini handoff'tan sürdür",
+        "Podman kontrolü için izin al",
+        "Onaylı Podman durumunu kontrol et"
     ];
 }

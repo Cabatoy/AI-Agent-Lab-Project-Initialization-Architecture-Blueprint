@@ -1,39 +1,35 @@
-# Local Copilot Akış Rehberi
+# Yeni Checkout ve Local İnceleme
 
-`run.me`, Agent Lab local task smoke test'ini Copilot Chat ile adım adım yürütmek için komut önerileri gösterir. Podman veya Control Plane API çağrılarını kendisi çalıştırmaz; her adımı kullanıcı Copilot Chat'te uygular ve `done` yazarak onaylar.
+Bu rehber yeni indirilen checkout'ta dosya incelemesinden Copilot handoff'una, oradan da kullanıcı onaylı salt okunur Podman durum kontrolüne kadar olan sırayı tanımlar. `run.me` yalnızca talimat gösterir; komut, API çağrısı veya Podman işlemi çalıştırmaz.
 
-## Önkoşullar
+## IDE'de Açma
 
-- .NET 8 SDK
-- Podman Desktop ve `podman compose` tarafından kullanılabilen bir Compose provider
-- VS Code Copilot Chat
+- **VS Code:** Depo kökünü **File > Open Folder** ile açın. `.github/copilot-instructions.md` repo talimatı olarak yüklenir; yeni sohbette ayrıca `docs/continuation.md` dosyasını okutun.
+- **Visual Studio:** Depo kökünü **Open > Folder** ile açıp dosyaları inceleyin. Repoda `.sln` yok; C# build/debug için ilgili `.csproj` dosyasını açın. Copilot talimatlarının otomatik yüklenmesine güvenmeyin; Chat'ten `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını açıkça okumasını isteyin.
 
-Podman kurulumu ve Windows/WSL ağ onayı için ana [README](../README.md#local-podman-kurulumu) adımlarını izleyin.
+## Önkoşul ve Başlatma
 
-## Başlatma
+Rehberi çalıştırmak için .NET 8 SDK gerekir. Podman bu ilk iki adım için gerekli değildir.
 
-Depo kökünden:
-
-Windows PowerShell:
+Windows PowerShell, depo kökünden:
 
 ```powershell
 ./run.me.ps1
 ```
 
-macOS veya Linux:
+macOS veya Linux, depo kökünden:
 
 ```bash
 bash ./run.me
 ```
 
-## Akış
+## Sıralı Akış
 
-1. Rehber `/new-build` promptunu gösterir. Promptu Copilot Chat'te çalıştırın. Windows/WSL user-mode networking onayı gerekirse promptun ayrı onay adımını izleyin.
-2. Scriptin yazdırdığı Control Plane adresini `url <adres>` komutuyla kaydedin. Windows'ta bu adres `localhost` yerine Podman machine IP'si olabilir.
-3. Rehberin gösterdiği task oluşturma talimatını Copilot Chat'e gönderin. Dönen GUID'yi `task <guid>` komutuyla kaydedin.
-4. Sonraki adımlarda task'i onaylatın ve `GET /tasks/{id}` ile `Completed` durumunu doğrulatın. Her adımdan sonra `done` yazın; sonraki talimat ancak bu onaydan sonra gösterilir.
-
-Bu prototipte Worker task içeriğini çalıştırmaz; Redis kuyruk ve durum geçişi smoke test'i yapıp task'i tamamlandı olarak işaretler.
+1. **Dosyaları denetle:** Rehberin ilk Copilot isteği `.github/copilot-instructions.md`, README, `docs/continuation.md`, kararlar, açık sorular, roadmap, Compose, scriptler ve `.csproj` dosyalarını salt okunur inceletir. `git status --short` kontrol edilir; `bin/` ve `obj/` dışarıda bırakılır. Bu adımda Podman, build, ağ isteği, kurulum veya dosya değişikliği yapılmaz. Copilot sonucu bildirdiğinde `done` yazın.
+2. **Sohbeti kaldığı yerden sürdür:** İkinci istek `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını karşılaştırıp güncel repo durumunu ve sıradaki noktayı özetletir. Handoff öneridir; onaylanmış karar değildir. Dosya değişikliği veya Podman işlemi yapılmaz. Sonucu gördükten sonra `done` yazın.
+3. **Podman incelemesine izin ver:** Rehber `approve-podman` yazmanızı ister. Bu onay yalnızca durum komutlarının gösterilmesine/çalıştırılmasına izin verir; machine başlatma, ayar değiştirme, build, container başlatma, volume silme veya prune izni değildir. İzin vermiyorsanız `quit` veya `Ctrl+C` ile çıkın.
+4. **Salt okunur durumu kontrol et:** Copilot'a yalnızca `podman --version`, `podman machine list`, `podman compose version` ve `podman compose ps` komutlarını çalıştırmasını söyleyin. Machine durmuşsa başlatmayın; sonucu raporlayıp durun. `scripts/local.ps1 status` machine başlatabileceği için bu kontrolde kullanmayın.
+5. **Sonuçları konuşun:** Kontrol sonuçlarını Copilot sohbetine verin. Stack başlatma, `new-build`, ayar değişikliği veya başka bir işe başlamadan önce ayrı kapsam ve açık onay alın. Bu rehber otomatik olarak sonraki işlemi başlatmaz.
 
 ## Rehber Komutları
 
@@ -41,11 +37,14 @@ Bu prototipte Worker task içeriğini çalıştırmaz; Redis kuyruk ve durum ge�
 |---|---|
 | `help` veya `?` | Tüm komutları gösterir |
 | `status` | Adım ilerlemesini gösterir |
-| `url <adres>` | Control Plane kök adresini kaydeder |
-| `task <guid>` | Task ID'sini kaydeder |
-| `done` | Mevcut adımı onaylar ve ilerler |
+| `done` | Dosya/sohbet adımını tamamlayıp ilerler |
+| `approve-podman` | Yalnızca salt okunur Podman durum kontrolüne izin verir |
 | `reset` | Onay alarak yalnızca rehber ilerlemesini sıfırlar |
 | `quit` veya `exit` | Kaydedilmiş ilerlemeyle çıkar |
 | `Ctrl+C` | Güvenli biçimde çıkar; ilerleme korunur |
 
-İlerleme depo kökündeki `.run-me-state.json` dosyasına kaydedilir ve Git tarafından yok sayılır. `reset`, Podman container'larına, volume'lere veya task kayıtlarına dokunmaz. `rebuild-all` ve `delete-all` bu rehber akışının parçası değildir; veri silme için README ve ilgili Chat promptlarındaki açık onay kapılarını izleyin.
+İlerleme depo kökündeki `.run-me-state.json` dosyasına kaydedilir ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; sohbet hafızası değildir. `reset`, Podman container'larına, volume'lere veya task kayıtlarına dokunmaz.
+
+## Local Task Smoke Test
+
+Podman stack'ini başlatma ve task API akışını deneme bu ilk inceleme rehberinin dışındadır. Kullanıcı bu adıma ayrıca karar verirse [README'deki local Podman](../README.md#local-podman-kurulumu) ve task API adımlarını izleyin. Worker şu an yalnızca kuyruk/durum smoke test'i yapar; task açıklamasını kullanarak kod üretmez.
