@@ -25,10 +25,12 @@ Gelecekteki AI coding oturumlarının proje bağlamı için [.github/copilot-ins
 
 ## Depoyu indirdikten sonra
 
-1. Depoyu klonlayıp IDE'de depo kökünü açın. VS Code'da **File > Open Folder** kullanın. Visual Studio'da tüm dosyaları incelemek için **Open > Folder** kullanın; repoda şu an `.sln` yok, C# projesi üzerinde çalışmak için ilgili `.csproj` dosyasını açın.
+1. Depoyu klonlayıp IDE'de açın. VS Code'da depo kökünü **File > Open Folder** ile açın. Visual Studio'da repo kökündeki `AI-Agent-Lab.sln` dosyasını açın; solution Control Plane, Worker ve `run.me` projelerini içerir.
 2. Önce dosya denetimi ve sohbet handoff'u için `run.me` rehberini başlatın. Bu aşamalarda Podman çalıştırılmaz.
 3. VS Code repo talimatlarını `.github/copilot-instructions.md` dosyasından yükler. Visual Studio sürümüne göre davranış değişebileceğinden Copilot Chat'ten bu dosyayı ve [devam rehberini](docs/continuation.md) açıkça okumasını isteyin.
 4. Podman durum kontrolü ancak rehberde `approve-podman` ile açıkça onaylandıktan sonra yapılır. Bu onay yalnızca salt okunur kontroller içindir; machine/stack başlatma veya ayar değiştirme için ayrıca onay gerekir.
+
+Tüm .NET projelerini terminalden derlemek için repo kökünde `dotnet build AI-Agent-Lab.sln` çalıştırın.
 
 Yeni bir Copilot sohbetinde `docs/continuation.md` dosyasını okuyup oradaki sıradaki kontrol noktasından devam etmesini isteyin. Sohbet geçmişi Git'e kaydedilmez; dosya güncel proje handoff'unun kalıcı kaynağıdır.
 

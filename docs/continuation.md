@@ -4,8 +4,8 @@ Bu belge yeni bir checkout veya Copilot sohbeti için kısa ve kalıcı handoff 
 
 ## Depoyu İndirme
 
-1. Depoyu klonlayın ve depo kökünü açın. VS Code'da **File > Open Folder**; Visual Studio'da tüm depoyu incelemek için **Open > Folder** kullanın.
-2. Repoda şu an `.sln` yok. Visual Studio'da bir C# projesini build/debug etmek için ilgili `.csproj` dosyasını açın; repo belgeleri ve diğer projeler için root folder görünümünde kalın.
+1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `AI-Agent-Lab.sln` dosyasını açın.
+2. `AI-Agent-Lab.sln`, Control Plane API, Agent Worker ve `run.me` console projelerini içerir. Solution Explorer'dan çalışacağınız projeyi seçin; `dotnet build AI-Agent-Lab.sln` tüm .NET projelerini derler.
 3. Önce `.github/copilot-instructions.md`, bu handoff dosyası, `README.md`, karar/açık-soru/yol-haritası belgeleri ve kaynak proje yapısını salt okunur kontrol edin. `bin/` ve `obj/` çıktıları kaynak incelemesine dahil değildir.
 4. Copilot talimatı VS Code'da repo ayarı olarak yüklenir. Visual Studio'da otomatik yükleme sürüme göre değişebileceği için Copilot Chat'ten talimat dosyasını açıkça okumasını isteyin.
 5. Podman Desktop/Compose veya .NET 8 SDK kurulumu gerekiyorsa önce gereksinimleri konuşun. Podman kontrolü ve başlatma adımları birbirinden ayrıdır; [local onboarding](local-onboarding.md) içindeki onay kapılarını izleyin.
@@ -21,6 +21,7 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 ## Doğrulanmış Durum
 
 - Repo, mimari belgeler ve Podman Compose ile çalışan local prototip içeriyor; AWS provisioning veya production deployment yapılmadı.
+- Repo kökündeki `AI-Agent-Lab.sln` üç .NET projesini Visual Studio solution'ında bir araya getiriyor.
 - Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
 - `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi, son olarak açık onayla salt okunur Podman durum kontrolünü yönlendiriyor. Hiçbir komutu kendileri çalıştırmıyor.
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
