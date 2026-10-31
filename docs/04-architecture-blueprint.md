@@ -35,6 +35,8 @@ flowchart LR
 
 **Öneri:** API ve web uygulamasını bağımsız ölçeklenebilir dağıtım birimleri olarak değerlendirmek. .NET/ASP.NET Core, PostgreSQL, EF Core ve SignalR yalnızca adaydır. Prototip sonrası erişilebilirlik hedefi ve yönetilen veritabanı maliyetleri doğrulanmadan daha yüksek dayanıklılık yatırımı yapılmamalıdır.
 
+**Local prototip sınırı:** Geliştirici makinesinde Podman Compose ile API, worker, PostgreSQL ve Redis çalıştırılır. Bu ortam cloud runtime kararı veya platformun kişisel cihaza bağımlı olabileceği anlamına gelmez. Podman AI Lab, OpenAI-uyumlu yerel model servisini denemek için opsiyoneldir; henüz Worker entegrasyonu veya üretim sağlayıcısı kararı yoktur.
+
 ## B. Execution Plane
 
 **Sorumluluk:** Her görev için izole ve geçici çalışma alanı; branch oluşturma; ajan çağrısı; izinli araçlar; build/test; kaynak ve süre limitleri; artefakt toplama.

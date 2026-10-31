@@ -37,10 +37,10 @@ Bu yol haritası sıfırdan üretime giden planı anlatır; bir satın alma, kur
 ## Bölüm 3 — The Developer Environment
 
 - **Hikâye:** Windows ve macOS kullanan insanlar aynı projeyi tekrarlanabilir biçimde inceleyip test edebilir.
-- **Amaç:** Git, Docker, .NET SDK, Node.js, AWS CLI ve Terraform için desteklenen sürüm/kurulum sözleşmesini belirlemek.
+- **Amaç:** Git, Podman Desktop/Compose, .NET SDK, Node.js, AWS CLI ve Terraform için desteklenen sürüm/kurulum sözleşmesini belirlemek.
 - **Önkoşullar:** İlk teknoloji kararları ve CI sürümleri netleşmeli.
 - **Tedarik:** Araçların lisans/işletim maliyeti kontrol edilecek; satın alma varsayılmaz.
-- **Kurulum kılavuzu:** OS başına sürüm yönetimi, doğrulama ve kaldırma adımları hazırlanacak; kurulum bu yol haritasının parçası değildir.
+- **Kurulum kılavuzu:** Repo içindeki local Podman scriptleri ilk machine hazırlığını ve stack lifecycle'ını yönetir. Podman Desktop kurulumu, desteklenen sürümler ve OS başına onboarding ayrıca belgelenir.
 - **Mimari:** Yerel geliştirme isteğe bağlıdır; CI ve cloud iş akışları temel doğrulama yolu olmalıdır.
 - **AI Agent görevleri:** Sürüm uyumu ve onboarding belgelerini üretmek, doğrulanmış komutları test etmek.
 - **İnsan eylemleri:** Windows/macOS akışlarını gözden geçirip pratikliğini onaylamak.
@@ -48,7 +48,7 @@ Bu yol haritası sıfırdan üretime giden planı anlatır; bir satın alma, kur
 - **Kabul ölçütleri:** Temiz cihazdan onboarding; aynı lint/test/build sonuçları; sırların yerelde saklanmaması.
 - **Maliyet tahmini:** Doğrulanacak; lisanslı araç gereksinimleri ayrıca listelenecek.
 - **Riskler:** OS farkları, SDK drift'i, yerel ortamın CI'dan ayrışması.
-- **Teslimatlar:** Platformlar arası geliştirici rehberi ve sürüm matrisi.
+- **Teslimatlar:** Platformlar arası geliştirici rehberi, local stack komutları ve sürüm matrisi.
 
 ## Bölüm 4 — The First Agent
 
