@@ -180,45 +180,53 @@ static void PrintCurrentStep(WorkflowState state)
 
     Console.WriteLine();
     Console.WriteLine($"Adım {state.CurrentStep + 1}: {Workflow.Steps[state.CurrentStep]}");
-    Console.WriteLine("Copilot Chat'e gönderilecek içerik:");
 
     switch (state.CurrentStep)
     {
         case 0:
-            Console.WriteLine("@workspace Önce salt okunur depo denetimi yap. `.github/copilot-instructions.md`, `README.md`, `docs/continuation.md`, karar/açık-soru/yol-haritası belgeleri, `docker-compose.yml`, `scripts/` ve üç `.csproj` dosyasını incele; `git status --short` çalıştır. `bin/` ve `obj/` çıktıları hariç tut. Podman, build, ağ, dosya değişikliği veya kurulum komutu çalıştırma. Doğrulanmış durumu ve tutarsızlıkları özetle.");
+            Console.WriteLine("Önce Copilot'un projeyi tanımasını sağlayacağız. Henüz hiçbir servis başlatılmayacak.");
+            PrintChatMessage("Bu projeyi yeni açtım. Önce .github/copilot-instructions.md dosyasını, README.md dosyasını ve proje dosyalarını incele. Proje ne yapıyor, eksik veya çelişkili dosya var mı, kısa ve anlaşılır anlat. Sadece dosyaları oku; hiçbir şeyi değiştirme, kurma veya başlatma. Podman, build veya ağ isteği çalıştırma.");
             break;
         case 1:
-            Console.WriteLine("@workspace `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını oku. Handoff'taki durumu mevcut repo ile karşılaştır, önerilen devam noktasını doğrula ve sıradaki işi kısaca bildir. Henüz dosya değiştirme veya Podman komutu çalıştırma; kullanıcı yönlendirmesini bekle.");
+            Console.WriteLine("Şimdi Copilot'a projede en son nerede kaldığımızı okutacağız.");
+            PrintChatMessage("docs/continuation.md dosyasını oku ve yazılanları mevcut proje dosyalarıyla karşılaştır. Neler tamamlanmış, neler bekliyor ve sırada ne öneriliyor? Kısaca anlat. Henüz değişiklik yapma veya komut çalıştırma; benim kararımı bekle.");
             break;
         case 2:
-            Console.WriteLine("Podman incelemesi henüz onaylanmadı.");
-            Console.WriteLine("`approve-podman` yalnızca aşağıdaki salt okunur durum kontrollerini göstermek için izin verir.");
-            Console.WriteLine("Bu onay machine başlatma/durdurma, ayar değiştirme, build, volume silme veya prune izni değildir.");
+            Console.WriteLine("İsterseniz şimdi Podman'ın kurulu olup olmadığını ve servislerin durumunu kontrol ettirebiliriz.");
+            Console.WriteLine("Bu kontrol hiçbir şeyi başlatmaz, durdurmaz, değiştirmez veya silmez.");
+            Console.WriteLine("Bu adımda Chat'e mesaj göndermeniz gerekmiyor; kararınızı bu konsola yazın.");
             break;
         case 3:
-            Console.WriteLine("@workspace Yalnızca onaylanmış salt okunur Podman durum kontrolünü yap:");
-            Console.WriteLine("  podman --version");
-            Console.WriteLine("  podman machine list");
-            Console.WriteLine("  podman compose version");
-            Console.WriteLine("  podman compose ps");
-            Console.WriteLine("Machine durmuşsa başlatma; durumu raporlayıp dur. `scripts/local.ps1 status` machine başlatabileceği için kullanma.");
-            Console.WriteLine("Başlatma, ayar değişikliği, build, up/down, volume silme veya prune yapma.");
-            Console.WriteLine("Sonuçları Copilot sohbetine gönderin; sonraki işlem için ayrıca konuşup onay verin.");
+            Console.WriteLine("Durum kontrolüne izin verdiniz. Copilot sonucu anlatacak; sonraki işlemi birlikte kararlaştıracağız.");
+            PrintChatMessage("Podman durumunu kontrol etmene izin veriyorum. Yalnızca podman --version, podman machine list, podman compose version ve podman compose ps komutlarını kullan. Podman kurulu değilse veya makine durmuşsa durumu anlatıp dur. Hiçbir şeyi başlatma, durdurma, değiştirme veya silme. scripts/local.ps1 status ve scripts/local.sh status kullanma; bunlar değişiklik yapabilir. Sonucu anlaşılır biçimde özetle ve sonraki işlem için kararımı bekle.");
             break;
     }
 
     if (state.CurrentStep < 2)
     {
-        Console.WriteLine("Adımı tamamladığınızı onaylayıp ilerlemek için `done` yazın.");
+        Console.WriteLine("Copilot'un yanıtını bekleyin ve okuyun.");
+        Console.WriteLine("Sonra BU KONSOLA dönüp done yazın ve Enter'a basın. done komutunu Chat'e göndermeyin.");
     }
     else if (state.CurrentStep == 2)
     {
-        Console.WriteLine("Salt okunur Podman incelemesine izin vermek için `approve-podman` yazın; istemiyorsanız `quit` ile çıkın.");
+        Console.WriteLine("İzin vermek için BU KONSOLA approve-podman yazıp Enter'a basın.");
+        Console.WriteLine("İstemiyorsanız quit yazın. Bu onay yalnızca durum kontrolü içindir.");
     }
     else
     {
-        Console.WriteLine("Kontrolleri tamamladıktan sonra `done` yazın. Bu rehber Podman'ı başlatmaz.");
+        Console.WriteLine("Copilot'un yanıtını okuyunca BU KONSOLA done yazıp Enter'a basın.");
     }
+}
+
+static void PrintChatMessage(string message)
+{
+    Console.WriteLine();
+    Console.WriteLine("Visual Studio veya VS Code'da Copilot Chat penceresini açın.");
+    Console.WriteLine("Aşağıdaki iki çizgi arasındaki metni kopyalayıp Chat'e gönderin:");
+    Console.WriteLine("---------------- CHAT MESAJI ----------------");
+    Console.WriteLine(message);
+    Console.WriteLine("---------------------------------------------");
+    Console.WriteLine();
 }
 
 static void PrintHelp()
@@ -246,9 +254,9 @@ internal static class Workflow
 
     public static readonly string[] Steps =
     [
-        "Dosyaları salt okunur kontrol et",
-        "Copilot sohbetini handoff'tan sürdür",
-        "Podman kontrolü için izin al",
-        "Onaylı Podman durumunu kontrol et"
+        "Copilot'a projeyi tanıt",
+        "Nerede kaldığımızı öğren",
+        "Podman durum kontrolüne izin ver",
+        "Podman durumunu Copilot'a kontrol ettir"
     ];
 }
