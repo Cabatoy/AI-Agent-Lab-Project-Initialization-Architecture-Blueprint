@@ -10,11 +10,11 @@ var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?
 
 var app = builder.Build();
 
-var redis = await ConnectionMultiplexer.ConnectAsync(redisConnectionString);
+var redis = await ConnectRedisWithRetryAsync(redisConnectionString, app.Logger);
 var redisDb = redis.GetDatabase();
 const string queueKey = "agentlab:task-queue";
 
-await InitializeSchemaAsync(postgresConnectionString);
+await InitializeSchemaWithRetryAsync(postgresConnectionString, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "control-plane" }));
 
@@ -174,6 +174,62 @@ app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest r
 });
 
 app.Run();
+
+static async Task<ConnectionMultiplexer> ConnectRedisWithRetryAsync(string connectionString, ILogger logger)
+{
+    var options = ConfigurationOptions.Parse(connectionString);
+    options.AbortOnConnectFail = false;
+    options.ConnectRetry = 5;
+    options.ConnectTimeout = 5000;
+
+    const int maxAttempts = 10;
+    Exception? lastError = null;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            return await ConnectionMultiplexer.ConnectAsync(options);
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            logger.LogWarning(ex, "Redis connection attempt {Attempt}/{MaxAttempts} failed.", attempt, maxAttempts);
+            if (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(5, attempt)));
+            }
+        }
+    }
+
+    throw new InvalidOperationException("Redis connection could not be established after retries.", lastError);
+}
+
+static async Task InitializeSchemaWithRetryAsync(string postgresConnectionString, ILogger logger)
+{
+    const int maxAttempts = 10;
+    Exception? lastError = null;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            await InitializeSchemaAsync(postgresConnectionString);
+            return;
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            logger.LogWarning(ex, "PostgreSQL schema init attempt {Attempt}/{MaxAttempts} failed.", attempt, maxAttempts);
+            if (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(5, attempt)));
+            }
+        }
+    }
+
+    throw new InvalidOperationException("PostgreSQL schema init failed after retries.", lastError);
+}
 
 static async Task InitializeSchemaAsync(string postgresConnectionString)
 {

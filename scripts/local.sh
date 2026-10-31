@@ -65,7 +65,7 @@ get_api_base_url() {
 
 get_ai_lab_container_name() {
   podman ps --format '{{.Names}} {{.Image}}' \
-    | awk 'BEGIN{IGNORECASE=1} /podman-ai-lab|llama-stack|instructlab|llama\.cpp/ { print $1; exit }'
+    | awk 'BEGIN{IGNORECASE=1} /podman-ai-lab|llama-stack|instructlab|llama\.cpp|ramalama-llama-server|ramalama/ { print $1; exit }'
 }
 
 connect_ai_lab_alias() {
@@ -92,14 +92,38 @@ connect_ai_lab_alias() {
   printf 'AI Lab alias attach skipped: %s\n' "$connect_output" >&2
 }
 
+disconnect_ai_lab_from_network() {
+  local network_name='enterprise_default'
+  local container_name
+  local disconnect_output
+
+  container_name="$(get_ai_lab_container_name || true)"
+  if [[ -z "$container_name" ]]; then
+    return
+  fi
+
+  if disconnect_output="$(podman network disconnect "$network_name" "$container_name" 2>&1)"; then
+    printf 'AI Lab container detached from %s before recreate.\n' "$network_name"
+    return
+  fi
+
+  if [[ "$disconnect_output" == *"is not connected"* || "$disconnect_output" == *"no such network"* || "$disconnect_output" == *"network not found"* ]]; then
+    return
+  fi
+
+  printf 'AI Lab network detach skipped: %s\n' "$disconnect_output" >&2
+}
+
 case "$action" in
   new-build)
+    disconnect_ai_lab_from_network
     podman compose down --remove-orphans
     podman compose up -d --build
     connect_ai_lab_alias
     printf 'Control Plane: %s\nTask data is preserved.\n' "$(get_api_base_url)"
     ;;
   rebuild-all)
+    disconnect_ai_lab_from_network
     podman compose down --remove-orphans --rmi all --volumes
     podman compose build --no-cache
     podman compose up -d

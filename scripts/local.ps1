@@ -112,7 +112,7 @@ function Get-AiLabContainerName {
     }
 
     $candidate = $containers |
-        Where-Object { $_ -match 'podman-ai-lab|llama-stack|instructlab|llama\.cpp' } |
+        Where-Object { $_ -match 'podman-ai-lab|llama-stack|instructlab|llama\.cpp|ramalama-llama-server|ramalama' } |
         Select-Object -First 1
 
     if (-not $candidate) {
@@ -133,8 +133,18 @@ function Connect-AiLabAlias {
         return
     }
 
-    $connectOutput = & podman network connect --alias $Alias $NetworkName $aiLabContainerName 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $connectOutput = $null
+    $exitCode = 0
+    try {
+        $connectOutput = & podman network connect --alias $Alias $NetworkName $aiLabContainerName 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        $connectOutput = $_.Exception.Message
+        $exitCode = 1
+    }
+
+    if ($exitCode -eq 0) {
         Write-Host "AI Lab alias is ready: http://$Alias:8000"
         return
     }
@@ -146,6 +156,38 @@ function Connect-AiLabAlias {
     }
 
     Write-Warning "AI Lab alias attach skipped: $outputText"
+}
+
+function Disconnect-AiLabFromNetwork {
+    param([string]$NetworkName = 'enterprise_default')
+
+    $aiLabContainerName = Get-AiLabContainerName
+    if (-not $aiLabContainerName) {
+        return
+    }
+
+    $disconnectOutput = $null
+    $exitCode = 0
+    try {
+        $disconnectOutput = & podman network disconnect $NetworkName $aiLabContainerName 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        $disconnectOutput = $_.Exception.Message
+        $exitCode = 1
+    }
+
+    if ($exitCode -eq 0) {
+        Write-Host "AI Lab container detached from $NetworkName before recreate."
+        return
+    }
+
+    $outputText = ($disconnectOutput -join [Environment]::NewLine)
+    if ($outputText -match 'is not connected|no such network|network not found|no static ips provided') {
+        return
+    }
+
+    Write-Warning "AI Lab network detach skipped: $outputText"
 }
 
 if (($Action -eq 'rebuild-all' -or $Action -eq 'delete-all') -and -not $ConfirmDataRemoval) {
@@ -161,6 +203,7 @@ try {
 
     switch ($Action) {
         'new-build' {
+            Disconnect-AiLabFromNetwork
             Invoke-Compose @('down', '--remove-orphans')
             Invoke-Compose @('up', '-d', '--build')
             Connect-AiLabAlias
@@ -169,6 +212,7 @@ try {
             Write-Host 'Task data is preserved.'
         }
         'rebuild-all' {
+            Disconnect-AiLabFromNetwork
             Invoke-Compose @('down', '--remove-orphans', '--rmi', 'all', '--volumes')
             Invoke-Compose @('build', '--no-cache')
             Invoke-Compose @('up', '-d')

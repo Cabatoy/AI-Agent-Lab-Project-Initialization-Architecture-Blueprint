@@ -41,7 +41,7 @@ internal sealed class Worker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var http = new HttpClient();
-        using var redis = await ConnectionMultiplexer.ConnectAsync(_redisConnectionString);
+        using var redis = await ConnectRedisWithRetryAsync(_redisConnectionString, stoppingToken);
         var redisDb = redis.GetDatabase();
 
         _logger.LogInformation("Worker started. Queue={QueueKey}, ModelProvider={ModelProvider}", _queueKey, _modelOptions.Provider);
@@ -126,6 +126,36 @@ internal sealed class Worker : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    private async Task<ConnectionMultiplexer> ConnectRedisWithRetryAsync(string connectionString, CancellationToken cancellationToken)
+    {
+        var options = ConfigurationOptions.Parse(connectionString);
+        options.AbortOnConnectFail = false;
+        options.ConnectRetry = 5;
+        options.ConnectTimeout = 5000;
+
+        const int maxAttempts = 10;
+        Exception? lastError = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                return await ConnectionMultiplexer.ConnectAsync(options);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                _logger.LogWarning(ex, "Worker Redis connection attempt {Attempt}/{MaxAttempts} failed.", attempt, maxAttempts);
+                if (attempt < maxAttempts)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(5, attempt)), cancellationToken);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("Worker could not connect to Redis after retries.", lastError);
     }
 
     private async Task<ModelExecutionResult> GenerateWithRetryAsync(string prompt, CancellationToken cancellationToken)
