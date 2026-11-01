@@ -17,6 +17,7 @@ Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [dev
 - Kullanıcı açıkça istemedikçe uygulama kodu yazma, araç kurma, AWS kaynağı oluşturma/provision etme, ücretli servis başlatma, GitHub deposu açma, commit veya deploy yapma. Local bootstrap scriptleri ve ilgili prototip düzenlemeleri kullanıcı tarafından onaylandı.
 - Mimari konularda önce seçenekleri ve operasyon/maliyet etkilerini açıkla; karar gerektiren noktada kullanıcı onayı al.
 - Kullanıcı bir dokümantasyon değişikliği istediğinde yalnızca ilgili belgeleri güncelle; uygulama kapsamına kendiliğinden geçme.
+- Local bootstrap sıfırlama akışında, kullanıcı yalnızca genel sağlayıcı seçenekleri yerine mevcut çalışan Podman AI Lab model hizmetleri arasında seçim yapmak isteyebilir.
 
 ## Bağlayıcı ilkeler
 

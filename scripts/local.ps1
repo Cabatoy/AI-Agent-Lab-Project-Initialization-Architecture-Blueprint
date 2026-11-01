@@ -5,7 +5,12 @@ param(
     [string]$Action,
     [switch]$ConfirmDataRemoval,
     [switch]$AllowWslNetworkingChange,
-    [switch]$Reset
+    [switch]$Reset,
+    [ValidateSet('auto', 'disabled', 'podman-ai-lab', 'ollama', 'openai-compatible')]
+    [string]$LlmProvider = 'auto',
+    [string]$LlmEndpoint,
+    [string]$LlmModel,
+    [string]$LlmApiKey
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,30 +114,106 @@ function Get-ApiBaseUrl {
     return $candidates[-1]
 }
 
-function Get-AiLabContainerName {
-    $containers = & podman ps --format '{{.Names}} {{.Image}}' 2>$null
+function Get-AiLabContainers {
+    $containers = & podman ps --format '{{.Names}}|{{.Image}}' 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $containers) {
-        return $null
+        return @()
     }
 
-    $candidate = $containers |
+    $candidates = @($containers |
         Where-Object { $_ -match 'podman-ai-lab|llama-stack|instructlab|llama\.cpp|ramalama-llama-server|ramalama' } |
-        Select-Object -First 1
+        ForEach-Object { ($_ -split '\|')[0] } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
-    if (-not $candidate) {
+    return $candidates
+}
+
+function Get-AiLabModelIdFromHostPort {
+    param([string]$ContainerName)
+
+    if (-not $ContainerName) {
         return $null
     }
 
-    return ($candidate -split '\s+')[0]
+    $portOutput = & podman port $ContainerName '8000/tcp' 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $portOutput) {
+        return $null
+    }
+
+    $portMatch = [regex]::Match(($portOutput -join ' '), ':(\d+)')
+    if (-not $portMatch.Success) {
+        return $null
+    }
+
+    $port = $portMatch.Groups[1].Value
+    try {
+        $payload = Invoke-RestMethod -Uri "http://localhost:$port/v1/models" -TimeoutSec 5
+        if ($payload.data -and $payload.data.Count -gt 0 -and $payload.data[0].id) {
+            return [string]$payload.data[0].id
+        }
+    }
+    catch {
+    }
+
+    return $null
+}
+
+function Select-AiLabContainerFromPrompt {
+    param([string[]]$Containers)
+
+    $available = @($Containers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($available.Count -eq 0) {
+        return $null
+    }
+
+    if ($available.Count -eq 1) {
+        return $available[0]
+    }
+
+    if ([Console]::IsInputRedirected) {
+        Write-Warning "Input is redirected. Defaulting to the first detected AI Lab service: $($available[0])"
+        return $available[0]
+    }
+
+    Write-Host 'Available Podman AI Lab model services:'
+    for ($index = 0; $index -lt $available.Count; $index++) {
+        $containerName = $available[$index]
+        $modelId = Get-AiLabModelIdFromHostPort -ContainerName $containerName
+        if ($modelId) {
+            Write-Host "[$($index + 1)] $containerName -> $modelId"
+        }
+        else {
+            Write-Host "[$($index + 1)] $containerName"
+        }
+    }
+
+    while ($true) {
+        $selection = Read-Host "Select AI Lab service number (1-$($available.Count), Enter=1)"
+        if (-not $selection) {
+            return $available[0]
+        }
+
+        $selectedIndex = 0
+        if ([int]::TryParse($selection, [ref]$selectedIndex) -and $selectedIndex -ge 1 -and $selectedIndex -le $available.Count) {
+            return $available[$selectedIndex - 1]
+        }
+
+        Write-Warning 'Invalid selection. Try again.'
+    }
 }
 
 function Connect-AiLabAlias {
     param(
         [string]$NetworkName = 'enterprise_default',
-        [string]$Alias = 'ai-lab'
+        [string]$Alias = 'ai-lab',
+        [string]$ContainerName
     )
 
-    $aiLabContainerName = Get-AiLabContainerName
+    $aiLabContainerName = $ContainerName
+    if (-not $aiLabContainerName) {
+        $aiLabContainerName = (Get-AiLabContainers | Select-Object -First 1)
+    }
+
     if (-not $aiLabContainerName) {
         return $false
     }
@@ -166,93 +247,302 @@ function Connect-AiLabAlias {
 function Disconnect-AiLabFromNetwork {
     param([string]$NetworkName = 'enterprise_default')
 
-    $aiLabContainerName = Get-AiLabContainerName
-    if (-not $aiLabContainerName) {
+    $aiLabContainers = @(Get-AiLabContainers)
+    if ($aiLabContainers.Count -eq 0) {
         return
     }
 
-    $disconnectOutput = $null
-    $exitCode = 0
-    try {
-        $disconnectOutput = & podman network disconnect $NetworkName $aiLabContainerName 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $disconnectOutput = $_.Exception.Message
-        $exitCode = 1
-    }
+    foreach ($aiLabContainerName in $aiLabContainers) {
+        $disconnectOutput = $null
+        $exitCode = 0
+        try {
+            $disconnectOutput = & podman network disconnect $NetworkName $aiLabContainerName 2>&1
+            $exitCode = $LASTEXITCODE
+        }
+        catch {
+            $disconnectOutput = $_.Exception.Message
+            $exitCode = 1
+        }
 
-    if ($exitCode -eq 0) {
-        Write-Host "AI Lab container detached from $NetworkName before recreate."
-        return
-    }
+        if ($exitCode -eq 0) {
+            Write-Host "AI Lab container detached from $NetworkName before recreate: $aiLabContainerName"
+            continue
+        }
 
-    $outputText = ($disconnectOutput -join [Environment]::NewLine)
-    if ($outputText -match 'is not connected|no such network|network not found|no static ips provided') {
-        return
-    }
+        $outputText = ($disconnectOutput -join [Environment]::NewLine)
+        if ($outputText -match 'is not connected|no such network|network not found|no static ips provided') {
+            continue
+        }
 
-    Write-Warning "AI Lab network detach skipped: $outputText"
+        Write-Warning "AI Lab network detach skipped for ${aiLabContainerName}: $outputText"
+    }
 }
 
-function Get-AiLabModelId {
+function Get-ModelIdsFromEndpoint {
+    param([string]$Endpoint)
+
+    if (-not $Endpoint) {
+        return @()
+    }
+
     $response = $null
     try {
-        $response = & podman run --rm --network enterprise_default curlimages/curl:8.10.1 -sS -m 20 http://ai-lab:8000/v1/models 2>$null
+        $response = & podman run --rm --network enterprise_default curlimages/curl:8.10.1 -sS -m 20 "$Endpoint/v1/models" 2>$null
     }
     catch {
-        return $null
+        return @()
     }
 
     if ($LASTEXITCODE -ne 0 -or -not $response) {
-        return $null
+        return @()
     }
 
     try {
         $payload = $response | ConvertFrom-Json
-        if ($payload.data -and $payload.data.Count -gt 0 -and $payload.data[0].id) {
-            return [string]$payload.data[0].id
+        $modelIds = New-Object System.Collections.Generic.List[string]
+
+        if ($payload.data) {
+            foreach ($item in $payload.data) {
+                if ($item.id) {
+                    $modelIds.Add([string]$item.id)
+                }
+            }
         }
 
-        if ($payload.models -and $payload.models.Count -gt 0 -and $payload.models[0].model) {
-            return [string]$payload.models[0].model
+        if ($payload.models) {
+            foreach ($item in $payload.models) {
+                if ($item.model) {
+                    $modelIds.Add([string]$item.model)
+                }
+            }
         }
+
+        return @($modelIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
     }
     catch {
+        return @()
+    }
+}
+
+function Select-ModelIdFromCandidates {
+    param(
+        [string[]]$Candidates,
+        [string]$Endpoint
+    )
+
+    $available = @($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($available.Count -eq 0) {
+        return $null
     }
 
-    return $null
+    if ($available.Count -eq 1) {
+        Write-Host "Detected AI Lab model: $($available[0])"
+        return $available[0]
+    }
+
+    Write-Host "Detected AI Lab models on ${Endpoint}:"
+    for ($index = 0; $index -lt $available.Count; $index++) {
+        Write-Host "[$($index + 1)] $($available[$index])"
+    }
+
+    if ([Console]::IsInputRedirected) {
+        Write-Warning "Input is redirected. Defaulting to the first detected model: $($available[0])"
+        return $available[0]
+    }
+
+    while ($true) {
+        $selection = Read-Host "Select model number (1-$($available.Count), Enter=1)"
+        if (-not $selection) {
+            return $available[0]
+        }
+
+        $selectedIndex = 0
+        if ([int]::TryParse($selection, [ref]$selectedIndex) -and $selectedIndex -ge 1 -and $selectedIndex -le $available.Count) {
+            return $available[$selectedIndex - 1]
+        }
+
+        Write-Warning 'Invalid selection. Try again.'
+    }
+}
+
+function Select-LlmProviderFromPrompt {
+    param([bool]$AiLabAliasReady)
+
+    if ([Console]::IsInputRedirected) {
+        Write-Warning 'Input is redirected. Using default provider selection: auto.'
+        return 'auto'
+    }
+
+    $options = @(
+        [pscustomobject]@{ Value = 'auto'; Description = 'auto (podman-ai-lab if alias exists, otherwise disabled)' }
+        [pscustomobject]@{ Value = 'disabled'; Description = 'disabled' }
+    )
+
+    if ($AiLabAliasReady) {
+        $options += [pscustomobject]@{ Value = 'podman-ai-lab'; Description = 'podman-ai-lab (ai-lab alias detected)' }
+    }
+
+    $options += [pscustomobject]@{ Value = 'ollama'; Description = 'ollama (host.containers.internal:11434)' }
+    $options += [pscustomobject]@{ Value = 'openai-compatible'; Description = 'openai-compatible (requires endpoint/model)' }
+
+    Write-Host 'Reset mode LLM provider selection:'
+    for ($index = 0; $index -lt $options.Count; $index++) {
+        Write-Host "[$($index + 1)] $($options[$index].Description)"
+    }
+
+    while ($true) {
+        $selection = Read-Host "Select provider number (1-$($options.Count), Enter=1)"
+        if (-not $selection) {
+            return $options[0].Value
+        }
+
+        $selectedIndex = 0
+        if ([int]::TryParse($selection, [ref]$selectedIndex) -and $selectedIndex -ge 1 -and $selectedIndex -le $options.Count) {
+            return $options[$selectedIndex - 1].Value
+        }
+
+        Write-Warning 'Invalid selection. Try again.'
+    }
+}
+
+function Resolve-ModelConfiguration {
+    param(
+        [string]$ProviderSelection,
+        [bool]$AiLabAliasReady,
+        [string]$RequestedEndpoint,
+        [string]$RequestedModel,
+        [string]$RequestedApiKey
+    )
+
+    $provider = $ProviderSelection
+    $endpoint = $RequestedEndpoint
+    $model = $RequestedModel
+    $apiKey = $RequestedApiKey
+
+    if ($provider -eq 'auto') {
+        if ($AiLabAliasReady) {
+            $provider = 'podman-ai-lab'
+        }
+        else {
+            $provider = 'disabled'
+        }
+    }
+
+    switch ($provider) {
+        'disabled' {
+            return [pscustomobject]@{
+                Provider = 'disabled'
+                Endpoint = ''
+                Model = ''
+                ApiKey = ''
+                Message = '.env updated with MODEL_PROVIDER=disabled.'
+            }
+        }
+        'podman-ai-lab' {
+            if (-not $endpoint) {
+                $endpoint = 'http://ai-lab:8000'
+            }
+
+            if (-not $model) {
+                $detectedModels = Get-ModelIdsFromEndpoint -Endpoint $endpoint
+                $model = Select-ModelIdFromCandidates -Candidates $detectedModels -Endpoint $endpoint
+            }
+
+            if (-not $model) {
+                return [pscustomobject]@{
+                    Provider = 'disabled'
+                    Endpoint = ''
+                    Model = ''
+                    ApiKey = ''
+                    Message = '.env created with MODEL_PROVIDER=disabled because podman-ai-lab model id could not be detected.'
+                }
+            }
+
+            return [pscustomobject]@{
+                Provider = 'podman-ai-lab'
+                Endpoint = $endpoint
+                Model = $model
+                ApiKey = $apiKey
+                Message = '.env updated for podman-ai-lab endpoint and selected model.'
+            }
+        }
+        'ollama' {
+            if (-not $endpoint) {
+                $endpoint = 'http://host.containers.internal:11434'
+            }
+
+            if (-not $model) {
+                $model = 'llama3.1'
+            }
+
+            return [pscustomobject]@{
+                Provider = 'ollama'
+                Endpoint = $endpoint
+                Model = $model
+                ApiKey = $apiKey
+                Message = '.env updated for ollama endpoint and selected model.'
+            }
+        }
+        'openai-compatible' {
+            if (-not $endpoint) {
+                if (-not [Console]::IsInputRedirected) {
+                    $endpoint = Read-Host 'Enter openai-compatible endpoint URL (e.g. https://api.openai.com)'
+                }
+
+                if (-not $endpoint) {
+                    throw 'LlmProvider=openai-compatible requires -LlmEndpoint.'
+                }
+            }
+
+            if (-not $model) {
+                if (-not [Console]::IsInputRedirected) {
+                    $model = Read-Host 'Enter openai-compatible model name (e.g. gpt-4o-mini)'
+                }
+
+                if (-not $model) {
+                    throw 'LlmProvider=openai-compatible requires -LlmModel.'
+                }
+            }
+
+            if (-not $apiKey -and -not [Console]::IsInputRedirected) {
+                $apiKey = Read-Host 'Enter API key (optional, Enter to skip)'
+            }
+
+            return [pscustomobject]@{
+                Provider = 'openai-compatible'
+                Endpoint = $endpoint
+                Model = $model
+                ApiKey = $apiKey
+                Message = '.env updated for openai-compatible endpoint and selected model.'
+            }
+        }
+        default {
+            throw "Unsupported LlmProvider: $provider"
+        }
+    }
 }
 
 function Set-LocalEnvFile {
-    param([string]$ModelId)
+    param(
+        [string]$Provider,
+        [string]$Endpoint,
+        [string]$Model,
+        [string]$ApiKey,
+        [int]$TimeoutSeconds = 180
+    )
 
     $envPath = Join-Path $repositoryRoot '.env'
 
-    if (-not $ModelId) {
-        $content = @(
-            'MODEL_PROVIDER=disabled'
-            'MODEL_ENDPOINT='
-            'MODEL_NAME='
-            'MODEL_API_KEY='
-            'MODEL_TIMEOUT_SECONDS=180'
-        ) -join [Environment]::NewLine
-
-        Set-Content -Path $envPath -Value $content -Encoding utf8
-        Write-Warning '.env created with MODEL_PROVIDER=disabled because AI Lab model id could not be detected.'
-        return
-    }
-
     $content = @(
-        'MODEL_PROVIDER=podman-ai-lab'
-        'MODEL_ENDPOINT=http://ai-lab:8000'
-        "MODEL_NAME=$ModelId"
-        'MODEL_API_KEY='
-        'MODEL_TIMEOUT_SECONDS=180'
+        "MODEL_PROVIDER=$Provider"
+        "MODEL_ENDPOINT=$Endpoint"
+        "MODEL_NAME=$Model"
+        "MODEL_API_KEY=$ApiKey"
+        "MODEL_TIMEOUT_SECONDS=$TimeoutSeconds"
     ) -join [Environment]::NewLine
 
-    Set-Content -Path $envPath -Value $content -Encoding utf8
-    Write-Host '.env updated for AI Lab endpoint and detected model.'
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($envPath, $content, $utf8WithoutBom)
 }
 
 function Wait-ControlPlane {
@@ -298,6 +588,55 @@ function Invoke-SmokeTest {
     }
 
     Write-Warning 'Smoke test did not reach Completed/Failed within timeout.'
+}
+
+function Write-ActiveModelSummary {
+    $envPath = Join-Path $repositoryRoot '.env'
+    if (Test-Path $envPath) {
+        $envLines = Get-Content -Path $envPath
+        $envMap = @{}
+        foreach ($line in $envLines) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                $envMap[$matches[1]] = $matches[2]
+            }
+        }
+
+        Write-Host 'Configured model (.env):'
+        Write-Host "  Provider: $($envMap['MODEL_PROVIDER'])"
+        Write-Host "  Endpoint: $($envMap['MODEL_ENDPOINT'])"
+        Write-Host "  Model: $($envMap['MODEL_NAME'])"
+    }
+
+    $runtime = & podman exec agentlab-worker /bin/sh -c "printenv MODEL_PROVIDER; printenv MODEL_ENDPOINT; printenv MODEL_NAME" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $runtime.Count -ge 3) {
+        Write-Host 'Runtime model (agentlab-worker):'
+        Write-Host "  Provider: $($runtime[0])"
+        Write-Host "  Endpoint: $($runtime[1])"
+        Write-Host "  Model: $($runtime[2])"
+    }
+
+    $aliasTarget = $null
+    try {
+        $networkInspect = & podman network inspect enterprise_default 2>$null
+        if ($LASTEXITCODE -eq 0 -and $networkInspect) {
+            $network = @($networkInspect | ConvertFrom-Json)
+            if ($network.Count -gt 0 -and $network[0].containers) {
+                foreach ($property in $network[0].containers.PSObject.Properties) {
+                    $container = $property.Value
+                    if ($container.aliases -and ($container.aliases -contains 'ai-lab')) {
+                        $aliasTarget = $container.name
+                        break
+                    }
+                }
+            }
+        }
+    }
+    catch {
+    }
+
+    if ($aliasTarget) {
+        Write-Host "ai-lab alias target: $aliasTarget"
+    }
 }
 
 if (($Action -eq 'rebuild-all' -or $Action -eq 'delete-all') -and -not $ConfirmDataRemoval) {
@@ -350,24 +689,45 @@ try {
                 Invoke-Compose @('down', '--remove-orphans')
             }
 
-            Invoke-Compose @('up', '-d', '--build')
+            Invoke-Compose @('up', '-d', 'postgres', 'redis', 'control-plane')
             $aliasReady = Connect-AiLabAlias
-            $modelId = $null
-            if ($aliasReady) {
-                $modelId = Get-AiLabModelId
+
+            $providerSelection = $LlmProvider
+            if ($Reset -and -not $PSBoundParameters.ContainsKey('LlmProvider')) {
+                $providerSelection = Select-LlmProviderFromPrompt -AiLabAliasReady $aliasReady
             }
 
-            Set-LocalEnvFile -ModelId $modelId
+            if ($providerSelection -eq 'podman-ai-lab') {
+                $selectedAiLabContainer = Select-AiLabContainerFromPrompt -Containers (Get-AiLabContainers)
+                if ($selectedAiLabContainer) {
+                    Disconnect-AiLabFromNetwork
+                    $aliasReady = Connect-AiLabAlias -ContainerName $selectedAiLabContainer
+                }
+            }
+
+            $modelConfig = Resolve-ModelConfiguration `
+                -ProviderSelection $providerSelection `
+                -AiLabAliasReady $aliasReady `
+                -RequestedEndpoint $LlmEndpoint `
+                -RequestedModel $LlmModel `
+                -RequestedApiKey $LlmApiKey
+
+            Set-LocalEnvFile -Provider $modelConfig.Provider -Endpoint $modelConfig.Endpoint -Model $modelConfig.Model -ApiKey $modelConfig.ApiKey
+            Write-Host $modelConfig.Message
+
+            Invoke-Compose @('up', '-d', '--build')
 
             $apiBaseUrl = Wait-ControlPlane
             Write-Host "Control Plane: $apiBaseUrl"
 
-            if ($modelId) {
+            if ($modelConfig.Provider -ne 'disabled') {
                 Invoke-SmokeTest -BaseUrl $apiBaseUrl
             }
             else {
-                Write-Warning 'Smoke test skipped because AI Lab model id was not detected and provider was set to disabled.'
+                Write-Warning 'Smoke test skipped because MODEL_PROVIDER is disabled.'
             }
+
+            Write-ActiveModelSummary
         }
     }
 }

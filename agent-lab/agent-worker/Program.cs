@@ -232,11 +232,13 @@ Return concise bullet points.
 
     private static IModelClient CreateModelClient(ModelOptions options, ILogger logger)
     {
-        if (string.Equals(options.Provider, "podman-ai-lab", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(options.Provider, "podman-ai-lab", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(options.Provider, "ollama", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(options.Provider, "openai-compatible", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(options.Endpoint) || string.IsNullOrWhiteSpace(options.Model))
             {
-                logger.LogWarning("MODEL_PROVIDER is podman-ai-lab but MODEL_ENDPOINT or MODEL_NAME is missing. Falling back to disabled model client.");
+                logger.LogWarning("MODEL_PROVIDER is {Provider} but MODEL_ENDPOINT or MODEL_NAME is missing. Falling back to disabled model client.", options.Provider);
                 return new DisabledModelClient();
             }
 

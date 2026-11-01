@@ -27,7 +27,7 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
 - Worker task detayını Control Plane'den alır, prompt üretir ve opsiyonel model provider üzerinden çağrı yapar. Podman AI Lab için önce `chat/completions`, sonra `completions` fallback'i dener; geçici hatalarda retry uygular.
 - `docker-compose.yml` içinde Worker için `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME`, `MODEL_API_KEY`, `MODEL_TIMEOUT_SECONDS` ortam değişkenleri bulunur.
-- `scripts/local.ps1` ve `scripts/local.sh` `bootstrap-dev` komutunu destekler. Bu komut stack kurulumunu, AI Lab alias bağlamasını (`ai-lab`), `.env` üretimini ve smoke test'i otomatikler. `-Reset`/`--reset` ile veri silerek temiz başlangıç yapılabilir.
+- `scripts/local.ps1` ve `scripts/local.sh` `bootstrap-dev` komutunu destekler. Bu komut stack kurulumunu, AI Lab alias bağlamasını (`ai-lab`), `.env` üretimini ve smoke test'i otomatikler. `-Reset`/`--reset` ile veri silerek temiz başlangıç yapılabilir. PowerShell akışında `-Reset` sırasında provider parametresi verilmezse interaktif seçim açılır; `podman-ai-lab` seçiminde çalışan AI Lab servisleri listelenip seçim yaptırılır.
 - `bootstrap-dev -Reset` uçtan uca çalıştırılarak sıfırdan local kurulum ve smoke test (`task -> approve -> completed`) doğrulandı.
 
 ## Önerilen Devam Sırası

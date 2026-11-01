@@ -47,7 +47,7 @@ Hızlı bootstrap için Windows'ta şu komutu kullanabilirsiniz:
 ./scripts/local.ps1 bootstrap-dev
 ```
 
-Bu komut stack'i kurar, AI Lab container bulunursa `ai-lab` alias'ını bağlar, `.env` dosyasını uygun değerlerle yazar ve smoke test çalıştırır. Veriyi sıfırlayarak temiz başlangıç istenirse:
+Bu komut stack'i kurar, AI Lab container bulunursa `ai-lab` alias'ını bağlar, seçilen LLM profile göre `.env` dosyasını günceller ve smoke test çalıştırır. Veriyi sıfırlayarak temiz başlangıç istenirse:
 
 ```powershell
 ./scripts/local.ps1 bootstrap-dev -Reset
@@ -100,19 +100,37 @@ Durdurma:
 
 ## Local model provider (opsiyonel)
 
-Worker, model çağrısı için opsiyonel bir provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz. Podman AI Lab gibi OpenAI-uyumlu local endpoint ile deneme yapmak için `.env.example` dosyasını `.env` olarak kopyalayıp kişisel değerleri düzenleyin:
+Worker, model çağrısı için opsiyonel provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz.
 
-```env
-MODEL_PROVIDER=podman-ai-lab
-MODEL_ENDPOINT=http://ai-lab:8000
-MODEL_NAME=/models/hf.ibm-granite.granite-8b-code-instruct
-MODEL_API_KEY=
-MODEL_TIMEOUT_SECONDS=180
+`bootstrap-dev` komutunda LLM seçimini parametreyle yapabilirsiniz:
+
+- PowerShell: `-LlmProvider auto|disabled|podman-ai-lab|ollama|openai-compatible`
+- Bash: `--llm-provider=auto|disabled|podman-ai-lab|ollama|openai-compatible`
+
+`bootstrap-dev -Reset` PowerShell akışında `-LlmProvider` verilmezse script provider seçimini interaktif olarak sorar. `podman-ai-lab` seçildiğinde çalışır Podman AI Lab model service container'larını listeler ve seçim yaptırır; ardından `ai-lab` alias'ı seçilen servise bağlanır.
+
+Opsiyonel ek parametreler:
+
+- PowerShell: `-LlmEndpoint <url> -LlmModel <model> -LlmApiKey <key>`
+- Bash: `--llm-endpoint=<url> --llm-model=<model> --llm-api-key=<key>`
+
+PowerShell'de `openai-compatible` seçilip endpoint/model parametreleri verilmezse interaktif terminalde bu değerler ayrıca sorulur (input redirected durumda parametre zorunludur).
+
+Örnekler:
+
+```powershell
+./scripts/local.ps1 bootstrap-dev -LlmProvider podman-ai-lab
+./scripts/local.ps1 bootstrap-dev -LlmProvider ollama -LlmEndpoint http://host.containers.internal:11434 -LlmModel llama3.1
+./scripts/local.ps1 bootstrap-dev -LlmProvider openai-compatible -LlmEndpoint https://api.openai.com -LlmModel gpt-4o-mini -LlmApiKey <SECRET>
 ```
+
+`auto` seçimi AI Lab alias bulunursa `podman-ai-lab`, bulunamazsa `disabled` seçer. `podman-ai-lab` için model id otomatik algılanamazsa güvenli fallback olarak `.env` `disabled` yazılır.
+
+`bootstrap-dev` smoke test sonunda script, doğrulama için hem `.env` içindeki model ayarını hem de `agentlab-worker` container'ındaki runtime model ayarını (provider/endpoint/model) çıktı olarak gösterir.
 
 `new-build` ve `rebuild-all` komutları, Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias'ı ile bağlamayı dener. Böylece rastgele container adlarına bağımlılık azaltılır. Worker model çağrısında önce `chat/completions`, ardından `completions` fallback'i dener; geçici hatalarda kısa retry uygular.
 
-Ardından stack'i `new-build` ile başlatıp task akışını test edin. `.env` içindeki kişisel/secret değerleri paylaşmayın.
+`.env` içindeki kişisel/secret değerleri paylaşmayın.
 
 ## Chat komutları
 

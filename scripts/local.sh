@@ -6,6 +6,10 @@ shift || true
 
 confirm_data_removal=false
 reset_mode=false
+llm_provider='auto'
+llm_endpoint=''
+llm_model=''
+llm_api_key=''
 
 for arg in "$@"; do
   case "$arg" in
@@ -15,6 +19,18 @@ for arg in "$@"; do
     --reset)
       reset_mode=true
       ;;
+    --llm-provider=*)
+      llm_provider="${arg#*=}"
+      ;;
+    --llm-endpoint=*)
+      llm_endpoint="${arg#*=}"
+      ;;
+    --llm-model=*)
+      llm_model="${arg#*=}"
+      ;;
+    --llm-api-key=*)
+      llm_api_key="${arg#*=}"
+      ;;
   esac
 done
 
@@ -22,7 +38,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd -- "$script_dir/.." && pwd)"
 
 if [[ "$action" != "new-build" && "$action" != "rebuild-all" && "$action" != "delete-all" && "$action" != "status" && "$action" != "bootstrap-dev" ]]; then
-  printf 'Usage: %s {new-build|rebuild-all|delete-all|status|bootstrap-dev} [--confirm-data-removal] [--reset]\n' "$0" >&2
+  printf 'Usage: %s {new-build|rebuild-all|delete-all|status|bootstrap-dev} [--confirm-data-removal] [--reset] [--llm-provider=auto|disabled|podman-ai-lab|ollama|openai-compatible] [--llm-endpoint=URL] [--llm-model=NAME] [--llm-api-key=KEY]\n' "$0" >&2
   exit 2
 fi
 
@@ -130,9 +146,15 @@ disconnect_ai_lab_from_network() {
   printf 'AI Lab network detach skipped: %s\n' "$disconnect_output" >&2
 }
 
-get_ai_lab_model_id() {
+get_model_id_from_endpoint() {
+  local endpoint="$1"
   local payload
-  payload="$(podman run --rm --network enterprise_default curlimages/curl:8.10.1 -sS -m 20 http://ai-lab:8000/v1/models 2>/dev/null || true)"
+
+  if [[ -z "$endpoint" ]]; then
+    return
+  fi
+
+  payload="$(podman run --rm --network enterprise_default curlimages/curl:8.10.1 -sS -m 20 "$endpoint/v1/models" 2>/dev/null || true)"
   if [[ -z "$payload" ]]; then
     return
   fi
@@ -140,31 +162,100 @@ get_ai_lab_model_id() {
   printf '%s' "$payload" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1
 }
 
-set_local_env_file() {
-  local model_id="${1:-}"
-  local env_path="$repository_root/.env"
+resolve_model_configuration() {
+  local provider_selection="$1"
+  local ai_lab_alias_ready="$2"
+  local requested_endpoint="$3"
+  local requested_model="$4"
+  local requested_api_key="$5"
 
-  if [[ -z "$model_id" ]]; then
-    cat > "$env_path" <<EOF
-MODEL_PROVIDER=disabled
-MODEL_ENDPOINT=
-MODEL_NAME=
-MODEL_API_KEY=
-MODEL_TIMEOUT_SECONDS=180
-EOF
-    echo '.env created with MODEL_PROVIDER=disabled because AI Lab model id could not be detected.' >&2
-    return
+  local provider="$provider_selection"
+  local endpoint="$requested_endpoint"
+  local model="$requested_model"
+  local api_key="$requested_api_key"
+  local message=''
+
+  if [[ "$provider" == 'auto' ]]; then
+    if [[ "$ai_lab_alias_ready" == 'true' ]]; then
+      provider='podman-ai-lab'
+    else
+      provider='disabled'
+    fi
   fi
 
+  case "$provider" in
+    disabled)
+      endpoint=''
+      model=''
+      api_key=''
+      message='.env updated with MODEL_PROVIDER=disabled.'
+      ;;
+    podman-ai-lab)
+      if [[ -z "$endpoint" ]]; then
+        endpoint='http://ai-lab:8000'
+      fi
+
+      if [[ -z "$model" ]]; then
+        model="$(get_model_id_from_endpoint "$endpoint" || true)"
+      fi
+
+      if [[ -z "$model" ]]; then
+        provider='disabled'
+        endpoint=''
+        model=''
+        api_key=''
+        message='.env created with MODEL_PROVIDER=disabled because podman-ai-lab model id could not be detected.'
+      else
+        message='.env updated for podman-ai-lab endpoint and selected model.'
+      fi
+      ;;
+    ollama)
+      if [[ -z "$endpoint" ]]; then
+        endpoint='http://host.containers.internal:11434'
+      fi
+
+      if [[ -z "$model" ]]; then
+        model='llama3.1'
+      fi
+
+      message='.env updated for ollama endpoint and selected model.'
+      ;;
+    openai-compatible)
+      if [[ -z "$endpoint" ]]; then
+        echo 'LlmProvider=openai-compatible requires --llm-endpoint.' >&2
+        exit 2
+      fi
+
+      if [[ -z "$model" ]]; then
+        echo 'LlmProvider=openai-compatible requires --llm-model.' >&2
+        exit 2
+      fi
+
+      message='.env updated for openai-compatible endpoint and selected model.'
+      ;;
+    *)
+      echo "Unsupported --llm-provider: $provider" >&2
+      exit 2
+      ;;
+  esac
+
+  printf '%s|%s|%s|%s|%s' "$provider" "$endpoint" "$model" "$api_key" "$message"
+}
+
+set_local_env_file() {
+  local provider="$1"
+  local endpoint="$2"
+  local model="$3"
+  local api_key="$4"
+  local env_path="$repository_root/.env"
+
   cat > "$env_path" <<EOF
-MODEL_PROVIDER=podman-ai-lab
-MODEL_ENDPOINT=http://ai-lab:8000
-MODEL_NAME=$model_id
-MODEL_API_KEY=
+MODEL_PROVIDER=$provider
+MODEL_ENDPOINT=$endpoint
+MODEL_NAME=$model
+MODEL_API_KEY=$api_key
 MODEL_TIMEOUT_SECONDS=180
 EOF
-
-  echo '.env updated for AI Lab endpoint and detected model.'
 }
 
 wait_control_plane() {
@@ -250,13 +341,18 @@ case "$action" in
     fi
 
     podman compose up -d --build
+    alias_ready='false'
     if connect_ai_lab_alias; then
-      model_id="$(get_ai_lab_model_id || true)"
-    else
-      model_id=''
+      alias_ready='true'
     fi
 
-    set_local_env_file "$model_id"
+    model_config="$(resolve_model_configuration "$llm_provider" "$alias_ready" "$llm_endpoint" "$llm_model" "$llm_api_key")"
+    IFS='|' read -r resolved_provider resolved_endpoint resolved_model resolved_api_key resolved_message <<< "$model_config"
+
+    set_local_env_file "$resolved_provider" "$resolved_endpoint" "$resolved_model" "$resolved_api_key"
+    echo "$resolved_message"
+
+    podman compose up -d --build
 
     if base_url="$(wait_control_plane)"; then
       printf 'Control Plane: %s\n' "$base_url"
@@ -265,10 +361,10 @@ case "$action" in
       exit 1
     fi
 
-    if [[ -n "$model_id" ]]; then
+    if [[ "$resolved_provider" != 'disabled' ]]; then
       invoke_smoke_test "$base_url"
     else
-      echo 'Smoke test skipped because AI Lab model id was not detected and provider was set to disabled.' >&2
+      echo 'Smoke test skipped because MODEL_PROVIDER is disabled.' >&2
     fi
     ;;
 esac
