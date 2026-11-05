@@ -1,10 +1,9 @@
 ---
 name: new-build
 description: "Build and start the Agent Lab local Podman stack while preserving existing task data"
+disable-model-invocation: true
 argument-hint: "Optional: explain what you want to check after startup"
-agent: agent
 ---
-
 Prepare the Agent Lab local stack using the repository lifecycle script.
 
 - On Windows, run `./scripts/local.ps1 new-build` from the repository root.

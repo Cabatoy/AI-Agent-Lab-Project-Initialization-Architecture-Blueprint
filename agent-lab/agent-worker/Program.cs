@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Text;
@@ -18,8 +20,10 @@ internal sealed class Worker : BackgroundService
     private readonly string _controlPlaneUrl;
     private readonly string _redisConnectionString;
     private readonly string _queueKey;
+    private readonly string _deadLetterQueueKey;
     private readonly ModelOptions _modelOptions;
     private readonly IModelClient _modelClient;
+    private readonly ConcurrentDictionary<Guid, DateTime> _inFlightTasks = new();
 
     public Worker(ILogger<Worker> logger)
     {
@@ -27,6 +31,7 @@ internal sealed class Worker : BackgroundService
         _controlPlaneUrl = Environment.GetEnvironmentVariable("CONTROL_PLANE_URL") ?? "http://localhost:8080";
         _redisConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Redis") ?? "localhost:6379";
         _queueKey = Environment.GetEnvironmentVariable("TASK_QUEUE_KEY") ?? "agentlab:task-queue";
+        _deadLetterQueueKey = Environment.GetEnvironmentVariable("TASK_DEAD_LETTER_QUEUE_KEY") ?? "agentlab:task-queue:dead-letter";
 
         _modelOptions = new ModelOptions(
             Provider: Environment.GetEnvironmentVariable("MODEL_PROVIDER") ?? "disabled",
@@ -64,44 +69,72 @@ internal sealed class Worker : BackgroundService
                     continue;
                 }
 
-                currentTaskId = taskId;
-                _logger.LogInformation("Task dequeued: {TaskId}", taskId);
-
-                await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1, null, null, stoppingToken);
-
-                var taskPayload = await GetTaskAsync(http, taskId, stoppingToken);
-                if (taskPayload is null)
+                if (!_inFlightTasks.TryAdd(taskId, DateTime.UtcNow))
                 {
-                    await UpdateStatusAsync(http, taskId, TaskStatuses.Failed, 1, null, "Task payload could not be loaded.", stoppingToken);
+                    _logger.LogWarning("Task is already being processed. Skipping duplicate dequeue. TaskId={TaskId}", taskId);
                     continue;
                 }
 
-                var prompt = BuildPrompt(taskPayload.Title, taskPayload.Description);
-                var modelExecution = await GenerateWithRetryAsync(prompt, stoppingToken);
-
-                if (!modelExecution.Result.Success)
+                currentTaskId = taskId;
+                try
                 {
+                    _logger.LogInformation("Task dequeued: {TaskId}", taskId);
+
+                    await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1, null, null, stoppingToken);
+
+                    var taskPayload = await GetTaskAsync(http, taskId, stoppingToken);
+                    if (taskPayload is null)
+                    {
+                        const string payloadLoadError = "Task payload could not be loaded.";
+                        await UpdateStatusAsync(http, taskId, TaskStatuses.Failed, 1, null, payloadLoadError, stoppingToken);
+                        await EnqueueDeadLetterAsync(redisDb, taskId, "task-payload-load-failed", payloadLoadError, 1, "Worker.ExecuteAsync");
+                        continue;
+                    }
+
+                    var prompt = BuildPrompt(taskPayload.Title, taskPayload.Description);
+                    var modelExecution = await GenerateWithRetryAsync(prompt, stoppingToken);
+
+                    if (!modelExecution.Result.Success)
+                    {
+                        var failureMessage = modelExecution.Result.ErrorMessage ?? "Model call failed.";
+                        await UpdateStatusAsync(
+                            http,
+                            taskId,
+                            TaskStatuses.Failed,
+                            modelExecution.AttemptCount,
+                            null,
+                            failureMessage,
+                            stoppingToken);
+
+                        var reason = modelExecution.Result.IsTransient
+                            ? "model-transient-failure-retry-exhausted"
+                            : "model-permanent-failure";
+
+                        await EnqueueDeadLetterAsync(
+                            redisDb,
+                            taskId,
+                            reason,
+                            failureMessage,
+                            modelExecution.AttemptCount,
+                            "Worker.GenerateWithRetryAsync");
+                        continue;
+                    }
+
                     await UpdateStatusAsync(
                         http,
                         taskId,
-                        TaskStatuses.Failed,
+                        TaskStatuses.Completed,
                         modelExecution.AttemptCount,
+                        modelExecution.Result.Content,
                         null,
-                        modelExecution.Result.ErrorMessage ?? "Model call failed.",
                         stoppingToken);
-                    continue;
+
+                    _logger.LogInformation("Task processed: {TaskId}", taskId);
                 }
-
-                await UpdateStatusAsync(
-                    http,
-                    taskId,
-                    TaskStatuses.Completed,
-                    modelExecution.AttemptCount,
-                    modelExecution.Result.Content,
-                    null,
-                    stoppingToken);
-
-                _logger.LogInformation("Task processed: {TaskId}", taskId);
+                finally
+                {
+                    _inFlightTasks.TryRemove(taskId, out _);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -116,6 +149,13 @@ internal sealed class Worker : BackgroundService
                     try
                     {
                         await UpdateStatusAsync(http, currentTaskId.Value, TaskStatuses.Failed, 1, null, ex.Message, stoppingToken);
+                        await EnqueueDeadLetterAsync(
+                            redisDb,
+                            currentTaskId.Value,
+                            "worker-loop-exception",
+                            ex.Message,
+                            1,
+                            "Worker.ExecuteAsync");
                     }
                     catch (Exception statusEx)
                     {
@@ -165,14 +205,29 @@ internal sealed class Worker : BackgroundService
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var result = await _modelClient.GenerateAsync(prompt, cancellationToken);
+            ModelResult result;
+            try
+            {
+                result = await _modelClient.GenerateAsync(prompt, cancellationToken);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                var transient = IsTransientException(ex);
+                result = ModelResult.Fail($"Model client exception: {ex.Message}", transient);
+            }
+
             if (result.Success)
             {
                 return new ModelExecutionResult(result, attempt);
             }
 
             lastFailure = result;
-            _logger.LogWarning("Model attempt {Attempt}/{MaxAttempts} failed: {Error}", attempt, maxAttempts, result.ErrorMessage);
+            _logger.LogWarning("Model attempt {Attempt}/{MaxAttempts} failed. Transient={Transient}. Error={Error}", attempt, maxAttempts, result.IsTransient, result.ErrorMessage);
+
+            if (!result.IsTransient)
+            {
+                break;
+            }
 
             if (attempt < maxAttempts)
             {
@@ -185,20 +240,50 @@ internal sealed class Worker : BackgroundService
 
     private async Task UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            status,
-            attemptCount,
-            result,
-            errorMessage
-        });
+        const int maxAttempts = 3;
 
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/status", content, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            _logger.LogWarning("Status update failed. Task={TaskId}, Status={Status}, Code={Code}", taskId, status, (int)response.StatusCode);
+            try
+            {
+                var payload = JsonSerializer.Serialize(new
+                {
+                    status,
+                    attemptCount,
+                    result,
+                    errorMessage
+                });
+
+                using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/status", content, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return;
+                }
+
+                var transient = IsTransientStatusCode(response.StatusCode);
+                _logger.LogWarning("Status update failed. Attempt={Attempt}/{MaxAttempts}, Task={TaskId}, Status={Status}, Code={Code}, Transient={Transient}",
+                    attempt, maxAttempts, taskId, status, (int)response.StatusCode, transient);
+
+                if (!transient || attempt == maxAttempts)
+                {
+                    return;
+                }
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                var transient = IsTransientException(ex);
+                _logger.LogWarning(ex, "Status update exception. Attempt={Attempt}/{MaxAttempts}, Task={TaskId}, Status={Status}, Transient={Transient}",
+                    attempt, maxAttempts, taskId, status, transient);
+
+                if (!transient || attempt == maxAttempts)
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
         }
     }
 
@@ -211,18 +296,64 @@ internal sealed class Worker : BackgroundService
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonSerializer.DeserializeAsync<TaskPayload>(stream, cancellationToken: cancellationToken);
+        return await JsonSerializer.DeserializeAsync<TaskPayload>(
+            stream,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            cancellationToken);
+    }
+
+    private async Task EnqueueDeadLetterAsync(
+        IDatabase redisDb,
+        Guid taskId,
+        string reason,
+        string? errorMessage,
+        int attemptCount,
+        string source)
+    {
+        try
+        {
+            var payload = JsonSerializer.Serialize(new DeadLetterMessage(
+                TaskId: taskId,
+                Reason: reason,
+                ErrorMessage: errorMessage,
+                AttemptCount: attemptCount,
+                CreatedAtUtc: DateTime.UtcNow,
+                Source: source));
+
+            await redisDb.ListRightPushAsync(_deadLetterQueueKey, payload);
+            _logger.LogWarning("Task moved to dead-letter queue. TaskId={TaskId}, Queue={Queue}, Reason={Reason}", taskId, _deadLetterQueueKey, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to enqueue dead-letter message. TaskId={TaskId}, Queue={Queue}", taskId, _deadLetterQueueKey);
+        }
     }
 
     private static string BuildPrompt(string title, string description)
     {
         return $"""
 You are an execution assistant.
-Generate a short implementation plan for the following task.
-Title: {title}
-Description: {description}
-Return concise bullet points.
+Use the task title and description as the source of truth.
+Return only the requested final deliverable. Do not include analysis, internal reasoning, or a restatement of the request.
+Keep the answer concise but complete, using bullet points unless the task requests another format.
+Task title: {title}
+Task description: {description}
 """;
+    }
+
+    internal static bool IsTransientStatusCode(HttpStatusCode statusCode)
+    {
+        var numeric = (int)statusCode;
+        return statusCode == HttpStatusCode.RequestTimeout
+               || statusCode == (HttpStatusCode)429
+               || numeric >= 500;
+    }
+
+    internal static bool IsTransientException(Exception exception)
+    {
+        return exception is HttpRequestException
+            or TaskCanceledException
+            or TimeoutException;
     }
 
     private static int ParseTimeout(string? raw)
@@ -293,7 +424,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             },
             temperature = 0.2,
             stream = false,
-            max_tokens = 256
+            max_tokens = 1024
         });
 
         var chatResult = await SendAndParseAsync("/v1/chat/completions", chatPayload, cancellationToken);
@@ -308,7 +439,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             prompt,
             temperature = 0.2,
             stream = false,
-            max_tokens = 256
+            max_tokens = 1024
         });
 
         var completionResult = await SendAndParseAsync("/v1/completions", completionPayload, cancellationToken);
@@ -322,25 +453,41 @@ internal sealed class PodmanAiLabModelClient : IModelClient
 
     private async Task<ModelResult> SendAndParseAsync(string route, string jsonPayload, CancellationToken cancellationToken)
     {
-        using var request = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync(route, request, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            return ModelResult.Fail($"{route} returned {(int)response.StatusCode}: {responseBody}");
-        }
+            using var request = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            using var response = await _httpClient.PostAsync(route, request, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        using var document = JsonDocument.Parse(responseBody);
-        if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+            if (!response.IsSuccessStatusCode)
+            {
+                var transient = IsTransientStatusCodeLocal(response.StatusCode);
+                return ModelResult.Fail($"{route} returned {(int)response.StatusCode}: {responseBody}", transient);
+            }
+
+            using var document = JsonDocument.Parse(responseBody);
+            if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+            {
+                return ModelResult.Fail($"{route} returned no choices.");
+            }
+
+            var content = ExtractContent(choices[0]);
+            return string.IsNullOrWhiteSpace(content)
+                ? ModelResult.Fail($"{route} returned empty content.")
+                : ModelResult.Ok(content.Trim());
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
         {
-            return ModelResult.Fail($"{route} returned no choices.");
+            return ModelResult.Fail($"{route} request failed: {ex.Message}", true);
         }
+    }
 
-        var content = ExtractContent(choices[0]);
-        return string.IsNullOrWhiteSpace(content)
-            ? ModelResult.Fail($"{route} returned empty content.")
-            : ModelResult.Ok(content.Trim());
+    private static bool IsTransientStatusCodeLocal(HttpStatusCode statusCode)
+    {
+        var numeric = (int)statusCode;
+        return statusCode == HttpStatusCode.RequestTimeout
+               || statusCode == (HttpStatusCode)429
+               || numeric >= 500;
     }
 
     private static string? ExtractContent(JsonElement firstChoice)
@@ -350,7 +497,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             var text = textElement.GetString();
             if (!string.IsNullOrWhiteSpace(text))
             {
-                return text;
+                return ExtractFinalChannel(text) ?? text;
             }
         }
 
@@ -360,11 +507,29 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             var messageContent = messageContentElement.GetString();
             if (!string.IsNullOrWhiteSpace(messageContent))
             {
-                return messageContent;
+                return ExtractFinalChannel(messageContent) ?? messageContent;
             }
         }
 
         return null;
+    }
+
+    private static string? ExtractFinalChannel(string content)
+    {
+        const string finalMarker = "<|channel|>final<|message|>";
+        var finalMarkerIndex = content.LastIndexOf(finalMarker, StringComparison.Ordinal);
+        if (finalMarkerIndex < 0)
+        {
+            return null;
+        }
+
+        var finalStart = finalMarkerIndex + finalMarker.Length;
+        var endMarkerIndex = content.IndexOf("<|end|>", finalStart, StringComparison.Ordinal);
+        var finalContent = endMarkerIndex < 0
+            ? content[finalStart..]
+            : content[finalStart..endMarkerIndex];
+
+        return finalContent.Trim();
     }
 }
 
@@ -375,13 +540,21 @@ internal sealed record ModelOptions(
     string? ApiKey,
     int TimeoutSeconds);
 
-internal sealed record ModelResult(bool Success, string? Content, string? ErrorMessage)
+internal sealed record ModelResult(bool Success, string? Content, string? ErrorMessage, bool IsTransient)
 {
-    public static ModelResult Ok(string content) => new(true, content, null);
-    public static ModelResult Fail(string error) => new(false, null, error);
+    public static ModelResult Ok(string content) => new(true, content, null, false);
+    public static ModelResult Fail(string error, bool isTransient = false) => new(false, null, error, isTransient);
 }
 
 internal sealed record TaskPayload(Guid Id, string Title, string Description, string Status);
+
+internal sealed record DeadLetterMessage(
+    Guid TaskId,
+    string Reason,
+    string? ErrorMessage,
+    int AttemptCount,
+    DateTime CreatedAtUtc,
+    string Source);
 
 internal static class TaskStatuses
 {

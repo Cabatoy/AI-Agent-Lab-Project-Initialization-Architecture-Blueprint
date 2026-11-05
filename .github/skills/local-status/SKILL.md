@@ -1,10 +1,9 @@
 ---
 name: local-status
 description: "Show the Agent Lab local Podman stack status and Control Plane URL"
+disable-model-invocation: true
 argument-hint: "Optional: name a service to inspect"
-agent: agent
 ---
-
 Inspect the Agent Lab local Podman stack using the repository lifecycle script.
 
 - On Windows, run `./scripts/local.ps1 status` from the repository root.

@@ -107,7 +107,7 @@ Worker, model çağrısı için opsiyonel provider iskeleti içerir. Varsayılan
 - PowerShell: `-LlmProvider auto|disabled|podman-ai-lab|ollama|openai-compatible`
 - Bash: `--llm-provider=auto|disabled|podman-ai-lab|ollama|openai-compatible`
 
-`bootstrap-dev -Reset` PowerShell akışında `-LlmProvider` verilmezse script provider seçimini interaktif olarak sorar. `podman-ai-lab` seçildiğinde çalışır Podman AI Lab model service container'larını listeler ve seçim yaptırır; ardından `ai-lab` alias'ı seçilen servise bağlanır.
+Etkileşimli terminalde PowerShell için `-LlmProvider`, Bash için `--llm-provider` verilmezse `bootstrap-dev`, servisleri başlattıktan sonra provider seçimini sorar. `podman-ai-lab` seçildiğinde çalışan model servislerini listeler ve seçim yaptırır; birden fazla servis varken `auto` seçilirse de hangi servisle devam edileceği sorulur. Seçilen servise `ai-lab` alias'ı bağlanır. Veri korumak için `-Reset`/`--reset` kullanmadan çalıştırabilirsiniz.
 
 Opsiyonel ek parametreler:
 

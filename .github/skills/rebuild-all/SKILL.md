@@ -1,10 +1,9 @@
 ---
 name: rebuild-all
 description: "Remove the Agent Lab local data and images, then build the stack from scratch"
+disable-model-invocation: true
 argument-hint: "This deletes local task data; confirmation is required"
-agent: agent
 ---
-
 Rebuild the Agent Lab local Podman stack from scratch.
 
 Before running anything, explain that this permanently deletes the PostgreSQL task records, Redis data, and images belonging to this Compose project. Ask the user for explicit confirmation and wait for it; invoking this prompt alone is not confirmation.

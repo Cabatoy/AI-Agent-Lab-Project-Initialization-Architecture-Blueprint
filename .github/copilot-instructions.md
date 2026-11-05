@@ -1,4 +1,4 @@
-# AI Agent Lab - Copilot Talimatları
+şi# AI Agent Lab - Copilot Talimatları
 
 ## Proje bağlamı
 
@@ -16,8 +16,9 @@ Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [dev
 
 - Kullanıcı açıkça istemedikçe uygulama kodu yazma, araç kurma, AWS kaynağı oluşturma/provision etme, ücretli servis başlatma, GitHub deposu açma, commit veya deploy yapma. Local bootstrap scriptleri ve ilgili prototip düzenlemeleri kullanıcı tarafından onaylandı.
 - Mimari konularda önce seçenekleri ve operasyon/maliyet etkilerini açıkla; karar gerektiren noktada kullanıcı onayı al.
-- Kullanıcı bir dokümantasyon değişikliği istediğinde yalnızca ilgili belgeleri güncelle; uygulama kapsamına kendiliğinden geçme.
+- Kullanıcı bir dokümantasyon değişikliği istediğinde yalnızca ilgili belgeleri güncelle; uygulama kapsamına kendiliğinden geçme. Her anlamlı proje değişikliğinden sonra kullanıcıya dokümantasyon setinin güncellenip güncellenmeyeceğini sor; yalnızca açık onay ile docs-md markdown ve docs PDF'lerini güncelle.
 - Local bootstrap sıfırlama akışında, kullanıcı yalnızca genel sağlayıcı seçenekleri yerine mevcut çalışan Podman AI Lab model hizmetleri arasında seçim yapmak isteyebilir.
+- Dokümantasyon, ayrı klasörlerde Türkçe ve İngilizce dosyalarla 'Yönetici Özeti + Teknik Ek' formatında hazırlanmalıdır; bulut planlaması AWS/Azure ve benzeri sağlayıcıları kapsamalı ve gelecekte fiyat/performans yeniden değerlendirmesi ve göç esnekliği içermelidir.
 
 ## Bağlayıcı ilkeler
 

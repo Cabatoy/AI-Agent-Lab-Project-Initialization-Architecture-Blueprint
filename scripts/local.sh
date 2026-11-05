@@ -7,6 +7,7 @@ shift || true
 confirm_data_removal=false
 reset_mode=false
 llm_provider='auto'
+llm_provider_explicit=false
 llm_endpoint=''
 llm_model=''
 llm_api_key=''
@@ -21,6 +22,7 @@ for arg in "$@"; do
       ;;
     --llm-provider=*)
       llm_provider="${arg#*=}"
+      llm_provider_explicit=true
       ;;
     --llm-endpoint=*)
       llm_endpoint="${arg#*=}"
@@ -94,18 +96,24 @@ get_api_base_url() {
   printf '%s' "$candidate"
 }
 
-get_ai_lab_container_name() {
+get_ai_lab_containers() {
   podman ps --format '{{.Names}} {{.Image}}' \
-    | awk 'BEGIN{IGNORECASE=1} /podman-ai-lab|llama-stack|instructlab|llama\.cpp|ramalama-llama-server|ramalama/ { print $1; exit }'
+    | awk 'BEGIN{IGNORECASE=1} /podman-ai-lab|llama-stack|instructlab|llama\.cpp|ramalama-llama-server|ramalama/ { print $1 }'
+}
+
+get_ai_lab_container_name() {
+  get_ai_lab_containers | head -n 1
 }
 
 connect_ai_lab_alias() {
   local network_name='enterprise_default'
   local alias_name='ai-lab'
-  local container_name
+  local container_name="${1:-}"
   local connect_output
 
-  container_name="$(get_ai_lab_container_name || true)"
+  if [[ -z "$container_name" ]]; then
+    container_name="$(get_ai_lab_container_name || true)"
+  fi
   if [[ -z "$container_name" ]]; then
     return 1
   fi
@@ -129,21 +137,111 @@ disconnect_ai_lab_from_network() {
   local container_name
   local disconnect_output
 
-  container_name="$(get_ai_lab_container_name || true)"
-  if [[ -z "$container_name" ]]; then
+  while IFS= read -r container_name; do
+    [[ -n "$container_name" ]] || continue
+
+    if disconnect_output="$(podman network disconnect "$network_name" "$container_name" 2>&1)"; then
+      printf 'AI Lab container detached from %s before recreate: %s\n' "$network_name" "$container_name"
+      continue
+    fi
+
+    if [[ "$disconnect_output" == *"is not connected"* || "$disconnect_output" == *"no such network"* || "$disconnect_output" == *"network not found"* || "$disconnect_output" == *"no static ips provided"* ]]; then
+      continue
+    fi
+
+    printf 'AI Lab network detach skipped for %s: %s\n' "$container_name" "$disconnect_output" >&2
+  done <<< "$(get_ai_lab_containers || true)"
+}
+
+select_llm_provider() {
+  local ai_lab_available="$1"
+  local options=(auto disabled)
+  local selection
+  local selected_index
+  local index
+
+  if [[ "$ai_lab_available" == true ]]; then
+    options+=(podman-ai-lab)
+  fi
+  options+=(ollama openai-compatible)
+
+  if [[ ! -t 0 ]]; then
+    echo 'Input is redirected. Using default provider selection: auto.' >&2
+    printf 'auto'
     return
   fi
 
-  if disconnect_output="$(podman network disconnect "$network_name" "$container_name" 2>&1)"; then
-    printf 'AI Lab container detached from %s before recreate.\n' "$network_name"
+  printf 'LLM provider selection:\n' >&2
+  for index in "${!options[@]}"; do
+    printf '[%s] %s\n' "$((index + 1))" "${options[$index]}" >&2
+  done
+
+  while true; do
+    read -r -p "Select provider number (1-${#options[@]}, Enter=1): " selection
+    if [[ -z "$selection" ]]; then
+      printf '%s' "${options[0]}"
+      return
+    fi
+
+    if [[ "$selection" =~ ^[0-9]+$ ]]; then
+      selected_index=$((selection - 1))
+      if (( selected_index >= 0 && selected_index < ${#options[@]} )); then
+        printf '%s' "${options[$selected_index]}"
+        return
+      fi
+    fi
+
+    echo 'Invalid selection. Try again.' >&2
+  done
+}
+
+select_ai_lab_container() {
+  local containers_text="$1"
+  local containers=()
+  local container_name
+  local selection
+  local selected_index
+  local index
+
+  while IFS= read -r container_name; do
+    [[ -n "$container_name" ]] && containers+=("$container_name")
+  done <<< "$containers_text"
+
+  if (( ${#containers[@]} == 0 )); then
+    return
+  fi
+  if (( ${#containers[@]} == 1 )); then
+    printf '%s' "${containers[0]}"
+    return
+  fi
+  if [[ ! -t 0 ]]; then
+    printf 'Input is redirected. Defaulting to the first detected AI Lab service: %s\n' "${containers[0]}" >&2
+    printf '%s' "${containers[0]}"
     return
   fi
 
-  if [[ "$disconnect_output" == *"is not connected"* || "$disconnect_output" == *"no such network"* || "$disconnect_output" == *"network not found"* || "$disconnect_output" == *"no static ips provided"* ]]; then
-    return
-  fi
+  printf 'Available Podman AI Lab model services:\n' >&2
+  for index in "${!containers[@]}"; do
+    printf '[%s] %s\n' "$((index + 1))" "${containers[$index]}" >&2
+  done
 
-  printf 'AI Lab network detach skipped: %s\n' "$disconnect_output" >&2
+  while true; do
+    read -r -p "Select AI Lab service number (1-${#containers[@]}, Enter=1): " selection
+    if [[ -z "$selection" ]]; then
+      printf '%s' "${containers[0]}"
+      return
+    fi
+
+    if [[ "$selection" =~ ^[0-9]+$ ]]; then
+      selected_index=$((selection - 1))
+      if (( selected_index >= 0 && selected_index < ${#containers[@]} )); then
+        printf '%s' "${containers[$selected_index]}"
+        return
+      fi
+    fi
+
+    echo 'Invalid selection. Try again.' >&2
+  done
 }
 
 get_model_id_from_endpoint() {
@@ -162,12 +260,33 @@ get_model_id_from_endpoint() {
   printf '%s' "$payload" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1
 }
 
+get_model_id_from_host_port() {
+  local container_name="$1"
+  local port_output
+  local port
+  local payload
+
+  if [[ -z "$container_name" ]]; then
+    return
+  fi
+
+  port_output="$(podman port "$container_name" '8000/tcp' 2>/dev/null || true)"
+  port="$(printf '%s\n' "$port_output" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  if [[ -z "$port" ]]; then
+    return
+  fi
+
+  payload="$(curl --silent --show-error --max-time 5 "http://localhost:$port/v1/models" 2>/dev/null || true)"
+  printf '%s' "$payload" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1
+}
+
 resolve_model_configuration() {
   local provider_selection="$1"
   local ai_lab_alias_ready="$2"
   local requested_endpoint="$3"
   local requested_model="$4"
   local requested_api_key="$5"
+  local ai_lab_container_name="${6:-}"
 
   local provider="$provider_selection"
   local endpoint="$requested_endpoint"
@@ -197,6 +316,9 @@ resolve_model_configuration() {
 
       if [[ -z "$model" ]]; then
         model="$(get_model_id_from_endpoint "$endpoint" || true)"
+      fi
+      if [[ -z "$model" ]]; then
+        model="$(get_model_id_from_host_port "$ai_lab_container_name" || true)"
       fi
 
       if [[ -z "$model" ]]; then
@@ -340,13 +462,38 @@ case "$action" in
       podman compose down --remove-orphans
     fi
 
-    podman compose up -d --build
+    podman compose up -d postgres redis control-plane
+
+    ai_lab_containers_text="$(get_ai_lab_containers || true)"
+    ai_lab_containers=()
+    while IFS= read -r container_name; do
+      [[ -n "$container_name" ]] && ai_lab_containers+=("$container_name")
+    done <<< "$ai_lab_containers_text"
     alias_ready='false'
-    if connect_ai_lab_alias; then
+    if (( ${#ai_lab_containers[@]} > 0 )); then
       alias_ready='true'
     fi
 
-    model_config="$(resolve_model_configuration "$llm_provider" "$alias_ready" "$llm_endpoint" "$llm_model" "$llm_api_key")"
+    if [[ "$llm_provider_explicit" != true ]]; then
+      llm_provider="$(select_llm_provider "$alias_ready")"
+    fi
+
+    if [[ "$llm_provider" == 'auto' && ${#ai_lab_containers[@]} -gt 0 ]]; then
+      llm_provider='podman-ai-lab'
+    fi
+
+    if [[ "$llm_provider" == 'podman-ai-lab' ]]; then
+      selected_ai_lab_container="$(select_ai_lab_container "$ai_lab_containers_text")"
+      if [[ -n "$selected_ai_lab_container" ]]; then
+        disconnect_ai_lab_from_network
+        alias_ready='false'
+        if connect_ai_lab_alias "$selected_ai_lab_container"; then
+          alias_ready='true'
+        fi
+      fi
+    fi
+
+    model_config="$(resolve_model_configuration "$llm_provider" "$alias_ready" "$llm_endpoint" "$llm_model" "$llm_api_key" "${selected_ai_lab_container:-}")"
     IFS='|' read -r resolved_provider resolved_endpoint resolved_model resolved_api_key resolved_message <<< "$model_config"
 
     set_local_env_file "$resolved_provider" "$resolved_endpoint" "$resolved_model" "$resolved_api_key"

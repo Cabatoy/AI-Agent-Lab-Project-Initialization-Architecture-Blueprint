@@ -10,6 +10,13 @@
 	<PackageReference Include="Dapper" Version="2.1.35" />
 	<PackageReference Include="Npgsql" Version="8.0.4" />
 	<PackageReference Include="StackExchange.Redis" Version="2.8.31" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+	  <_Parameter1>ControlPlane.Api.Tests</_Parameter1>
+	</AssemblyAttribute>
   </ItemGroup>
 
 </Project>

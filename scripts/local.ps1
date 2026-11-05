@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('new-build', 'rebuild-all', 'delete-all', 'status', 'bootstrap-dev')]
-    [string]$Action,
+    [Parameter(Mandatory = $false, Position = 0)]
+    [ValidateSet('help', 'new-build', 'rebuild-all', 'delete-all', 'status', 'bootstrap-dev')]
+    [string]$Action = 'help',
     [switch]$ConfirmDataRemoval,
     [switch]$AllowWslNetworkingChange,
     [switch]$Reset,
@@ -18,6 +18,38 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
     $PSNativeCommandUseErrorActionPreference = $false
 }
 $repositoryRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+
+function Show-Usage {
+    Write-Host 'Usage:'
+    Write-Host '  ./scripts/local.ps1 <action> [options]'
+    Write-Host ''
+    Write-Host 'Actions:'
+    Write-Host '  help           Show this command list and examples.'
+    Write-Host '  new-build      Build and start stack while preserving data.'
+    Write-Host '  rebuild-all    Rebuild all images and remove local data volumes.'
+    Write-Host '  delete-all     Remove this repository stack resources and data volumes.'
+    Write-Host '  status         Show compose service status and resolved Control Plane URL.'
+    Write-Host '  bootstrap-dev  Guided local bootstrap with model provider options.'
+    Write-Host ''
+    Write-Host 'Important flags:'
+    Write-Host '  -AllowWslNetworkingChange   Required for networking changes on Windows.'
+    Write-Host '  -ConfirmDataRemoval         Required for rebuild-all and delete-all.'
+    Write-Host '  -Reset                      bootstrap-dev only; removes local task data first.'
+    Write-Host '  -LlmProvider                bootstrap-dev: auto|disabled|podman-ai-lab|ollama|openai-compatible'
+    Write-Host '  -LlmEndpoint                bootstrap-dev: custom endpoint override.'
+    Write-Host '  -LlmModel                   bootstrap-dev: custom model id override.'
+    Write-Host '  -LlmApiKey                  bootstrap-dev: API key for external provider.'
+    Write-Host ''
+    Write-Host 'Examples:'
+    Write-Host '  ./scripts/local.ps1 help'
+    Write-Host '  ./scripts/local.ps1 status'
+    Write-Host '  ./scripts/local.ps1 new-build -AllowWslNetworkingChange'
+    Write-Host '  ./scripts/local.ps1 rebuild-all -ConfirmDataRemoval -AllowWslNetworkingChange'
+    Write-Host '  ./scripts/local.ps1 delete-all -ConfirmDataRemoval'
+    Write-Host '  ./scripts/local.ps1 bootstrap-dev -LlmProvider podman-ai-lab'
+    Write-Host '  ./scripts/local.ps1 bootstrap-dev -Reset -LlmProvider ollama -LlmEndpoint http://host.containers.internal:11434 -LlmModel llama3.1'
+    Write-Host '  ./scripts/local.ps1 bootstrap-dev -LlmProvider openai-compatible -LlmEndpoint https://api.openai.com -LlmModel gpt-4o-mini -LlmApiKey <SECRET>'
+}
 
 function Invoke-Podman {
     param([string[]]$Arguments)
@@ -76,9 +108,18 @@ function Initialize-PodmanMachine {
 
     if ($Action -eq 'new-build' -or $Action -eq 'rebuild-all') {
         $cgroupPath = '/sys/fs/cgroup/non-systemd/cgroup.subtree_control'
-        $cgroupState = (& podman machine ssh -- cat $cgroupPath 2>$null) -join ' '
-        if ($LASTEXITCODE -eq 0 -and $cgroupState -notmatch '(^|\s)pids(\s|$)') {
-            Invoke-Podman @('machine', 'ssh', '--', 'sudo', 'sh', '-c', "echo +pids > $cgroupPath")
+        $cgroupControllers = (& podman machine ssh -- cat '/sys/fs/cgroup/non-systemd/cgroup.controllers' 2>$null) -join ' '
+        if ($LASTEXITCODE -eq 0 -and $cgroupControllers -notmatch '(^|\s)pids(\s|$)') {
+            Write-Warning 'The pids controller is not delegated to the non-systemd cgroup; continuing without changing the parent cgroup.'
+        }
+        elseif ($LASTEXITCODE -eq 0) {
+            $cgroupState = (& podman machine ssh -- cat $cgroupPath 2>$null) -join ' '
+            if ($LASTEXITCODE -eq 0 -and $cgroupState -notmatch '(^|\s)pids(\s|$)') {
+                $cgroupOutput = & podman machine ssh -- "sudo sh -c 'echo +pids > $cgroupPath'" 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Could not enable the pids controller; continuing: $($cgroupOutput -join ' ')"
+                }
+            }
         }
     }
 
@@ -385,7 +426,7 @@ function Select-LlmProviderFromPrompt {
     $options += [pscustomobject]@{ Value = 'ollama'; Description = 'ollama (host.containers.internal:11434)' }
     $options += [pscustomobject]@{ Value = 'openai-compatible'; Description = 'openai-compatible (requires endpoint/model)' }
 
-    Write-Host 'Reset mode LLM provider selection:'
+    Write-Host 'LLM provider selection:'
     for ($index = 0; $index -lt $options.Count; $index++) {
         Write-Host "[$($index + 1)] $($options[$index].Description)"
     }
@@ -411,7 +452,8 @@ function Resolve-ModelConfiguration {
         [bool]$AiLabAliasReady,
         [string]$RequestedEndpoint,
         [string]$RequestedModel,
-        [string]$RequestedApiKey
+        [string]$RequestedApiKey,
+        [string]$AiLabContainerName
     )
 
     $provider = $ProviderSelection
@@ -445,6 +487,12 @@ function Resolve-ModelConfiguration {
 
             if (-not $model) {
                 $detectedModels = Get-ModelIdsFromEndpoint -Endpoint $endpoint
+                if ($detectedModels.Count -eq 0 -and $AiLabContainerName) {
+                    $hostPortModelId = Get-AiLabModelIdFromHostPort -ContainerName $AiLabContainerName
+                    if ($hostPortModelId) {
+                        $detectedModels = @($hostPortModelId)
+                    }
+                }
                 $model = Select-ModelIdFromCandidates -Candidates $detectedModels -Endpoint $endpoint
             }
 
@@ -639,6 +687,11 @@ function Write-ActiveModelSummary {
     }
 }
 
+if ($Action -eq 'help') {
+    Show-Usage
+    return
+}
+
 if (($Action -eq 'rebuild-all' -or $Action -eq 'delete-all') -and -not $ConfirmDataRemoval) {
     throw 'This operation removes local task data. Rerun with -ConfirmDataRemoval after confirming.'
 }
@@ -693,12 +746,18 @@ try {
             $aliasReady = Connect-AiLabAlias
 
             $providerSelection = $LlmProvider
-            if ($Reset -and -not $PSBoundParameters.ContainsKey('LlmProvider')) {
+            $selectedAiLabContainer = $null
+            if (-not $PSBoundParameters.ContainsKey('LlmProvider')) {
                 $providerSelection = Select-LlmProviderFromPrompt -AiLabAliasReady $aliasReady
             }
 
+            $availableAiLabContainers = @(Get-AiLabContainers)
+            if ($providerSelection -eq 'auto' -and $availableAiLabContainers.Count -gt 1) {
+                $providerSelection = 'podman-ai-lab'
+            }
+
             if ($providerSelection -eq 'podman-ai-lab') {
-                $selectedAiLabContainer = Select-AiLabContainerFromPrompt -Containers (Get-AiLabContainers)
+                $selectedAiLabContainer = Select-AiLabContainerFromPrompt -Containers $availableAiLabContainers
                 if ($selectedAiLabContainer) {
                     Disconnect-AiLabFromNetwork
                     $aliasReady = Connect-AiLabAlias -ContainerName $selectedAiLabContainer
@@ -710,7 +769,8 @@ try {
                 -AiLabAliasReady $aliasReady `
                 -RequestedEndpoint $LlmEndpoint `
                 -RequestedModel $LlmModel `
-                -RequestedApiKey $LlmApiKey
+                -RequestedApiKey $LlmApiKey `
+                -AiLabContainerName $selectedAiLabContainer
 
             Set-LocalEnvFile -Provider $modelConfig.Provider -Endpoint $modelConfig.Endpoint -Model $modelConfig.Model -ApiKey $modelConfig.ApiKey
             Write-Host $modelConfig.Message

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VisioDocument xmlns="http://schemas.microsoft.com/visio/2003/core"
+			   xmlns:vx="http://schemas.microsoft.com/visio/2006/extension">
+  <DocumentProperties>
+	<Title>AI Agent Lab - Phase Epic Task Roadmap</Title>
+	<Subject>Roadmap Relationships</Subject>
+	<Creator>GitHub Copilot</Creator>
+	<Company>AI Agent Lab</Company>
+	<Language>tr-TR</Language>
+  </DocumentProperties>
+
+  <Pages>
+	<Page ID="1" NameU="Roadmap" Name="Roadmap">
+	  <PageSheet>
+		<PageProps>
+		  <PageWidth>40</PageWidth>
+		  <PageHeight>25</PageHeight>
+		</PageProps>
+	  </PageSheet>
+
+	  <Shapes>
+		<!-- Phases -->
+		<Shape ID="100" NameU="Phase1" Type="Shape">
+		  <XForm><PinX>5</PinX><PinY>20</PinY><Width>7</Width><Height>2</Height></XForm>
+		  <Text>Faz 1\nFoundation Hardening</Text>
+		</Shape>
+		<Shape ID="110" NameU="Phase2" Type="Shape">
+		  <XForm><PinX>14</PinX><PinY>20</PinY><Width>7</Width><Height>2</Height></XForm>
+		  <Text>Faz 2\nOrchestrator + Planlama</Text>
+		</Shape>
+		<Shape ID="120" NameU="Phase3" Type="Shape">
+		  <XForm><PinX>23</PinX><PinY>20</PinY><Width>7</Width><Height>2</Height></XForm>
+		  <Text>Faz 3\nAgent Workforce</Text>
+		</Shape>
+		<Shape ID="130" NameU="Phase4" Type="Shape">
+		  <XForm><PinX>32</PinX><PinY>20</PinY><Width>7</Width><Height>2</Height></XForm>
+		  <Text>Faz 4\nUI + Governance</Text>
+		</Shape>
+
+		<!-- Epic row Phase 1 -->
+		<Shape ID="101" NameU="Epic11" Type="Shape">
+		  <XForm><PinX>5</PinX><PinY>16.5</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 1.1\nDomain + State Machine</Text>
+		</Shape>
+		<Shape ID="102" NameU="Epic12" Type="Shape">
+		  <XForm><PinX>5</PinX><PinY>14.2</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 1.2\nReliability + Retry</Text>
+		</Shape>
+		<Shape ID="103" NameU="Epic13" Type="Shape">
+		  <XForm><PinX>5</PinX><PinY>11.9</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 1.3\nTesting Baseline</Text>
+		</Shape>
+
+		<!-- Epic row Phase 2 -->
+		<Shape ID="111" NameU="Epic21" Type="Shape">
+		  <XForm><PinX>14</PinX><PinY>16.5</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 2.1\nRequest -&gt; Plan</Text>
+		</Shape>
+		<Shape ID="112" NameU="Epic22" Type="Shape">
+		  <XForm><PinX>14</PinX><PinY>14.2</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 2.2\nDependency Graph</Text>
+		</Shape>
+		<Shape ID="113" NameU="Epic23" Type="Shape">
+		  <XForm><PinX>14</PinX><PinY>11.9</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 2.3\nApproval Gates</Text>
+		</Shape>
+
+		<!-- Epic row Phase 3 -->
+		<Shape ID="121" NameU="Epic31" Type="Shape">
+		  <XForm><PinX>23</PinX><PinY>16.5</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 3.1\nDefinition/Instance</Text>
+		</Shape>
+		<Shape ID="122" NameU="Epic32" Type="Shape">
+		  <XForm><PinX>23</PinX><PinY>14.2</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 3.2\nAssignment + Metrics</Text>
+		</Shape>
+		<Shape ID="123" NameU="Epic33" Type="Shape">
+		  <XForm><PinX>23</PinX><PinY>11.9</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 3.3\nSecurity Boundaries</Text>
+		</Shape>
+
+		<!-- Epic row Phase 4 -->
+		<Shape ID="131" NameU="Epic41" Type="Shape">
+		  <XForm><PinX>32</PinX><PinY>16.5</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 4.1\nChat + Dashboard</Text>
+		</Shape>
+		<Shape ID="132" NameU="Epic42" Type="Shape">
+		  <XForm><PinX>32</PinX><PinY>14.2</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 4.2\nAudit + Cost Visibility</Text>
+		</Shape>
+		<Shape ID="133" NameU="Epic43" Type="Shape">
+		  <XForm><PinX>32</PinX><PinY>11.9</PinY><Width>7</Width><Height>1.8</Height></XForm>
+		  <Text>Epik 4.3\nQuality Gates</Text>
+		</Shape>
+
+		<!-- Relationship lines -->
+		<Shape ID="201" NameU="RelP1P2" Type="Shape">
+		  <XForm1D><BeginX>8.5</BeginX><BeginY>20</BeginY><EndX>10.5</EndX><EndY>20</EndY></XForm1D>
+		  <Text>depends on</Text>
+		</Shape>
+		<Shape ID="202" NameU="RelP2P3" Type="Shape">
+		  <XForm1D><BeginX>17.5</BeginX><BeginY>20</BeginY><EndX>19.5</EndX><EndY>20</EndY></XForm1D>
+		  <Text>depends on</Text>
+		</Shape>
+		<Shape ID="203" NameU="RelP3P4" Type="Shape">
+		  <XForm1D><BeginX>26.5</BeginX><BeginY>20</BeginY><EndX>28.5</EndX><EndY>20</EndY></XForm1D>
+		  <Text>depends on</Text>
+		</Shape>
+
+		<!-- Cross-phase critical chain -->
+		<Shape ID="210" NameU="CriticalChain1" Type="Shape">
+		  <XForm1D><BeginX>5</BeginX><BeginY>9</BeginY><EndX>14</EndX><EndY>9</EndY></XForm1D>
+		  <Text>State machine -&gt; Plan graph</Text>
+		</Shape>
+		<Shape ID="211" NameU="CriticalChain2" Type="Shape">
+		  <XForm1D><BeginX>14</BeginX><BeginY>8</BeginY><EndX>23</EndX><EndY>8</EndY></XForm1D>
+		  <Text>Plan graph -&gt; Agent assignment</Text>
+		</Shape>
+		<Shape ID="212" NameU="CriticalChain3" Type="Shape">
+		  <XForm1D><BeginX>23</BeginX><BeginY>7</BeginY><EndX>32</EndX><EndY>7</EndY></XForm1D>
+		  <Text>Agent assignment -&gt; Governance UI</Text>
+		</Shape>
+
+		<!-- Legend -->
+		<Shape ID="300" NameU="Legend" Type="Shape">
+		  <XForm><PinX>20</PinX><PinY>3.5</PinY><Width>20</Width><Height>2.2</Height></XForm>
+		  <Text>Legend:\nTop row = Phases\nMiddle rows = Epics\nLine shapes = dependency / critical relationship</Text>
+		</Shape>
+	  </Shapes>
+	</Page>
+  </Pages>
+</VisioDocument>

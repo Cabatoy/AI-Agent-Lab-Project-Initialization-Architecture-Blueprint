@@ -1,10 +1,9 @@
 ---
 name: review-local-bootstrap
 description: "Review the local Podman bootstrap, lifecycle scripts, and setup documentation without changing files or deleting data"
+disable-model-invocation: true
 argument-hint: "Optional: focus on scripts, networking, data safety, or documentation consistency"
-agent: agent
 ---
-
 Perform a read-only code review of the Agent Lab local Podman bootstrap changes in this repository. Do not edit files, stage/commit changes, install tools, change Podman/WSL machine settings, or provision cloud resources.
 
 Review the relevant tracked and untracked files, including `docker-compose.yml`, `scripts/local.ps1`, `scripts/local.sh`, `.github/prompts/`, `.github/copilot-instructions.md`, `README.md`, the changed architecture documents, and the Podman ADR. Read the Control Plane and Worker implementation where needed to verify the documented workflow. Ignore generated `bin/` and `obj/` outputs.
