@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from './api';
+import { deriveTitle } from './limits';
 
 const task = {
   id: '01234567-89ab-cdef-0123-456789abcdef', title: 'Task', description: '',
@@ -62,5 +63,96 @@ describe('Control Plane API contract', () => {
     const assertion = expect(request).rejects.toMatchObject({ kind: 'timeout' });
     await vi.advanceTimersByTimeAsync(8000);
     await assertion;
+  });
+});
+
+describe('Draft task creation', () => {
+  const input = { title: 'Synthetic', description: 'Synthetic private request text' };
+  const created = { ...task, title: input.title, description: input.description };
+
+  it('sends exactly one JSON POST with the CSRF header and validates the Draft response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(created, { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await api.createTask(input)).toEqual(created);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/tasks');
+    expect(options.method).toBe('POST');
+    expect(options.credentials).toBe('omit');
+    expect(options.headers).toMatchObject({ 'Content-Type': 'application/json', 'X-HIC-Request': 'command-center' });
+    expect(JSON.parse(options.body)).toEqual(input);
+  });
+
+  it('validates input before making a request', async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    await expect(api.createTask({ title: ' ', description: 'x' })).rejects.toMatchObject({ kind: 'invalid' });
+    await expect(api.createTask({ title: 'x', description: '' })).rejects.toMatchObject({ kind: 'invalid' });
+    await expect(api.createTask({ title: 'x', description: 'y'.repeat(8001) })).rejects.toMatchObject({ kind: 'invalid' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports rejected requests as definitely not created, with a bounded server message', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: 'Title is required.' }, { status: 400 }))
+      .mockResolvedValueOnce(new Response('Requests must originate from the HIC dashboard.', { status: 403, headers: { 'X-HIC-Proxy-Error': 'rejected' } }))
+      .mockResolvedValueOnce(new Response('', { status: 502, headers: { 'X-HIC-Proxy-Error': 'unreachable' } })));
+    await expect(api.createTask(input)).rejects.toMatchObject({ kind: 'http', status: 400, outcomeUnknown: false,
+      message: 'Control Plane returned HTTP 400: Title is required. No task was created.' });
+    await expect(api.createTask(input)).rejects.toMatchObject({ kind: 'http', status: 403, outcomeUnknown: false,
+      message: expect.stringContaining('The local proxy rejected the request (HTTP 403)') });
+    await expect(api.createTask(input)).rejects.toMatchObject({ kind: 'network', outcomeUnknown: false,
+      message: 'Control Plane is unreachable. No task was created.' });
+  });
+
+  it('treats timeouts, interruptions, server errors and malformed responses as uncertain', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('network'))
+      .mockResolvedValueOnce(new Response('', { status: 504, headers: { 'X-HIC-Proxy-Error': 'timeout' } }))
+      .mockResolvedValueOnce(new Response('', { status: 502, headers: { 'X-HIC-Proxy-Error': 'interrupted' } }))
+      .mockResolvedValueOnce(Response.json({ error: 'boom' }, { status: 500 }))
+      .mockResolvedValueOnce(new Response('{', { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ ...created, status: 'Approved' }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(created, { status: 200 })));
+    for (let i = 0; i < 7; i++) {
+      const error = await api.createTask(input).catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ outcomeUnknown: true });
+      expect((error as Error).message).toMatch(/may or may not have been created/);
+      expect((error as Error).message).not.toContain(input.description);
+    }
+  });
+
+  it('ignores multi-line or long server messages that could leak request content', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: `bad\n${input.description}` }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ error: 'x'.repeat(201) }, { status: 400 })));
+    for (let i = 0; i < 2; i++) {
+      const error = await api.createTask(input).then(() => null, (reason: unknown) => reason as Error);
+      expect(error?.message).toBe('Control Plane returned HTTP 400. No task was created.');
+    }
+  });
+
+  it('times out a stalled create without retrying', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const assertion = expect(api.createTask(input)).rejects.toMatchObject({ kind: 'timeout', outcomeUnknown: true });
+    await vi.advanceTimersByTimeAsync(15000);
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('title derivation', () => {
+  it('uses the first non-empty line, collapses whitespace and shortens at a word boundary', () => {
+    expect(deriveTitle('\n\n   Fix   the login   bug  \nmore details')).toBe('Fix the login bug');
+    const long = deriveTitle(`${'word '.repeat(40)}end`);
+    expect(long.length).toBeLessThanOrEqual(80);
+    expect(long.endsWith('…')).toBe(true);
+    expect(long).not.toMatch(/ …$/);
+    expect(deriveTitle('x'.repeat(200))).toHaveLength(80);
+    expect(deriveTitle('   ')).toBe('');
   });
 });

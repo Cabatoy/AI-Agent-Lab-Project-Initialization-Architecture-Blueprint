@@ -1,25 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Health, type Plan, type Task } from './api';
+import { CommandCenter } from './CommandCenter';
+import { Status } from './components';
 
-type Page = 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
+type Page = 'Command Center' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
 type Resource<T> = { data: T | null; error: string | null };
 const pages: { name: Page; icon: string }[] = [
+  { name: 'Command Center', icon: '⌘' },
   { name: 'Overview', icon: '◫' }, { name: 'Tasks', icon: '▤' },
   { name: 'Plans', icon: '◇' }, { name: 'Agents', icon: '⬡' },
   { name: 'Models & Providers', icon: '◈' }, { name: 'Approvals', icon: '✓' },
 ];
+const subtitles: Partial<Record<Page, string>> = {
+  'Command Center': 'Describe work in natural language and save it as a Draft task.',
+  Overview: 'Your local software factory, in view.',
+  Tasks: 'Inspect task state from the Control Plane.',
+  Plans: 'Review available execution plans.',
+};
 const initial = <T,>(): Resource<T> => ({ data: null, error: null });
 const displayDate = (value: string) => new Date(value).toLocaleString();
 const message = (reason: unknown) => reason instanceof Error ? reason.message : 'Unexpected error.';
 const fromResult = <T,>(result: PromiseSettledResult<T>): Resource<T> =>
   result.status === 'fulfilled' ? { data: result.value, error: null } : { data: null, error: message(result.reason) };
-
-function Status({ value }: { value: string }) {
-  const tone = ['completed', 'approved', 'ok'].includes(value.toLowerCase()) ? 'good'
-    : ['failed', 'rejected', 'cancelled'].includes(value.toLowerCase()) ? 'bad'
-    : ['executing', 'inprogress', 'retrying'].includes(value.toLowerCase()) ? 'active' : 'neutral';
-  return <span className={`status ${tone}`}><span aria-hidden="true">●</span> {value}</span>;
-}
 
 function State<T>({ resource, loading, empty, children }: {
   resource: Resource<T[]>, loading: boolean, empty: string, children: (data: T[]) => React.ReactNode
@@ -99,9 +101,11 @@ export default function App() {
     setHealth(fromResult(h)); setTasks(fromResult(t)); setPlans(fromResult(p));
     if (h.status === 'fulfilled' && t.status === 'fulfilled' && p.status === 'fulfilled') setLastRefresh(new Date());
     setLoading(false);
+    return t.status === 'fulfilled';
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   const selectTask = (id: string) => { setSelected(id); setPage('Tasks'); };
+  const navigate = (next: Page) => { setPage(next); setSelected(null); };
   const counts = tasks.data?.reduce<Record<string, number>>((acc, item) => {
     acc[item.status] = (acc[item.status] ?? 0) + 1; return acc;
   }, {});
@@ -111,21 +115,26 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">H</div><div><strong>HIC</strong><span>CONTROL PLANE</span></div></div>
       <div className="nav-label">WORKSPACE</div>
-      <nav aria-label="Main navigation">{pages.map(item => <button key={item.name} className={`nav-item ${page === item.name ? 'selected' : ''}`}
-        aria-current={page === item.name ? 'page' : undefined} onClick={() => { setPage(item.name); setSelected(null); }}>
+      <nav aria-label="Main navigation">{pages.map(item => <button key={item.name} className={`nav-item ${page === item.name ? 'selected' : ''} ${item.name === 'Command Center' ? 'nav-command' : ''}`}
+        aria-current={page === item.name ? 'page' : undefined} onClick={() => navigate(item.name)}>
         <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.name}
         {['Agents', 'Models & Providers', 'Approvals'].includes(item.name) && <span className="nav-soon">SOON</span>}
       </button>)}</nav>
-      <div className="sidebar-bottom"><span className="side-dot" /> LOCAL WORKSPACE <p>Read-only dashboard</p></div>
+      <div className="sidebar-bottom"><span className="side-dot" /> LOCAL WORKSPACE <p>Read data · create Draft tasks only</p></div>
     </aside>
     <main id="main" className="main" tabIndex={-1}>
       <header className="topbar"><div><span className="breadcrumb">HIC / WORKSPACE /</span> <span>{page.toUpperCase()}</span></div>
-        <div className="top-actions"><span className="read-only"><span>●</span> READ ONLY</span>
+        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : 'READ ONLY'}</span>
+          {page !== 'Command Center' && <button className="secondary" onClick={() => navigate('Command Center')}>＋ New task</button>}
           <button className="refresh" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : '↻  Refresh'}</button></div></header>
       <div className="content"><div className="page-heading"><div><p className="eyebrow">HUMAN IN CONTROL</p>
-        <h1>{page}</h1><p className="subtitle">{page === 'Overview' ? 'Your local software factory, in view.' : page === 'Tasks' ? 'Inspect task state from the Control Plane.' : page === 'Plans' ? 'Review available execution plans.' : 'A clear view of what comes next.'}</p></div>
+        <h1>{page}</h1><p className="subtitle">{subtitles[page] ?? 'A clear view of what comes next.'}</p></div>
         <div className="last-refresh"><span>LAST SUCCESSFUL REFRESH</span><strong>{lastRefresh ? displayDate(lastRefresh.toISOString()) : 'Not yet available'}</strong></div></div>
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
+      <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
+      {page === 'Command Center' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Recent tasks</h2></div>
+        <button className="text-button" onClick={() => navigate('Tasks')}>View all →</button></div>
+        <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>}
       {page === 'Overview' && <>
         <div className="metrics"><section className="metric"><span className="label">CONTROL PLANE</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Connected' : 'Unexpected response') : 'Checking…'}</strong>
           <p>{health.error ?? 'Health endpoint only · not a dependency health check'}</p></section>
@@ -136,8 +145,9 @@ export default function App() {
             : !Object.keys(counts).length ? <div className="notice">No task statuses to display.</div>
               : <div className="status-list">{Object.entries(counts).map(([status, count]) => <div key={status}><Status value={status} /><strong>{count}</strong></div>)}</div>}</section>
           <section className="panel"><p className="eyebrow">SYSTEM BOUNDARY</p><h2>Operational state</h2>
-            <p className="muted">This dashboard reads existing Control Plane data. It does not manage tasks or execute agents.</p>
+            <p className="muted">This dashboard reads existing Control Plane data and can create Draft tasks from the Command Center. It does not approve, dispatch or execute tasks.</p>
             <div className="boundary"><span>API health</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Responding' : 'Unexpected response') : 'Checking'}</strong></div>
+            <div className="boundary"><span>Task creation</span><strong>Draft only</strong></div>
             <div className="boundary"><span>Recovery (R3 / R4)</span><strong>Pending</strong></div>
             <div className="boundary"><span>Approval workflow</span><strong>Not implemented</strong></div></section></div>
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">LATEST ACTIVITY</p><h2>Recent tasks</h2></div><button className="text-button" onClick={() => setPage('Tasks')}>View all →</button></div>
