@@ -2,8 +2,10 @@
 
 ## Yönetici özeti
 
-Bu ilk, **salt okunur** HIC ekranı, mevcut Control Plane'in task ve plan
-bilgilerini gösterir. Control Plane tek task/execution otoritesidir; bu
+Bu yerel HIC ekranı, mevcut Control Plane'in task ve plan bilgilerini gösterir.
+**Command Center** ekranından doğal dilde iş tanımı yazılarak yalnızca **Draft**
+durumunda task oluşturulabilir; Draft task onaylanmaz, kuyruğa alınmaz, ajan
+veya model çalıştırılmaz. Control Plane tek task/execution otoritesidir; bu
 uygulama ayrı bir task deposu, scheduler veya backend eklemez. Ajan yönetimi,
 provider routing ve onay işlemleri uygulanmamıştır. R3/R4 recovery ve tam P9
 approval workflow hâlâ açıktır.
@@ -49,10 +51,30 @@ machine IP'si veya uzak bir API bu sürümde desteklenmez; güvenli bir loopback
 erişimi ayrıca mevcut değilse altyapıyı değiştirmeden API erişimi kullanılamaz.
 
 Geliştirme proxy'si yalnız şu GET isteklerini iletir: `/health`, `/tasks`,
-`/tasks/{guid}` ve `/plans`. Diğer yöntemler, yollar ve query string'ler
-reddedilir; browser credential/header'ları upstream'e aktarılmaz. İstekler
-zaman aşımına uğrar. Bu proxy bir authentication veya authorization mekanizması
-değildir; Control Plane'i doğrudan erişime karşı korumaz.
+`/tasks/{guid}` ve `/plans`. Tek yazma isteği `POST /api/tasks`'tır (Draft
+oluşturma). Diğer yöntemler, yollar (ör. `/approve`, `/retry`) ve query
+string'ler reddedilir; browser cookie/credential/header'ları upstream'e
+aktarılmaz. Tüm `/api` isteklerinde `Host` başlığı `127.0.0.1:<port>` olmalıdır
+(DNS rebinding koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
+
+`POST /api/tasks` yalnız şu koşullarda iletilir:
+
+- `Origin` tam olarak `http://127.0.0.1:<port>`, `Sec-Fetch-Site` yok veya
+  `same-origin` ve `X-HIC-Request: command-center` başlığı mevcut (CSRF
+  koruması).
+- `Authorization`/`Proxy-Authorization` yok; `Content-Type: application/json`,
+  sıkıştırılmamış gövde, en fazla 64 KiB, geçerli UTF-8 JSON.
+- Gövde yalnız `title` (zorunlu, en fazla 200 karakter) ve `description`
+  (zorunlu, en fazla 8.000 karakter) alanlarını içerir; proxy bu iki alanı
+  yeniden serialize ederek iletir.
+- Ret yanıtları `text/plain` ve `X-HIC-Proxy-Error: rejected` başlığıyla döner;
+  kullanıcı girdisi yanıtta tekrarlanmaz.
+
+Upstream ve gövde okuma zaman aşımı 8 saniyedir; bağlantı kurulamazsa 502
+(`unreachable`), bağlantı yarıda kesilirse 502 (`interrupted`), zaman aşımında
+504 döner. Bu proxy bir authentication veya authorization mekanizması
+değildir; Control Plane'i doğrudan erişime karşı korumaz. **Control Plane'de
+kimlik doğrulama yoktur**; bu nedenle API ve UI loopback dışına açılmamalıdır.
 
 **Güvenlik sınırı:** Bu yerel geliştirme aracı production için değildir.
 Kullanılan Control Plane portunun ayrıca yalnız loopback'e bağlı ve yetkisiz
@@ -72,10 +94,19 @@ npm test
 
 Build TypeScript kontrolünü ve Vite üretim bundle'ını oluşturur. Bundle tek
 başına API proxy'si içermez; desteklenen yerel kullanım `npm run dev`'dir.
-Testler sentetik yanıtlarla çalışır; task veya altyapı oluşturmaz.
+Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek task\nveya altyapı oluşturmaz.
 
 ### Mevcut ekranlar ve sınırlar
 
+- **Command Center:** Request (zorunlu) ve Title (isteğe bağlı) alanları.
+  Title boşsa isteğin ilk dolu satırından en fazla 80 karakterlik başlık
+  türetilir. Enter yeni satır ekler; Ctrl+Enter (macOS'ta ⌘+Enter) veya düğme
+  gönderir. Gönderim tek seferliktir (çift tıklama korumalı), otomatik retry
+  yoktur. Başarıda "Created as Draft — not executed" mesajı, task ID'si ve
+  task detayına geçiş düğmesi gösterilir. Kesin hatalarda girilen metin
+  korunur. Sonucu belirsiz durumlarda (zaman aşımı, bağlantı kesilmesi,
+  Control Plane 5xx, beklenmeyen yanıt) task oluşmuş olabilir: yeni gönderim,
+  Tasks listesi başarıyla yenilenene kadar kilitlenir.
 - **Overview:** `/health`, `/tasks`, `/plans`; durum sayıları, son task'lar ve
   üç isteğin tümünün son başarılı refresh zamanı. Health yalnız API'nin health
   yanıtıdır, PostgreSQL/Redis/Worker sağlık garantisi değildir.
@@ -85,5 +116,6 @@ Testler sentetik yanıtlarla çalışır; task veya altyapı oluşturmaz.
   graph API tarafından sunulmaz.
 - **Agents**, **Models & Providers**, **Approvals:** yalnız gelecek yetenekleri
   açıklayan placeholder ekranlar; onay/ret düğmesi veya model çağrısı yoktur.
-- Herhangi bir task mutasyonu, LLM çağrısı, GitHub yazma işlemi, secret,
-  token/maliyet ölçümü, otomatik execution veya deployment yapılmaz.
+- Draft task oluşturma dışında task mutasyonu (approve, retry, dispatch),
+  LLM çağrısı, GitHub yazma işlemi, secret, token/maliyet ölçümü, otomatik
+  execution veya deployment yapılmaz.
