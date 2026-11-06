@@ -4,7 +4,7 @@
 
 HIC, AI Agent Lab'ın mevcut Control Plane ve Worker yürütme omurgasını genişleten bir governance, interaction ve product layer olarak tasarlanır. Tek task engine ve tek task state machine korunur. HIC; talepleri planlama, bağımlılıkları koordine etme, insan kararlarını kaydetme ve işi görünür kılma sorumluluğunu üstlenir.
 
-Önemli bir önkoşul, yeni feature geliştirmeden önce .NET 8'den .NET 10'a geçişin uyumluluk, destek, paket ve dağıtım etkileriyle değerlendirilmesidir. Ayrıca Redis kuyruğu ile PostgreSQL task durumunun tutarlılığı ve çökme sonrası durable recovery, yeni dependency scheduling özelliğinden önce ele alınması gereken yüksek öncelikli güvenilirlik riskidir.
+.NET 10 migration ve R1 atomik task geçişleri tamamlandı; önceki checkpoint'te Release build ve 77/77 test geçti. R1 container E2E hâlâ bekliyor. Redis/PostgreSQL tutarlılığı ve durable recovery, dependency scheduling öncesindeki yüksek öncelikli risklerdir. Track B Agent Bridge, bunlara paralel read-only erişim ve sözleşme tasarımı yapar; execution yetkisini devralmaz.
 
 Bu mimari; AWS altyapısı kurmaz, üretim runtime'ı veya model sağlayıcısı seçmez. Local Podman prototipi geliştirme ve doğrulama seçeneğidir; uzun vadeli çalışma kişisel cihaza veya ev ağına bağımlı olamaz. AWS hedefi korunur; somut AWS tasarımı ve provisioning sonraki onaylı fazların konusudur.
 
@@ -20,6 +20,7 @@ Bu mimari; AWS altyapısı kurmaz, üretim runtime'ı veya model sağlayıcısı
 | HIC governance | Plan sürümü, onay/ret, aktör ve gerekçe, politika ve audit görünümü | Önerilen; uygulanmamış |
 | HIC dependency coordination | Plan içi task grafiği ve hazır task belirleme; aynı task engine'e delege etme | Önerilen; uygulanmamış |
 | HIC product/interaction | Talep, plan ve yürütme durumunun kullanıcıya gösterilmesi | Önerilen; dashboard yok |
+| HIC Agent Bridge | Sürümlü, yetkili ve kompakt status/result/proposal adaptasyonu | B0 tasarımı; kod/MCP server yok |
 | Execution isolation | Görev kapsamlı workspace, izin ve geçici credential sınırları | Hedef; mevcut Worker tarafından garanti edilmez |
 | Cloud runtime | Kişisel cihazdan bağımsız çalışma ve gerektiğinde bulut execution | Gelecek hedef; AWS provisioning yok |
 
@@ -68,6 +69,8 @@ Değerlendirilecek tasarım unsurları:
 
 Outbox veya lease belirli bir uygulama kararı olarak henüz onaylanmamıştır. Önce failure mode ve kabul kriterleri tanımlanmalı, sonra en küçük güvenilir çözüm seçilmelidir.
 
+R1, task state ve audit'i tek kilitli transaction'da yazar; aynı-status/expected-state uyuşmazlığı `409` üretir. Bu, execution ownership değildir. Yönelim PostgreSQL'i authoritative state, Redis'i bildirim/dispatch mekanizması tutmaktır. A2 ownership/fencing, A3 lease/heartbeat ve A4 reconciliation uygulama sözleşmeleri ayrıca onaylanmalıdır; outbox zorunlu seçilmiş değildir. Bridge bunlardan önce distributed exactly-once veya güvenli otomatik recovery iddia edemez.
+
 ### 5. İnsan onay sınırları
 
 İnsan onayı, yalnızca arayüzdeki bir düğme değil; sürümü, kararı veren aktörü, zamanı ve gerekçeyi bağlayan kalıcı bir governance kaydı olmalıdır.
@@ -94,6 +97,19 @@ Mevcut task approve endpoint'i aktör kimliği, plan sürümü veya onay gerekç
 
 ### 7. Runtime ve cloud konuları
 
-.NET 8'den .NET 10'a geçiş değerlendirmesi, yeni feature geliştirmeden önce tamamlanacak bir teknik kapıdır. İnceleme; destek ve güvenlik durumu, NuGet paket/SDK uyumluluğu, Dockerfile ve CI image'ları, test davranışı, Podman local akışı ve geri dönüş planını kapsamalıdır. Değerlendirme sonucu geçişi gerektirirse feature çalışmasından önce ayrı, test edilmiş runtime güncellemesi yapılır; otomatik olarak .NET 10'a yükseltildiği varsayılmaz.
+.NET 10 migration commit'i `699bd116bf49cbef0e8ac97d791f1b02b4c51305` ile kayıtlıdır. R1 DB integration ve build/test checkpoint'i [devam belgesinde](../../docs-md/continuation.md) ayrıştırılır; yeni container sürümünün çalışması önceki image E2E'sinden çıkarılmaz. Repo içinde Actions workflow bulunmaması CI doğrulaması yapıldığı anlamına gelmez.
 
 Local Podman stack'i geliştirici doğrulama ortamıdır; cloud runtime'ın zorunlu bileşeni olamaz. AWS seçimi mevcut proje kararlarında yer alır ancak AWS kaynakları bu fazda provision edilmez. Hedef hibrit yapıda Control Plane/workflow durumu kişisel cihazdan bağımsız kalıcı serviste; execution ise politika ve veri sınıfına göre yerel veya izole cloud ortamında çalışabilir. AWS servis eşlemesi, maliyet, veri konumu ve işletim sorumluluğu ayrıca onaylanmalıdır.
+
+### 8. Paralel Agent Bridge sınırı
+
+[Agent Bridge](./AGENT_BRIDGE.md), dış ajan/interaction kanalını mevcut Control Plane'e bağlayan ince anti-corruption adapter'dır:
+
+```text
+GitHub / ileride MCP veya onaylı agent client
+  -> Bridge: principal + project scope + contract + redaction
+  -> Control Plane: status/result veya yetkili proposal/approval akışı
+  -> mevcut Redis/Worker -> sonuç referansı -> aynı Bridge
+```
+
+Bridge ayrı queue, scheduler veya task state tutmaz. Kanal teslim/audit/idempotency metadata'sı task lifecycle değildir. B1 yalnızca okur; B3/B4 için kalıcı insan onayı, proje kimliği/yetkilendirmesi ve Track A execution güvenliği gerekir. Ajanın `approved: true` beyanı execution izni değildir. Local endpoint'i ChatGPT erişsin diye public açmak B0 kararı değildir.
