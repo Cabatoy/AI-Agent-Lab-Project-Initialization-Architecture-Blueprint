@@ -104,10 +104,10 @@ app.MapGet("/tasks/{id:guid}", async (Guid id) =>
     .Produces<AgentTask>(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/tasks/{id:guid}/approve", async (Guid id) =>
+app.MapPost("/tasks/{id:guid}/approve", async (Guid id, CancellationToken cancellationToken) =>
 {
     var transition = await TaskTransitionStore.ApplyAsync(
-        postgresConnectionString, id, TaskStatuses.Approved, "ApproveTask");
+        postgresConnectionString, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: cancellationToken);
     if (transition.Outcome != TransitionOutcome.Accepted)
         return TransitionError(transition);
 
@@ -123,10 +123,10 @@ app.MapPost("/tasks/{id:guid}/approve", async (Guid id) =>
     .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/tasks/{id:guid}/retry", async (Guid id) =>
+app.MapPost("/tasks/{id:guid}/retry", async (Guid id, CancellationToken cancellationToken) =>
 {
     var transition = await TaskTransitionStore.ApplyAsync(
-        postgresConnectionString, id, TaskStatuses.Retrying, "RetryTask");
+        postgresConnectionString, id, TaskStatuses.Retrying, "RetryTask", cancellationToken: cancellationToken);
     if (transition.Outcome != TransitionOutcome.Accepted)
         return TransitionError(transition);
 
@@ -142,7 +142,7 @@ app.MapPost("/tasks/{id:guid}/retry", async (Guid id) =>
     .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest request) =>
+app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest request, CancellationToken cancellationToken) =>
 {
     if (!TaskStatusTransitions.IsKnownStatus(request.Status))
     {
@@ -150,11 +150,11 @@ app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest r
     }
 
     var transition = await TaskTransitionStore.ApplyAsync(
-        postgresConnectionString, id, request.Status, "UpdateTaskStatus", request);
+        postgresConnectionString, id, request.Status, "UpdateTaskStatus", request, cancellationToken);
     if (transition.Outcome != TransitionOutcome.Accepted)
         return TransitionError(transition);
 
-    return Results.Ok(new { id, status = request.Status });
+    return Results.Ok(new { id, status = request.Status, execution = request.Execution });
 })
     .WithName("UpdateTaskStatus")
     .WithSummary("Update task status")
@@ -163,6 +163,25 @@ app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest r
     .Produces(StatusCodes.Status400BadRequest)
     .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
+
+app.MapPost("/tasks/{id:guid}/executions/claim", async (Guid id, ClaimExecutionRequest request, CancellationToken cancellationToken) =>
+{
+    var claim = await ExecutionOwnershipStore.ClaimAsync(postgresConnectionString, id, request, cancellationToken);
+    if (claim.Outcome != TransitionOutcome.Accepted)
+        return TransitionError(new TransitionResult(claim.Outcome, claim.Error));
+    var execution = claim.Execution!;
+    return Results.Ok(new
+    {
+        id, status = execution.Status, executionId = execution.Id, execution.WorkerId,
+        execution.Generation, newlyClaimed = claim.NewlyClaimed
+    });
+})
+    .WithName("ClaimTaskExecution")
+    .WithSummary("Atomically claim task execution; replay never grants fresh execution permission.")
+    .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status409Conflict);
 
 static IResult TransitionError(TransitionResult transition) => transition.Outcome switch
 {
@@ -317,6 +336,7 @@ static async Task InitializeSchemaWithRetryAsync(string postgresConnectionString
     {
         try
         {
+            await ExecutionSchema.VerifyAsync(postgresConnectionString);
             await InitializeSchemaAsync(postgresConnectionString);
             return;
         }
@@ -590,7 +610,8 @@ internal sealed record ExecutionPlan(
 
 internal sealed record CreateTaskRequest(string Title, string? Description);
 
-internal sealed record UpdateTaskStatusRequest(string Status, int AttemptCount, string? Result, string? ErrorMessage, string? ExpectedStatus = null);
+internal sealed record UpdateTaskStatusRequest(string Status, int AttemptCount, string? Result, string? ErrorMessage,
+    string? ExpectedStatus = null, ExecutionIdentity? Execution = null);
 
 internal sealed record AgentTask(
     Guid Id,

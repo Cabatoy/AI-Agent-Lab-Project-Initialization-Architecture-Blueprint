@@ -38,7 +38,7 @@ internal static class PostgresFixtureSafety
         if (!System.Text.RegularExpressions.Regex.IsMatch(expected.Schema, "^hic_r1_[a-f0-9]{32}$") ||
             !System.Text.RegularExpressions.Regex.IsMatch(expected.Marker, "^HIC:R1:fixture:[a-f0-9]{32}$") ||
             expected.Owner != Role || expected.SchemaOid == 0 || expected.TasksOid == 0 ||
-            expected.AuditOid == 0 || actual != expected)
+            expected.AuditOid == 0 || expected.ExecutionOid == 0 || expected.VersionOid == 0 || actual != expected)
             throw new InvalidOperationException("R1 fixture cleanup ownership mismatch; resources preserved.");
     }
 }
@@ -47,4 +47,4 @@ internal sealed record TargetIdentity(string DatabaseName, string Owner, string 
     string? Marker, bool Superuser, bool CreateRole, bool CreateDatabase);
 
 internal sealed record FixtureIdentity(string Schema, string Owner, string Marker,
-    long SchemaOid, long TasksOid, long AuditOid);
+    long SchemaOid, long TasksOid, long AuditOid, long ExecutionOid, long VersionOid);

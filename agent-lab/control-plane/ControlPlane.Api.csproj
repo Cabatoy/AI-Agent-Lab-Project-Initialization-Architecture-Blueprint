@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Migrations\002-execution-ownership.sql" LogicalName="ExecutionOwnershipMigration" />
+  </ItemGroup>
+
+  <ItemGroup>
 	<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
 	  <_Parameter1>ControlPlane.Api.Tests</_Parameter1>
 	</AssemblyAttribute>
