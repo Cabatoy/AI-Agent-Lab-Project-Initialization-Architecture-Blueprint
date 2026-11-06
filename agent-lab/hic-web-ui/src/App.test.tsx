@@ -5,7 +5,7 @@ import { api, ApiError } from './api';
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn() } };
+  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn() } };
 });
 const item = {
   id: '01234567-89ab-cdef-0123-456789abcdef', title: 'Actual task', description: 'Actual description',
@@ -71,6 +71,41 @@ describe('dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
     expect((await screen.findAllByText('Unavailable')).length).toBeGreaterThan(0);
     expect(screen.queryByText('Not yet available')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('local diagnostics', () => {
+  const snapshot = {
+    action: 'system.health' as const,
+    checkedAtUtc: '2026-11-07T00:00:00Z',
+    controlPlane: 'ok' as const,
+    postgres: 'ok' as const,
+    redis: 'unavailable' as const,
+    worker: 'not-checked' as const,
+  };
+
+  it('runs a fixed read-only check only after the user clicks, without creating a task', async () => {
+    vi.mocked(api.localDiagnostics).mockResolvedValue(snapshot);
+    render(<App />);
+    await screen.findByText('Connected');
+    expect(api.localDiagnostics).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run local diagnostics' }));
+    expect(await screen.findByText('Not checked')).toBeInTheDocument();
+    expect(screen.getByText('Unavailable')).toBeInTheDocument();
+    expect(api.localDiagnostics).toHaveBeenCalledTimes(1);
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
+
+  it('reports an unavailable diagnostics endpoint instead of inventing successful checks', async () => {
+    vi.mocked(api.localDiagnostics).mockRejectedValue(new Error('unavailable'));
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run local diagnostics' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Local diagnostics unavailable.');
+    expect(api.createTask).not.toHaveBeenCalled();
   });
 });
 
