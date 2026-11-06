@@ -66,6 +66,8 @@ public class PostgresFixtureSafetyTests
     [InlineData("schema-oid")]
     [InlineData("tasks-oid")]
     [InlineData("audit-oid")]
+    [InlineData("execution-oid")]
+    [InlineData("version-oid")]
     [InlineData("missing")]
     public void CleanupMismatch_IsRejected(string field)
     {
@@ -78,6 +80,8 @@ public class PostgresFixtureSafetyTests
             "schema-oid" => expected with { SchemaOid = 4 },
             "tasks-oid" => expected with { TasksOid = 5 },
             "audit-oid" => expected with { AuditOid = 6 },
+            "execution-oid" => expected with { ExecutionOid = 7 },
+            "version-oid" => expected with { VersionOid = 8 },
             _ => null
         };
         Assert.Throws<InvalidOperationException>(() => PostgresFixtureSafety.Cleanup(expected, actual));
@@ -98,5 +102,5 @@ public class PostgresFixtureSafetyTests
 
     private static FixtureIdentity ValidFixture() =>
         new("hic_r1_" + new string('a', 32), PostgresFixtureSafety.Role,
-            "HIC:R1:fixture:" + new string('b', 32), 1, 2, 3);
+            "HIC:R1:fixture:" + new string('b', 32), 1, 2, 3, 4, 5);
 }

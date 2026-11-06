@@ -2,6 +2,11 @@
 
 Bu belge yeni bir checkout veya Copilot sohbeti için kısa ve kalıcı handoff kaynağıdır. Sohbet transcript'i değildir; doğrulanmış proje durumunu ve henüz çözülmemiş işleri taşır. Öneriler onaylanmış mimari karar değildir.
 
+**Güncel R2 devam bağlantısı (6 Kasım 2026):**
+[Ownership, staged harness ve A2.2 runtime checkpoint](../docs/human-in-control/R2_EXECUTION_OWNERSHIP.md#a22-izole-runtime-checkpoint--6-kasım-2026).
+Aşağıdaki R1 durum/eksik/öneri kayıtları tarihsel checkpoint'tir; güncel R2
+kanıtı ve sınırları için bu bağlantıyı esas alın. Bu not yeni runtime izni değildir.
+
 ## Depoyu İndirme
 
 1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `AI-Agent-Lab.sln` dosyasını açın.

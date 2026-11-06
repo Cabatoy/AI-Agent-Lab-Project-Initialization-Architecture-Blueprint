@@ -23,6 +23,7 @@ internal sealed class Worker : BackgroundService
     private readonly string _deadLetterQueueKey;
     private readonly ModelOptions _modelOptions;
     private readonly IModelClient _modelClient;
+    private readonly Guid _workerId = Guid.NewGuid();
     private readonly ConcurrentDictionary<Guid, DateTime> _inFlightTasks = new();
 
     public Worker(ILogger<Worker> logger) : this(logger, null) { }
@@ -115,16 +116,15 @@ internal sealed class Worker : BackgroundService
             return null;
         }
 
-        var executing = await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1,
-            null, null, cancellationToken, task.Status);
-        if (executing != StatusUpdateOutcome.Accepted)
+        var claim = await ClaimExecutionAsync(http, taskId, Guid.NewGuid(), cancellationToken);
+        if (claim.Outcome != StatusUpdateOutcome.Accepted || claim.Identity is null)
             return null;
 
         cancellationToken.ThrowIfCancellationRequested();
         var execution = await GenerateWithRetryAsync(BuildPrompt(task.Title, task.Description), cancellationToken);
         var target = execution.Result.Success ? TaskStatuses.Completed : TaskStatuses.Failed;
         var final = await UpdateStatusAsync(http, taskId, target, execution.AttemptCount,
-            execution.Result.Content, execution.Result.ErrorMessage, cancellationToken, TaskStatuses.Executing);
+            execution.Result.Content, execution.Result.ErrorMessage, cancellationToken, TaskStatuses.Executing, claim.Identity);
         if (final != StatusUpdateOutcome.Accepted)
             return null;
         if (execution.Result.Success)
@@ -135,6 +135,46 @@ internal sealed class Worker : BackgroundService
         return new DeadLetterMessage(taskId,
             execution.Result.IsTransient ? "model-transient-failure-retry-exhausted" : "model-permanent-failure",
             execution.Result.ErrorMessage, execution.AttemptCount, DateTime.UtcNow, "Worker.GenerateWithRetryAsync");
+    }
+
+    internal async Task<ExecutionClaimResult> ClaimExecutionAsync(HttpClient http, Guid taskId,
+        Guid executionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var content = new StringContent(JsonSerializer.Serialize(new { executionId, workerId = _workerId }),
+                Encoding.UTF8, "application/json");
+            using var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/executions/claim",
+                content, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                var outcome = response.StatusCode == HttpStatusCode.Conflict
+                    ? StatusUpdateOutcome.StateConflict
+                    : response.IsSuccessStatusCode || IsTransientStatusCode(response.StatusCode)
+                        ? StatusUpdateOutcome.TransientOrUnknown : StatusUpdateOutcome.PermanentFailure;
+                _logger.LogWarning("Execution claim not accepted. TaskId={TaskId}, Outcome={Outcome}, Code={Code}",
+                    taskId, outcome, (int)response.StatusCode);
+                return new(outcome);
+            }
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var acknowledgement = await JsonSerializer.DeserializeAsync<ClaimAcknowledgement>(
+                stream, new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
+            if (acknowledgement is not null && acknowledgement.Id == taskId &&
+                acknowledgement.ExecutionId == executionId && acknowledgement.WorkerId == _workerId &&
+                acknowledgement.Generation > 0 && acknowledgement.NewlyClaimed &&
+                acknowledgement.Status == TaskStatuses.Executing)
+                return new(StatusUpdateOutcome.Accepted,
+                    new(executionId, _workerId, acknowledgement.Generation));
+            _logger.LogWarning("Execution claim unconfirmed or replayed. TaskId={TaskId}; model execution denied.", taskId);
+            return new(StatusUpdateOutcome.TransientOrUnknown);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+            ex is HttpRequestException or TaskCanceledException or TimeoutException or JsonException or IOException)
+        {
+            _logger.LogWarning("Execution claim outcome unknown. TaskId={TaskId}, ErrorType={ErrorType}; no automatic retry.",
+                taskId, ex.GetType().Name);
+            return new(StatusUpdateOutcome.TransientOrUnknown);
+        }
     }
 
     private async Task<ConnectionMultiplexer> ConnectRedisWithRetryAsync(string connectionString, CancellationToken cancellationToken)
@@ -207,7 +247,7 @@ internal sealed class Worker : BackgroundService
         return new ModelExecutionResult(lastFailure ?? ModelResult.Fail("Model call failed."), maxAttempts);
     }
 
-    internal async Task<StatusUpdateOutcome> UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken, string? expectedStatus = null)
+    internal async Task<StatusUpdateOutcome> UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken, string? expectedStatus = null, WorkerExecutionIdentity? execution = null)
     {
         const int maxAttempts = 3;
 
@@ -221,8 +261,9 @@ internal sealed class Worker : BackgroundService
                     attemptCount,
                     result,
                     errorMessage,
-                    expectedStatus
-                });
+                    expectedStatus,
+                    execution
+                }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
                 using var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 using var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/status", content, cancellationToken);
@@ -238,7 +279,8 @@ internal sealed class Worker : BackgroundService
                     await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                     var acknowledgement = await JsonSerializer.DeserializeAsync<StatusAcknowledgement>(
                         stream, new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
-                    if (acknowledgement?.Id == taskId && acknowledgement.Status == status)
+                    if (acknowledgement?.Id == taskId && acknowledgement.Status == status &&
+                        acknowledgement.Execution == execution)
                         return StatusUpdateOutcome.Accepted;
                     _logger.LogWarning("Status acknowledgement missing or mismatched. TaskId={TaskId}, Status={Status}", taskId, status);
                     return StatusUpdateOutcome.TransientOrUnknown;
@@ -548,4 +590,8 @@ internal sealed record ModelExecutionResult(ModelResult Result, int AttemptCount
 
 internal enum StatusUpdateOutcome { Accepted, StateConflict, PermanentFailure, TransientOrUnknown }
 
-internal sealed record StatusAcknowledgement(Guid Id, string Status);
+internal sealed record WorkerExecutionIdentity(Guid ExecutionId, Guid WorkerId, long Generation);
+internal sealed record ExecutionClaimResult(StatusUpdateOutcome Outcome, WorkerExecutionIdentity? Identity = null);
+internal sealed record ClaimAcknowledgement(Guid Id, string Status, Guid ExecutionId, Guid WorkerId,
+    long Generation, bool NewlyClaimed);
+internal sealed record StatusAcknowledgement(Guid Id, string Status, WorkerExecutionIdentity? Execution = null);

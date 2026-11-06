@@ -20,10 +20,10 @@ public class TaskTransitionPostgresTests
     {
         await WithDatabase(async (cs, db, id) =>
         {
-            var result = await Apply(cs, id, "Executing", "Approved");
+            var result = await Apply(cs, id, "Blocked", "Approved");
             Assert.Equal(TransitionOutcome.Accepted, result.Outcome);
-            Assert.Equal("Executing", await db.QuerySingleAsync<string>("select status from tasks where id = @id", new { id }));
-            Assert.Equal("Approved>Executing", await db.QuerySingleAsync<string>(
+            Assert.Equal("Blocked", await db.QuerySingleAsync<string>("select status from tasks where id = @id", new { id }));
+            Assert.Equal("Approved>Blocked", await db.QuerySingleAsync<string>(
                 "select from_status || '>' || to_status from task_status_transitions"));
         });
     }
@@ -48,7 +48,7 @@ public class TaskTransitionPostgresTests
             async Task<TransitionResult> Contend()
             {
                 await start.Task;
-                return await Apply(cs, id, "Executing", "Approved");
+                return await Apply(cs, id, "Blocked", "Approved");
             }
             var first = Contend();
             var second = Contend();
@@ -66,7 +66,7 @@ public class TaskTransitionPostgresTests
         await WithDatabase(async (cs, db, id) =>
         {
             await db.ExecuteAsync("alter table task_status_transitions add constraint reject_test_audit check (source <> 'R1Test')");
-            await Assert.ThrowsAsync<PostgresException>(() => Apply(cs, id, "Executing", "Approved"));
+            await Assert.ThrowsAsync<PostgresException>(() => Apply(cs, id, "Blocked", "Approved"));
             await AssertUnchanged(db, id);
         });
     }
@@ -81,7 +81,7 @@ public class TaskTransitionPostgresTests
         Assert.Equal(0, await db.QuerySingleAsync<int>("select count(*)::int from task_status_transitions"));
     }
 
-    private static async Task WithDatabase(Func<string, NpgsqlConnection, Guid, Task> test)
+    internal static async Task WithDatabase(Func<string, NpgsqlConnection, Guid, Task> test)
     {
         var cs = PostgresFixtureSafety.Configuration(Environment.GetEnvironmentVariable("HIC_R1_TEST_POSTGRES"));
         var schema = "hic_r1_" + Guid.NewGuid().ToString("N");
@@ -102,6 +102,8 @@ public class TaskTransitionPostgresTests
                     id uuid primary key, task_id uuid not null references {schema}.tasks(id),
                     from_status text not null, to_status text not null, source text not null,
                     changed_at_utc timestamptz not null, note text);", transaction: setup);
+            await admin.ExecuteAsync($"set local search_path to {schema};", transaction: setup);
+            await admin.ExecuteAsync(ExecutionSchema.MigrationSql, transaction: setup);
             identity = await ReadFixture(admin, schema, setup);
             if (identity is null || identity.Marker != marker)
                 throw new InvalidOperationException("Fixture initialization identity mismatch.");
@@ -123,12 +125,14 @@ public class TaskTransitionPostgresTests
             await VerifyTarget(admin);
             await using var cleanup = await admin.BeginTransactionAsync();
             await admin.ExecuteAsync(
-                $"lock table {schema}.tasks, {schema}.task_status_transitions in access exclusive mode;",
+                $"lock table {schema}.tasks, {schema}.task_status_transitions, {schema}.task_executions, {schema}.app_schema_versions in access exclusive mode;",
                 transaction: cleanup);
             PostgresFixtureSafety.Cleanup(identity,
                 await ReadFixture(admin, schema, cleanup));
             await admin.ExecuteAsync($@"
                 drop table {schema}.task_status_transitions restrict;
+                drop table {schema}.task_executions restrict;
+                drop table {schema}.app_schema_versions restrict;
                 drop table {schema}.tasks restrict;
                 drop schema {schema} restrict;", transaction: cleanup);
             await cleanup.CommitAsync();
@@ -152,11 +156,15 @@ public class TaskTransitionPostgresTests
         connection.QuerySingleOrDefaultAsync<FixtureIdentity>(@"
             select n.nspname::text as Schema, pg_get_userbyid(n.nspowner) as Owner,
                    obj_description(n.oid, 'pg_namespace') as Marker, n.oid::bigint as SchemaOid,
-                   t.oid::bigint as TasksOid, a.oid::bigint as AuditOid
+                   t.oid::bigint as TasksOid, a.oid::bigint as AuditOid,
+                   e.oid::bigint as ExecutionOid, v.oid::bigint as VersionOid
             from pg_namespace n
             join pg_class t on t.relnamespace = n.oid and t.relname = 'tasks' and t.relkind = 'r'
             join pg_class a on a.relnamespace = n.oid and a.relname = 'task_status_transitions' and a.relkind = 'r'
+            join pg_class e on e.relnamespace = n.oid and e.relname = 'task_executions' and e.relkind = 'r'
+            join pg_class v on v.relnamespace = n.oid and v.relname = 'app_schema_versions' and v.relkind = 'r'
             where n.nspname = @schema
-              and t.relowner = n.nspowner and a.relowner = n.nspowner;",
+              and t.relowner = n.nspowner and a.relowner = n.nspowner
+              and e.relowner = n.nspowner and v.relowner = n.nspowner;",
             new { schema }, transaction);
 }

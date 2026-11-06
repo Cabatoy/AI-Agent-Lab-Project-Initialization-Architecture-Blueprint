@@ -171,3 +171,12 @@ Bu garantiler mevcut prototipte tamamlanmış kabul edilmez. Worker'ın process 
 - Artifact store, saklama süresi, veri sınıfı ve cloud geçiş sınırı nedir?
 
 Bu sorular çözülmeden taslak mesaj örnekleri uygulama garantisi olarak kullanılmamalıdır.
+
+### 10. Agent Bridge B0 sözleşme sınırı
+
+[Agent Bridge taslağı](./AGENT_BRIDGE.md), `GetProjectStatus`, `GetExecutionResult`, `SubmitTaskProposal` ve `RequestExecution` işlemlerinin sürümlü JSON zarfını tanımlar. Mevcut endpoint isimleriyle karıştırılmamalıdır; bu işlemler henüz uygulanmadı.
+
+- B1 yalnızca mevcut task read API'lerini yetkili, proje kapsamlı projection'a dönüştürür. Bugünkü task'ta project ilişkisi/durable execution ID yoktur; geçici onaylı task allowlist'i dışında project filtrelemesi uydurulamaz.
+- Bu belgede önerilen `runId`, gelecekte Bridge'in `executionId` alanıyla aynı canonical execution kimliğine bağlanmalıdır; iki bağımsız execution kaydı yaratılmaz. R1'de bu kimlik henüz yoktur; `null` ve capability açıklaması kullanılır.
+- Request'in agent beyanı authentication yerine geçmez; principal server-side doğrulanır. `RequestExecution` kaydı/onay beklemesi `Executing` kabulü değildir.
+- B0 JSON örnekleri uygulanmış JSON Schema değildir; B1/B3 öncesi enum, nullability, limit, hata ve uyumluluk contract testleri gerektirir. Token/cost alanı provider verisi yoksa `unknown`/`null` kalır.
