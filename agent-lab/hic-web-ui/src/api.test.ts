@@ -28,6 +28,18 @@ describe('Control Plane API contract', () => {
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/health', '/api/tasks', `/api/tasks/${task.id}`, '/api/plans']);
     expect(fetchMock.mock.calls.every(call => call[1].method === 'GET')).toBe(true);
   });
+  it('accepts only a structured local health report and uses GET without side effects', async () => {
+    const snapshot = { action: 'system.health', checkedAtUtc: '2026-11-07T00:00:00Z',
+      controlPlane: 'ok', postgres: 'ok', redis: 'unavailable', worker: 'not-checked' };
+    const mock = vi.fn().mockResolvedValueOnce(Response.json(snapshot))
+      .mockResolvedValueOnce(Response.json({ ...snapshot, worker: 'running' }));
+    vi.stubGlobal('fetch', mock);
+    expect(await api.localDiagnostics()).toEqual(snapshot);
+    await expect(api.localDiagnostics()).rejects.toMatchObject({ kind: 'invalid' });
+    expect(mock.mock.calls.map(call => call[0])).toEqual(['/api/diagnostics/local', '/api/diagnostics/local']);
+    expect(mock.mock.calls.every(call => call[1].method === 'GET')).toBe(true);
+  });
+
   it('accepts empty lists', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(Response.json([]))));
     expect(await api.tasks()).toEqual([]);
