@@ -32,6 +32,14 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "control-p
     .WithDescription("Returns the current health status of the Control Plane API.")
     .Produces(StatusCodes.Status200OK);
 
+// Explicit, read-only, allowlisted diagnostics. Not a task approval or execution API.
+app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>
+    Results.Ok(await LocalDiagnostics.InspectAsync(postgresConnectionString, redisDb, cancellationToken)))
+    .WithName("GetLocalDiagnostics")
+    .WithSummary("Check Control Plane, PostgreSQL and Redis without running an agent")
+    .WithDescription("Local development diagnostics only. Does not inspect Worker status or change state.")
+    .Produces<LocalDiagnosticSnapshot>(StatusCodes.Status200OK);
+
 app.MapGet("/tasks", async () =>
 {
     await using var connection = new NpgsqlConnection(postgresConnectionString);
