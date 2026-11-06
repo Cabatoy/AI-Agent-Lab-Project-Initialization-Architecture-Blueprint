@@ -8,6 +8,18 @@ Bu roadmap önerilen sıradır; Phase 1 veya sonraki işler için uygulama onay�
 
 ## Teknik Ek
 
+### B1.3 ürün yönü ve güncel kapsam
+
+[Ürün vizyonu](./PRODUCT_VISION.md), kendi yerel HIC Web UI'sini birincil
+arayüz; ChatGPT/Copilot'u opsiyonel kanal olarak tanımlar. P0–P10 sırası ve
+Track A / Track B bağımlılıkları değişmez. B1.1 snapshot foundation ve B1.2
+publisher uygulanmıştır; B1.3 tekrarında 141/141 Bridge, 107/107 mevcut offline
+regresyon ve Release build doğrulanmıştır. Gerçek snapshot yayını/ChatGPT
+okuması doğrulanmamıştır. Genel execution/governance sözleşmeleri tasarım;
+P7 routing, P8 telemetry, P9 Web UI ve P10 factory akışı planlanan işlerdir.
+Sonraki track tablosu tarihsel B0 planıdır; güncel Track A kanıtı
+[R2 kaydındadır](./R2_EXECUTION_OWNERSHIP.md). Bu ek R3/R4 onayı değildir.
+
 ### Phase 0 — Mimari temel (bu teslim)
 
 - Beş HIC mimari belgesi hazırlanır.
