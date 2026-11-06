@@ -1,0 +1,36 @@
+{
+  "contractVersion": "hic.bridge/1.0",
+  "projectId": "bridge-synthetic",
+  "taskId": null,
+  "executionId": null,
+  "correlationId": null,
+  "sourceCommit": "0f36c20dc4d01750f634aaad17ea2d1b6bd6e6e5",
+  "observedAtUtc": "2026-11-06T12:26:00Z",
+  "executionStatus": "Unknown",
+  "summary": "snapshot-foundation",
+  "changedFiles": [
+    { "path": "tools/agent-bridge/AgentBridge.csproj", "change": "added" },
+    { "path": "tests/AgentBridge.Tests/SnapshotTests.cs", "change": "added" }
+  ],
+  "verificationEvidence": [
+    {
+      "kind": "runtime",
+      "status": "NOT_RUN",
+      "result": "NOT_RUN",
+      "sourceRef": null,
+      "sourceCommit": "0f36c20dc4d01750f634aaad17ea2d1b6bd6e6e5",
+      "observedAtUtc": "2026-11-06T12:26:00Z"
+    }
+  ],
+  "knownRisks": ["runtime-not-run"],
+  "recommendedNextAction": "review-before-publication",
+  "usage": {
+    "measurement": "unknown",
+    "inputTokens": null,
+    "outputTokens": null,
+    "cost": null,
+    "currency": null,
+    "pricingVersion": null
+  },
+  "artifactReferences": [{ "path": "docs/human-in-control/AGENT_BRIDGE.md" }]
+}
