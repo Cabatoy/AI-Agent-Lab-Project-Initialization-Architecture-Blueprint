@@ -198,6 +198,98 @@ public sealed class PublicationTests : IDisposable
         Assert.False(Directory.Exists(workspace));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void CanonicalOriginSupportsDefaultAndExplicitIdentity(bool ssh, bool explicitIdentity)
+    {
+        Assert.Equal("Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint",
+            SnapshotProducer.Repository);
+        var repository = SnapshotProducer.Repository;
+        sourceGit.Run(["config", "--local", "remote.origin.url",
+            ssh ? $"git@github.com:{repository}.git" : $"https://github.com/{repository}.git"]);
+        var reader = explicitIdentity ? new LocalGit(source, repository) : new LocalGit(source);
+        Assert.Equal(repository, reader.ReadSource().Repository);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LegacyOriginRequiresExplicitIdentityWithoutFallback(bool ssh)
+    {
+        const string legacy = "cahatayOzdemir/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint";
+        sourceGit.Run(["config", "--local", "remote.origin.url",
+            ssh ? $"git@github.com:{legacy}.git" : $"https://github.com/{legacy}.git"]);
+        Assert.Equal("REPOSITORY_NOT_ALLOWED",
+            Assert.Throws<BridgeException>(() => new LocalGit(source).ReadSource()).Message);
+        Assert.Equal(legacy, new LocalGit(source, legacy).ReadSource().Repository);
+    }
+
+    [Fact]
+    public void CanonicalOriginRejectsExplicitLegacyIdentity()
+    {
+        sourceGit.Run(["config", "--local", "remote.origin.url",
+            $"https://github.com/{SnapshotProducer.Repository}.git"]);
+        Assert.Equal("REPOSITORY_NOT_ALLOWED", Assert.Throws<BridgeException>(() =>
+            new LocalGit(source,
+                "cahatayOzdemir/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint")
+                .ReadSource()).Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DefaultGeneratorCliUsesCanonicalOriginAndRejectsLegacy(bool legacy)
+    {
+        var repository = legacy
+            ? "cahatayOzdemir/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint"
+            : SnapshotProducer.Repository;
+        sourceGit.Run(["config", "--local", "remote.origin.url", $"https://github.com/{repository}.git"]);
+        var observed = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var input = new SnapshotInput
+        {
+            ContractVersion = SnapshotProducer.Version, ProjectId = "synthetic-project",
+            TaskId = null, ExecutionId = null, CorrelationId = null, SourceCommit = sourceCommit,
+            ObservedAtUtc = observed, ExecutionStatus = "Unknown",
+            Summary = "snapshot-foundation", ChangedFiles = [],
+            VerificationEvidence = [new Evidence("runtime", "NOT_RUN", "NOT_RUN", null,
+                sourceCommit, observed)],
+            KnownRisks = ["runtime-not-run"], RecommendedNextAction = "review-before-publication",
+            Usage = new Usage("unknown", null, null, null, null, null), ArtifactReferences = []
+        };
+        var bytes = CanonicalJson.Serialize(input);
+        File.WriteAllBytes(Path.Combine(source, "docs", "input.json"), bytes);
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (var argument in new[] { typeof(SnapshotProducer).Assembly.Location,
+            "generate", "--repo", source, "--input", "docs/input.json",
+            "--approval-sha256", CanonicalJson.Hash(bytes) })
+            start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)
+            ?? throw new InvalidOperationException("Synthetic CLI process could not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("Synthetic CLI verification timed out.");
+        }
+        Assert.Equal(legacy ? 1 : 0, process.ExitCode);
+        if (legacy)
+            Assert.Contains("REPOSITORY_NOT_ALLOWED", await stderr);
+        else
+            Assert.Contains("DRY_RUN_VALID", await stdout);
+    }
+
     [Fact]
     public void SourceAndDestinationIdentityCanDifferWithoutHardcodedAccount()
     {

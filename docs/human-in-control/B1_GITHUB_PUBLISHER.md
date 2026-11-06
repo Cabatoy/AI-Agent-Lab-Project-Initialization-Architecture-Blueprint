@@ -142,6 +142,11 @@ Yeni candidate/workspace eski sonucu araştırmanın yerine geçmez.
 ### Owner/repo ve credential yönetimi
 
 Source repository ve publication destination **ayrı** CLI parametreleridir.
+Transfer sonrası canonical repository
+`Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint` olmuştur.
+Bu repository kullanılırken source/destination parametreleri açıkça yeni
+kimliği taşımalıdır; eski kimliğe otomatik fallback veya historical snapshot
+yeniden yazımı yoktur. Generator default'u da yeni kimliği kullanır.
 Owner/account auth kimliği hardcode değildir; başka hesap/repo'ya göç açık
 config + yeni digest/onay gerektirir.
 

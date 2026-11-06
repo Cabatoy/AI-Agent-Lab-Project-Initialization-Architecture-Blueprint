@@ -3,7 +3,7 @@ namespace Hic.AgentBridge;
 public sealed class SnapshotProducer
 {
     public const string Version = "hic.bridge/1.0";
-    public const string Repository = "cahatayOzdemir/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint";
+    public const string Repository = "Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint";
 
     private static readonly Dictionary<string, string> Summaries = new(StringComparer.Ordinal)
     {

@@ -20,6 +20,23 @@ Kaynak dal `feature/hic-agent-bridge`, ayrı worktree
 Reliability worktree'si ve uygulama dosyaları değiştirilmez.
 [B0 tasarımı](./AGENT_BRIDGE.md) tarihsel kapsamıyla korunur.
 
+### Repository transfer uyumluluğu
+
+Güncel canonical source repository
+`Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint` olarak
+belirlenmiştir. Default `generate`/`read` CLI ve `LocalGit` bu kimliği kullanır;
+eski owner'a veya başka repository'ye sessiz fallback yoktur. Eski origin
+yalnız açık `--source-repository
+cahatayOzdemir/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint`
+seçimiyle kabul edilir; verilen kimlik origin ile tam eşleşmelidir.
+
+Sample input repository kimliği içermez; source kimliği Git'ten alınır.
+Sample'ın eski commit/zamanı tarihsel sentetik fixture olarak korunur:
+güncel HEAD için sourceCommit ve evidence commit/zamanları açıkça yenilenip
+input yeniden onaylanmalıdır. Mevcut historical snapshot/pointer değiştirilmez.
+Publisher'da source ve destination hâlâ ayrı zorunlu parametrelerdir;
+account authentication kimliği canonical owner ile aynı olmak zorunda değildir.
+
 ## Teknik Ek
 
 ### Uygulama ve sahiplik
