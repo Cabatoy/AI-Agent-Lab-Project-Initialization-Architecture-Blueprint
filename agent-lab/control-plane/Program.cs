@@ -106,40 +106,10 @@ app.MapGet("/tasks/{id:guid}", async (Guid id) =>
 
 app.MapPost("/tasks/{id:guid}/approve", async (Guid id) =>
 {
-    await using var connection = new NpgsqlConnection(postgresConnectionString);
-    await connection.OpenAsync();
-
-    var currentStatus = await connection.QuerySingleOrDefaultAsync<string>("select status from tasks where id = @Id;", new { Id = id });
-    if (currentStatus is null)
-    {
-        return Results.NotFound();
-    }
-
-    if (!TaskStatusTransitions.TryValidateTransition(currentStatus, TaskStatuses.Approved, out var errorMessage))
-    {
-        return Results.BadRequest(new { error = errorMessage });
-    }
-
-    var updatedAtUtc = DateTime.UtcNow;
-    await using var transaction = await connection.BeginTransactionAsync();
-
-    await connection.ExecuteAsync(@"
-        update tasks
-        set status = @Status,
-            error_message = null,
-            result = null,
-            updated_at_utc = @UpdatedAtUtc
-        where id = @Id;", new { Id = id, Status = TaskStatuses.Approved, UpdatedAtUtc = updatedAtUtc }, transaction);
-
-    await InsertTaskStatusTransitionAsync(
-        connection,
-        transaction,
-        id,
-        currentStatus,
-        TaskStatuses.Approved,
-        "ApproveTask");
-
-    await transaction.CommitAsync();
+    var transition = await TaskTransitionStore.ApplyAsync(
+        postgresConnectionString, id, TaskStatuses.Approved, "ApproveTask");
+    if (transition.Outcome != TransitionOutcome.Accepted)
+        return TransitionError(transition);
 
     await redisDb.ListRightPushAsync(queueKey, id.ToString());
 
@@ -150,42 +120,15 @@ app.MapPost("/tasks/{id:guid}/approve", async (Guid id) =>
     .WithDescription("Approves a Draft task and places it on the worker queue.")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
 
 app.MapPost("/tasks/{id:guid}/retry", async (Guid id) =>
 {
-    await using var connection = new NpgsqlConnection(postgresConnectionString);
-    await connection.OpenAsync();
-
-    var currentStatus = await connection.QuerySingleOrDefaultAsync<string>("select status from tasks where id = @Id;", new { Id = id });
-    if (currentStatus is null)
-    {
-        return Results.NotFound();
-    }
-
-    if (!TaskStatusTransitions.TryValidateTransition(currentStatus, TaskStatuses.Retrying, out var errorMessage))
-    {
-        return Results.BadRequest(new { error = errorMessage });
-    }
-
-    var updatedAtUtc = DateTime.UtcNow;
-    await using var transaction = await connection.BeginTransactionAsync();
-
-    await connection.ExecuteAsync(@"
-        update tasks
-        set status = @Status,
-            updated_at_utc = @UpdatedAtUtc
-        where id = @Id;", new { Id = id, Status = TaskStatuses.Retrying, UpdatedAtUtc = updatedAtUtc }, transaction);
-
-    await InsertTaskStatusTransitionAsync(
-        connection,
-        transaction,
-        id,
-        currentStatus,
-        TaskStatuses.Retrying,
-        "RetryTask");
-
-    await transaction.CommitAsync();
+    var transition = await TaskTransitionStore.ApplyAsync(
+        postgresConnectionString, id, TaskStatuses.Retrying, "RetryTask");
+    if (transition.Outcome != TransitionOutcome.Accepted)
+        return TransitionError(transition);
 
     await redisDb.ListRightPushAsync(queueKey, id.ToString());
 
@@ -196,6 +139,7 @@ app.MapPost("/tasks/{id:guid}/retry", async (Guid id) =>
     .WithDescription("Moves a Failed task back to the worker queue.")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
 
 app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest request) =>
@@ -205,48 +149,10 @@ app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest r
         return Results.BadRequest(new { error = "Unsupported status." });
     }
 
-    await using var connection = new NpgsqlConnection(postgresConnectionString);
-    await connection.OpenAsync();
-    var currentStatus = await connection.QuerySingleOrDefaultAsync<string>("select status from tasks where id = @Id;", new { Id = id });
-    if (currentStatus is null)
-    {
-        return Results.NotFound();
-    }
-
-    if (!TaskStatusTransitions.TryValidateTransition(currentStatus, request.Status, out var errorMessage))
-    {
-        return Results.BadRequest(new { error = errorMessage });
-    }
-
-    var updatedAtUtc = DateTime.UtcNow;
-    await using var transaction = await connection.BeginTransactionAsync();
-
-    await connection.ExecuteAsync(@"
-        update tasks
-        set status = @Status,
-            attempt_count = @AttemptCount,
-            result = @Result,
-            error_message = @ErrorMessage,
-            updated_at_utc = @UpdatedAtUtc
-        where id = @Id;", new
-    {
-        Id = id,
-        Status = request.Status,
-        AttemptCount = request.AttemptCount,
-        Result = request.Result,
-        ErrorMessage = request.ErrorMessage,
-        UpdatedAtUtc = updatedAtUtc
-    }, transaction);
-
-    await InsertTaskStatusTransitionAsync(
-        connection,
-        transaction,
-        id,
-        currentStatus,
-        request.Status,
-        "UpdateTaskStatus");
-
-    await transaction.CommitAsync();
+    var transition = await TaskTransitionStore.ApplyAsync(
+        postgresConnectionString, id, request.Status, "UpdateTaskStatus", request);
+    if (transition.Outcome != TransitionOutcome.Accepted)
+        return TransitionError(transition);
 
     return Results.Ok(new { id, status = request.Status });
 })
@@ -255,7 +161,16 @@ app.MapPost("/tasks/{id:guid}/status", async (Guid id, UpdateTaskStatusRequest r
     .WithDescription("Updates a task's status, attempt count, result, and error details.")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound);
+
+static IResult TransitionError(TransitionResult transition) => transition.Outcome switch
+{
+    TransitionOutcome.NotFound => Results.NotFound(),
+    TransitionOutcome.Conflict => Results.Conflict(new { error = transition.Error }),
+    TransitionOutcome.Invalid => Results.BadRequest(new { error = transition.Error }),
+    _ => throw new InvalidOperationException("Expected a rejected transition.")
+};
 
 app.MapGet("/plans", async () =>
 {
@@ -476,33 +391,6 @@ static async Task InitializeSchemaAsync(string postgresConnectionString)
     ");
 }
 
-static Task InsertTaskStatusTransitionAsync(
-    NpgsqlConnection connection,
-    NpgsqlTransaction transaction,
-    Guid taskId,
-    string fromStatus,
-    string toStatus,
-    string source,
-    string? note = null)
-{
-    return connection.ExecuteAsync(@"
-        insert into task_status_transitions
-            (id, task_id, from_status, to_status, source, changed_at_utc, note)
-        values
-            (@Id, @TaskId, @FromStatus, @ToStatus, @Source, @ChangedAtUtc, @Note);",
-        new
-        {
-            Id = Guid.NewGuid(),
-            TaskId = taskId,
-            FromStatus = fromStatus,
-            ToStatus = toStatus,
-            Source = source,
-            ChangedAtUtc = DateTime.UtcNow,
-            Note = note
-        },
-        transaction);
-}
-
 internal static class TaskStatuses
 {
     public const string Draft = "Draft";
@@ -702,7 +590,7 @@ internal sealed record ExecutionPlan(
 
 internal sealed record CreateTaskRequest(string Title, string? Description);
 
-internal sealed record UpdateTaskStatusRequest(string Status, int AttemptCount, string? Result, string? ErrorMessage);
+internal sealed record UpdateTaskStatusRequest(string Status, int AttemptCount, string? Result, string? ErrorMessage, string? ExpectedStatus = null);
 
 internal sealed record AgentTask(
     Guid Id,
