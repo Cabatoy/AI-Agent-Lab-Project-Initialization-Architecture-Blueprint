@@ -1,0 +1,95 @@
+{
+  "services": {
+    "postgres": {
+      "image": "postgres:16-alpine",
+      "environment": {
+        "POSTGRES_USER": "hic_test",
+        "POSTGRES_PASSWORD": "synthetic-hic-test-only",
+        "POSTGRES_DB": "hic_test"
+      },
+      "labels": { "org.hic.runtime-test": "v1" },
+      "volumes": ["postgres-data:/var/lib/postgresql/data"],
+      "networks": ["test"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "pg_isready -U hic_test -d hic_test"],
+        "interval": "2s",
+        "timeout": "3s",
+        "retries": 30
+      }
+    },
+    "redis": {
+      "image": "redis:7-alpine",
+      "command": ["redis-server", "--appendonly", "yes"],
+      "labels": { "org.hic.runtime-test": "v1" },
+      "volumes": ["redis-data:/data"],
+      "networks": ["test"],
+      "healthcheck": {
+        "test": ["CMD", "redis-cli", "PING"],
+        "interval": "2s",
+        "timeout": "3s",
+        "retries": 30
+      }
+    },
+    "model-stub": {
+      "build": { "context": "./stub", "dockerfile": "Dockerfile" },
+      "labels": { "org.hic.runtime-test": "v1" },
+      "networks": ["test"],
+      "read_only": true,
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "healthcheck": {
+        "test": ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health', {signal: AbortSignal.timeout(2000)}).then(r => {if (!r.ok) process.exit(1)}).catch(() => process.exit(1))"],
+        "interval": "2s",
+        "timeout": "3s",
+        "retries": 30
+      }
+    },
+    "control-plane": {
+      "build": { "context": "../../agent-lab/control-plane", "dockerfile": "Dockerfile" },
+      "labels": { "org.hic.runtime-test": "v1" },
+      "environment": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://+:8080",
+        "ConnectionStrings__Postgres": "Host=postgres;Port=5432;Database=hic_test;Username=hic_test;Password=synthetic-hic-test-only",
+        "ConnectionStrings__Redis": "redis:6379"
+      },
+      "ports": ["127.0.0.1:18080:8080"],
+      "networks": ["test"],
+      "depends_on": {
+        "postgres": { "condition": "service_healthy" },
+        "redis": { "condition": "service_healthy" }
+      }
+    },
+    "agent-worker": {
+      "build": { "context": "../../agent-lab/agent-worker", "dockerfile": "Dockerfile" },
+      "labels": { "org.hic.runtime-test": "v1" },
+      "environment": {
+        "DOTNET_ENVIRONMENT": "Development",
+        "CONTROL_PLANE_URL": "http://control-plane:8080",
+        "ConnectionStrings__Redis": "redis:6379",
+        "TASK_QUEUE_KEY": "agentlab:task-queue",
+        "TASK_DEAD_LETTER_QUEUE_KEY": "agentlab:task-queue:dead-letter",
+        "MODEL_PROVIDER": "openai-compatible",
+        "MODEL_ENDPOINT": "http://model-stub:8000",
+        "MODEL_NAME": "hic-deterministic-stub",
+        "MODEL_API_KEY": "",
+        "MODEL_TIMEOUT_SECONDS": "10"
+      },
+      "networks": ["test"],
+      "stop_grace_period": "30s",
+      "depends_on": {
+        "postgres": { "condition": "service_healthy" },
+        "redis": { "condition": "service_healthy" },
+        "model-stub": { "condition": "service_healthy" },
+        "control-plane": { "condition": "service_started" }
+      }
+    }
+  },
+  "networks": {
+    "test": { "internal": true, "labels": { "org.hic.runtime-test": "v1" } }
+  },
+  "volumes": {
+    "postgres-data": { "labels": { "org.hic.runtime-test": "v1" } },
+    "redis-data": { "labels": { "org.hic.runtime-test": "v1" } }
+  }
+}
