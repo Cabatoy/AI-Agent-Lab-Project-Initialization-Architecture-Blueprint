@@ -1,0 +1,47 @@
+name: HIC Control Plane and Web UI CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'agent-lab/control-plane/**'
+      - 'agent-lab/hic-web-ui/**'
+      - 'tests/ControlPlane.Api.Tests/**'
+      - '.github/workflows/hic-control-plane-ui-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build Control Plane
+        run: dotnet build agent-lab/control-plane/ControlPlane.Api.csproj -c Release
+      - name: Run safe Control Plane tests
+        run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
+
+  web-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: agent-lab/hic-web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: agent-lab/hic-web-ui/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build UI
+        run: npm run build
+      - name: Run UI and proxy tests
+        run: npm test
