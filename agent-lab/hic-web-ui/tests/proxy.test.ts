@@ -73,20 +73,20 @@ describe('local development proxy', () => {
   });
 
   it('keeps the existing GET endpoints working', async () => {
-    for (const path of ['/api/health', '/api/tasks', '/api/plans', `/api/tasks/${created.id}`]) {
+    for (const path of ['/api/health', '/api/tasks', '/api/plans', '/api/diagnostics/local', `/api/tasks/${created.id}`]) {
       expect((await fetch(`${origin}${path}`)).status).toBe(200);
       expect((await fetch(`${origin}${path}`, { headers: { origin } })).status).toBe(200);
     }
     expect(received.map(r => `${r.method} ${r.url}`)).toEqual(
-      ['/health', '/health', '/tasks', '/tasks', '/plans', '/plans', `/tasks/${created.id}`, `/tasks/${created.id}`].map(p => `GET ${p}`));
+      ['/health', '/health', '/tasks', '/tasks', '/plans', '/plans', '/diagnostics/local', '/diagnostics/local', `/tasks/${created.id}`, `/tasks/${created.id}`].map(p => `GET ${p}`));
   });
 
   it('allows only GET reads and POST /api/tasks', async () => {
     const denied: [string, string][] = [
       ['PUT', '/api/tasks'], ['DELETE', '/api/tasks'], ['PATCH', '/api/tasks'], ['POST', '/api/plans'],
-      ['POST', '/api/health'], ['POST', `/api/tasks/${created.id}`], ['POST', `/api/tasks/${created.id}/approve`],
+      ['POST', '/api/health'], ['POST', '/api/diagnostics/local'], ['POST', `/api/tasks/${created.id}`], ['POST', `/api/tasks/${created.id}/approve`],
       ['POST', `/api/tasks/${created.id}/retry`], ['POST', '/api/tasks/'], ['POST', '/api/tasks?x=1'],
-      ['GET', '/api/tasks?x=1'], ['GET', `/api/tasks/${created.id}/approve`], ['GET', '/api/agents'],
+      ['GET', '/api/tasks?x=1'], ['GET', '/api/diagnostics/local?x=1'], ['GET', `/api/tasks/${created.id}/approve`], ['GET', '/api/agents'],
     ];
     for (const [method, path] of denied) {
       const response = await fetch(`${origin}${path}`, { method, headers: { origin, 'content-type': 'application/json', 'x-hic-request': 'command-center' },
