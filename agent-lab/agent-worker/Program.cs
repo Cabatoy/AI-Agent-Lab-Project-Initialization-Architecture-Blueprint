@@ -25,7 +25,9 @@ internal sealed class Worker : BackgroundService
     private readonly IModelClient _modelClient;
     private readonly ConcurrentDictionary<Guid, DateTime> _inFlightTasks = new();
 
-    public Worker(ILogger<Worker> logger)
+    public Worker(ILogger<Worker> logger) : this(logger, null) { }
+
+    internal Worker(ILogger<Worker> logger, IModelClient? modelClient)
     {
         _logger = logger;
         _controlPlaneUrl = Environment.GetEnvironmentVariable("CONTROL_PLANE_URL") ?? "http://localhost:8080";
@@ -40,7 +42,7 @@ internal sealed class Worker : BackgroundService
             ApiKey: Environment.GetEnvironmentVariable("MODEL_API_KEY"),
             TimeoutSeconds: ParseTimeout(Environment.GetEnvironmentVariable("MODEL_TIMEOUT_SECONDS")));
 
-        _modelClient = CreateModelClient(_modelOptions, _logger);
+        _modelClient = modelClient ?? CreateModelClient(_modelOptions, _logger);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -80,92 +82,59 @@ internal sealed class Worker : BackgroundService
                 {
                     _logger.LogInformation("Task dequeued: {TaskId}", taskId);
 
-                    await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1, null, null, stoppingToken);
-
-                    var taskPayload = await GetTaskAsync(http, taskId, stoppingToken);
-                    if (taskPayload is null)
-                    {
-                        const string payloadLoadError = "Task payload could not be loaded.";
-                        await UpdateStatusAsync(http, taskId, TaskStatuses.Failed, 1, null, payloadLoadError, stoppingToken);
-                        await EnqueueDeadLetterAsync(redisDb, taskId, "task-payload-load-failed", payloadLoadError, 1, "Worker.ExecuteAsync");
-                        continue;
-                    }
-
-                    var prompt = BuildPrompt(taskPayload.Title, taskPayload.Description);
-                    var modelExecution = await GenerateWithRetryAsync(prompt, stoppingToken);
-
-                    if (!modelExecution.Result.Success)
-                    {
-                        var failureMessage = modelExecution.Result.ErrorMessage ?? "Model call failed.";
-                        await UpdateStatusAsync(
-                            http,
-                            taskId,
-                            TaskStatuses.Failed,
-                            modelExecution.AttemptCount,
-                            null,
-                            failureMessage,
-                            stoppingToken);
-
-                        var reason = modelExecution.Result.IsTransient
-                            ? "model-transient-failure-retry-exhausted"
-                            : "model-permanent-failure";
-
-                        await EnqueueDeadLetterAsync(
-                            redisDb,
-                            taskId,
-                            reason,
-                            failureMessage,
-                            modelExecution.AttemptCount,
-                            "Worker.GenerateWithRetryAsync");
-                        continue;
-                    }
-
-                    await UpdateStatusAsync(
-                        http,
-                        taskId,
-                        TaskStatuses.Completed,
-                        modelExecution.AttemptCount,
-                        modelExecution.Result.Content,
-                        null,
-                        stoppingToken);
-
-                    _logger.LogInformation("Task processed: {TaskId}", taskId);
+                    var deadLetter = await ProcessTaskAsync(http, taskId, stoppingToken);
+                    if (deadLetter is not null)
+                        await EnqueueDeadLetterAsync(redisDb, taskId, deadLetter.Reason,
+                            deadLetter.ErrorMessage, deadLetter.AttemptCount, deadLetter.Source);
                 }
                 finally
                 {
                     _inFlightTasks.TryRemove(taskId, out _);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Worker loop error");
-
-                if (currentTaskId.HasValue)
-                {
-                    try
-                    {
-                        await UpdateStatusAsync(http, currentTaskId.Value, TaskStatuses.Failed, 1, null, ex.Message, stoppingToken);
-                        await EnqueueDeadLetterAsync(
-                            redisDb,
-                            currentTaskId.Value,
-                            "worker-loop-exception",
-                            ex.Message,
-                            1,
-                            "Worker.ExecuteAsync");
-                    }
-                    catch (Exception statusEx)
-                    {
-                        _logger.LogWarning(statusEx, "Failed to update task status after worker exception. TaskId={TaskId}", currentTaskId.Value);
-                    }
-                }
+                _logger.LogWarning("Worker loop error. TaskId={TaskId}, ErrorType={ErrorType}. No unconfirmed state mutation attempted.",
+                    currentTaskId, ex.GetType().Name);
 
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    internal async Task<DeadLetterMessage?> ProcessTaskAsync(HttpClient http, Guid taskId, CancellationToken cancellationToken)
+    {
+        var task = await GetTaskAsync(http, taskId, cancellationToken);
+        if (task is null || task.Id != taskId)
+        {
+            _logger.LogWarning("Task payload unavailable or mismatched. TaskId={TaskId}; execution skipped.", taskId);
+            return null;
+        }
+
+        var executing = await UpdateStatusAsync(http, taskId, TaskStatuses.Executing, 1,
+            null, null, cancellationToken, task.Status);
+        if (executing != StatusUpdateOutcome.Accepted)
+            return null;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var execution = await GenerateWithRetryAsync(BuildPrompt(task.Title, task.Description), cancellationToken);
+        var target = execution.Result.Success ? TaskStatuses.Completed : TaskStatuses.Failed;
+        var final = await UpdateStatusAsync(http, taskId, target, execution.AttemptCount,
+            execution.Result.Content, execution.Result.ErrorMessage, cancellationToken, TaskStatuses.Executing);
+        if (final != StatusUpdateOutcome.Accepted)
+            return null;
+        if (execution.Result.Success)
+        {
+            _logger.LogInformation("Task processed: {TaskId}", taskId);
+            return null;
+        }
+        return new DeadLetterMessage(taskId,
+            execution.Result.IsTransient ? "model-transient-failure-retry-exhausted" : "model-permanent-failure",
+            execution.Result.ErrorMessage, execution.AttemptCount, DateTime.UtcNow, "Worker.GenerateWithRetryAsync");
     }
 
     private async Task<ConnectionMultiplexer> ConnectRedisWithRetryAsync(string connectionString, CancellationToken cancellationToken)
@@ -238,7 +207,7 @@ internal sealed class Worker : BackgroundService
         return new ModelExecutionResult(lastFailure ?? ModelResult.Fail("Model call failed."), maxAttempts);
     }
 
-    private async Task UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken)
+    internal async Task<StatusUpdateOutcome> UpdateStatusAsync(HttpClient http, Guid taskId, string status, int attemptCount, string? result, string? errorMessage, CancellationToken cancellationToken, string? expectedStatus = null)
     {
         const int maxAttempts = 3;
 
@@ -251,15 +220,28 @@ internal sealed class Worker : BackgroundService
                     status,
                     attemptCount,
                     result,
-                    errorMessage
+                    errorMessage,
+                    expectedStatus
                 });
 
                 using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/status", content, cancellationToken);
+                using var response = await http.PostAsync($"{_controlPlaneUrl}/tasks/{taskId}/status", content, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    return;
+                    if (response.StatusCode != HttpStatusCode.OK)
+                    {
+                        _logger.LogWarning("Unexpected status acknowledgement code. TaskId={TaskId}, Status={Status}, Code={Code}",
+                            taskId, status, (int)response.StatusCode);
+                        return StatusUpdateOutcome.TransientOrUnknown;
+                    }
+                    await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    var acknowledgement = await JsonSerializer.DeserializeAsync<StatusAcknowledgement>(
+                        stream, new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
+                    if (acknowledgement?.Id == taskId && acknowledgement.Status == status)
+                        return StatusUpdateOutcome.Accepted;
+                    _logger.LogWarning("Status acknowledgement missing or mismatched. TaskId={TaskId}, Status={Status}", taskId, status);
+                    return StatusUpdateOutcome.TransientOrUnknown;
                 }
 
                 var transient = IsTransientStatusCode(response.StatusCode);
@@ -268,28 +250,27 @@ internal sealed class Worker : BackgroundService
 
                 if (!transient || attempt == maxAttempts)
                 {
-                    return;
+                    return response.StatusCode == HttpStatusCode.Conflict
+                        ? StatusUpdateOutcome.StateConflict
+                        : transient ? StatusUpdateOutcome.TransientOrUnknown : StatusUpdateOutcome.PermanentFailure;
                 }
             }
-            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                ex is HttpRequestException or TaskCanceledException or TimeoutException or JsonException or IOException)
             {
-                var transient = IsTransientException(ex);
-                _logger.LogWarning(ex, "Status update exception. Attempt={Attempt}/{MaxAttempts}, Task={TaskId}, Status={Status}, Transient={Transient}",
-                    attempt, maxAttempts, taskId, status, transient);
-
-                if (!transient || attempt == maxAttempts)
-                {
-                    return;
-                }
+                // A missing acknowledgement may follow a committed transaction; do not retry it as a new transition.
+                _logger.LogWarning("Status update unconfirmed. TaskId={TaskId}, Status={Status}, ErrorType={ErrorType}",
+                    taskId, status, ex.GetType().Name);
+                return StatusUpdateOutcome.TransientOrUnknown;
             }
-
             await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
         }
+        throw new InvalidOperationException("Status retry loop completed without an outcome.");
     }
 
     private async Task<TaskPayload?> GetTaskAsync(HttpClient http, Guid taskId, CancellationToken cancellationToken)
     {
-        var response = await http.GetAsync($"{_controlPlaneUrl}/tasks/{taskId}", cancellationToken);
+        using var response = await http.GetAsync($"{_controlPlaneUrl}/tasks/{taskId}", cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -564,3 +545,7 @@ internal static class TaskStatuses
 }
 
 internal sealed record ModelExecutionResult(ModelResult Result, int AttemptCount);
+
+internal enum StatusUpdateOutcome { Accepted, StateConflict, PermanentFailure, TransientOrUnknown }
+
+internal sealed record StatusAcknowledgement(Guid Id, string Status);
