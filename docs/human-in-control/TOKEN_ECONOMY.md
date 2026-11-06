@@ -8,6 +8,16 @@ Token/cost telemetry henüz uygulanmamıştır. Model usage ölçümü, planlana
 
 ## Teknik Ek
 
+### B1.3 ürün vizyonu bağlantısı
+
+[Ürün vizyonu](./PRODUCT_VISION.md), deterministik → uygun yetkili yerel →
+açıkça izinli ücretli/cloud sırasını korur. Gelecekte routing mevcut Worker
+OpenAI-compatible entegrasyonunu yeniden kullanmalıdır. B1.1/B1.2'de
+`unknown`/null usage uygulanmış ve offline testlerle doğrulanmıştır; genel
+telemetry/routing ve HIC UI bütçe görünümü planlanmıştır. ChatGPT aboneliği
+API hakkı, Copilot aboneliği programatik SDK izni sayılmaz; sessiz ücretli
+fallback yoktur.
+
 ### 1. Ölçüm kapsamı
 
 Her model execution için mümkün olduğunda şu alanlar ilişkilendirilir:

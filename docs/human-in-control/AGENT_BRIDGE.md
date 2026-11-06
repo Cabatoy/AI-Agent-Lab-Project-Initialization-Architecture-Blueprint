@@ -6,7 +6,25 @@
 
 Track A güvenilirlik ile Track B interaction paraleldir. İlk önerilen kanal, kişisel GitHub reposunda **read-only, asenkron, kompakt snapshot/handoff** paylaşımıdır. Bu bir canlı ChatGPT entegrasyonu veya onaylanmış ürün seçimi değildir. B0 yalnız dokümantasyondur; B1–B4 ayrıca onay gerektirir.
 
+**Sonraki B1.1 uygulama checkpoint'i:**
+[yerel snapshot foundation](./B1_SNAPSHOT_FOUNDATION.md) ayrı Track B worktree'sinde
+uygulandı. Aşağıdaki B0 durum/öneri kayıtları tarihsel tasarım bağlamıdır;
+B1.1 GitHub yayını veya canlı API/agent entegrasyonu sağlamaz.
+
+[B1.2 publisher checkpoint'i](./B1_GITHUB_PUBLISHER.md), exact digest onayı ve
+yerel fake-remote doğrulamasını ekler; gerçek GitHub publication/ChatGPT erişimi
+bu checkpoint'te de çalıştırılmamıştır.
+
 ## Teknik Ek
+
+### B1.3 ürün yönü
+
+[Ürün vizyonu](./PRODUCT_VISION.md): HIC, kendi self-hosted Web UI'siyle
+işletilecek provider-neutral AI Software Factory hedefidir. ChatGPT/Copilot
+opsiyonel kanallardır. B1.1/B1.2 uygulanmış, offline doğrulanmıştır; gerçek
+GitHub snapshot yayını ve ChatGPT okuması doğrulanmamıştır. Aşağıdaki B0
+operation/API örnekleri tasarımdır; Web UI, routing ve otomatik delegation
+planlanmıştır. Snapshot Control Plane otoritesi veya execution ownership değildir.
 
 ### 1. Doğrulanan temel ve tekrar kullanılacak yüzeyler
 

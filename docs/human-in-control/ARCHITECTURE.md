@@ -10,6 +10,22 @@ Bu mimari; AWS altyapısı kurmaz, üretim runtime'ı veya model sağlayıcısı
 
 ## Teknik Ek
 
+### B1.3 ürün yönü ve durum
+
+[Ürün vizyonu](./PRODUCT_VISION.md) birincil arayüzü kendi self-hosted HIC
+Web UI'si olarak tanımlar; ChatGPT/Copilot opsiyoneldir. Local-first kullanım
+cloud hizmetine bağlı değildir; kişisel cihaza kilitlenmeden taşınabilir
+barındırma hedefi korunur. Önceki AWS/cloud hedefi provisioning veya zorunlu
+local bağımlılık kararı sayılmaz.
+
+B1.1/B1.2 snapshot/publisher uygulanmış ve offline doğrulanmıştır; aşağıdaki
+B0 sahiplik tablosu tarihsel tasarımdır. Gerçek GitHub snapshot yayını,
+ChatGPT read ve MCP uygulanmış kabul edilmez. R2 ownership/fencing'in güncel
+kanıtı ve sınırları [R2 kaydında](./R2_EXECUTION_OWNERSHIP.md) tutulur;
+aşağıdaki R1/A2 değerlendirmeleri bu tarihsel kayıtla okunmalıdır. HIC Web UI,
+provider routing ve genel governance registry planlanmıştır. Tek engine
+sınırı değişmez; bu tur Reliability kodu veya roadmap'i değiştirilmez.
+
 ### 1. Sınırlar ve sahiplik
 
 | Alan | Sorumluluk | Durum |
