@@ -2,6 +2,14 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, type CreateTaskInpu
 
 export type { CreateTaskInput } from './limits';
 export interface Health { status: string; service: string }
+export interface LocalDiagnosticSnapshot {
+  action: 'system.health';
+  checkedAtUtc: string;
+  controlPlane: 'ok';
+  postgres: 'ok' | 'unavailable';
+  redis: 'ok' | 'unavailable';
+  worker: 'not-checked';
+}
 export interface Task {
   id: string;
   title: string;
@@ -31,6 +39,10 @@ const nullable = (v: unknown): v is string | null => v === null || str(v);
 const date = (v: unknown): v is string => str(v) && !Number.isNaN(Date.parse(v));
 const guid = (v: unknown): v is string => str(v) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const health: Guard<Health> = (v): v is Health => object(v) && str(v.status) && str(v.service);
+const localDiagnostics: Guard<LocalDiagnosticSnapshot> = (v): v is LocalDiagnosticSnapshot =>
+  object(v) && v.action === 'system.health' && date(v.checkedAtUtc) &&
+  v.controlPlane === 'ok' && (v.postgres === 'ok' || v.postgres === 'unavailable') &&
+  (v.redis === 'ok' || v.redis === 'unavailable') && v.worker === 'not-checked';
 const task: Guard<Task> = (v): v is Task => object(v) && guid(v.id) && str(v.title) &&
   str(v.description) && str(v.status) && Number.isSafeInteger(v.attemptCount) && Number(v.attemptCount) >= 0 &&
   nullable(v.result) && nullable(v.errorMessage) && date(v.createdAtUtc) && date(v.updatedAtUtc);
@@ -147,6 +159,7 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
 
 export const api = {
   health: () => get('/health', health),
+  localDiagnostics: () => get('/diagnostics/local', localDiagnostics),
   tasks: () => get('/tasks', list(task)),
   task: (id: string) => {
     if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid task identifier.'));
