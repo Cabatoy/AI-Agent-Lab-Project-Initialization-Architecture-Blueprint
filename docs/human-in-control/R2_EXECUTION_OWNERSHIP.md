@@ -7,9 +7,10 @@ PostgreSQL task satırı kilidi, kalıcı execution kaydı ve monoton generation
 tek bir task için aynı anda bir owner kabul edilmesini hedefler. Redis yalnız
 bildirim kuyruğudur. Lease, heartbeat, otomatik takeover ve recovery uygulanmaz.
 
-Bu değişiklik **offline ve dedicated PostgreSQL integration testleriyle
-doğrulanmış uygulama adayıdır**. Güncel R2 API/Worker container E2E **NOT RUN**;
-ayrıca doğrulanmalıdır. Önceki R1/A1 sonuçları R2 runtime kanıtı değildir.
+Bu değişiklik **offline, dedicated PostgreSQL integration ve A2.2 izole
+container E2E ile doğrulanmış uygulama adayıdır**. Aşağıdaki checkpoint'ler
+kanıt kapsamını ve ölçüm sınırlarını ayırır; tam dayanıklılık veya exactly-once
+external side effect garantisi vermez. Önceki R1/A1 sonuçları R2 kanıtı değildir.
 
 ## Teknik Ek
 
@@ -121,9 +122,10 @@ legacy bypass reddi, claim/finalization audit rollback ve kalıcılığı kapsar
 Bunlar yalnız bağımsız doğrulanmış dedicated fixture hedefinde çalıştırılmalıdır;
 offline testler transaction/concurrency doğruluğunun yerini tutmaz.
 
-Runtime harness değiştirilmedi. Yeni boş test DB için base schema + explicit v2
-migration hazırlığı mevcut harness'in otomatik akışına dahil değildir. Sonraki
-E2E öncesi bu hazırlık ve gerekli harness değişikliği ayrıca onaylanmalıdır.
+[A2.1 staged harness](../../deploy/hic-runtime-test/README.md), dependencies
+startup'ı, authoritative base schema + explicit v2 hazırlığını ve API startup'ını
+ayırır. Her runtime/SQL işlemi ayrıca açık onay gerektirir; schema-version
+kontrolü atlanmaz. Legacy `start` R2'de güvenli hata verir.
 
 ### PostgreSQL integration checkpoint — 6 Kasım 2026
 
@@ -162,7 +164,72 @@ E2E öncesi bu hazırlık ve gerekli harness değişikliği ayrıca onaylanmalı
   volume silinmedi.
 - `git diff --check`: PASS. Test sonucu sayıları TRX counters üzerinden de
   doğrulandı. Testleri geçirmek için uygulama veya test mantığı değiştirilmedi.
-- **R2 container E2E: NOT RUN.** Gerçek LLM, canlı application DB migration,
+- **Bu PostgreSQL checkpoint'i sırasında R2 container E2E: NOT RUN.**
+  Sonraki runtime kanıtı aşağıdaki A2.2 kaydındadır. Gerçek LLM, canlı application DB migration,
   lease expiry, heartbeat, otomatik takeover veya recovery çalıştırılmadı.
   Exactly-once external side effect garantisi yoktur. R2 tamamen doğrulanmış
   release olarak kabul edilmemelidir.
+
+### A2.2 izole runtime checkpoint — 6 Kasım 2026
+
+#### Doğrulanan
+
+- Kaynak HEAD: `a0ce873410ec575e64f99339370a5764b510c82d`;
+  dal `feature/hic-reliability-r2`. A2.1 harness değişiklikleri henüz
+  commit edilmemişti; uygulama/migration kaynakları değişmemişti.
+- Tek yeni proje `hic-net10-4148a5c31de5`, API `127.0.0.1:18082`.
+  Ayrı `hic-net10-4148a5c31de5_postgres-data` ve
+  `hic-net10-4148a5c31de5_redis-data` volume'ları, internal
+  `hic-net10-4148a5c31de5_test` ağı kullanıldı; DB/Redis host portu açılmadı.
+- Staged `start-dependencies -> prepare-schema -> start-api` geçti.
+  Authoritative initializer'dan okunan base SQL ve mevcut v2 migration yeni
+  `hic_test` DB'sinde ayrı explicit transaction'larda uygulandı.
+  Version `2`, beş tablo, base constraint/index'ler ve execution schema
+  kolon/constraint/partial unique index kontrolleri geçti. API yalnız schema
+  hazırlığından sonra; Worker yalnız primary task oluşturulup onaylandıktan sonra başladı.
+- Primary TaskId `057c330f-3049-4abb-940c-9e23a9752ed0`;
+  ExecutionId `5144bb66-181a-459d-9d45-7c8a3a01c6df`;
+  WorkerId `8ff264f7-3b18-4cd2-b78a-9783c649cc93`.
+  `Draft -> Approved -> Executing -> Completed`; sonuç `HIC_RUNTIME_TEST_OK`,
+  attempt `1`, generation `1`, tek ve finalized execution. Üç geçişlik audit
+  doğru; execution'a bağlı iki audit satırı mevcut.
+- API-only safety TaskId `a69beebd-dddf-4c7d-ba4c-c27e77f987ad`, Redis'e
+  gönderilmedi. Yeni claim `newlyClaimed:true`, replay `false`; iki conflicting
+  claim ve üç invalid execution/worker/generation proof HTTP `409`.
+  Retler state/audit'i değiştirmedi; geçerli owner ile `Completed` oldu.
+  Bu API gözlemleri, ayrı PostgreSQL concurrent-claim testlerinin yerine geçmez.
+- Son DB envanteri: iki task, iki kapalı execution, sıfır aktif execution,
+  altı audit satırı. Redis queue/DLQ `0/0`; Worker loglarında bir dequeue,
+  bir processed, sıfır failure diagnostic.
+- Test sonunda beş servis running, volume/ağ/state korundu; otomatik stop veya
+  cleanup yok. Önceki 17 container'ın ID/image/start-stop/restart/mount/port/ağ
+  metadata'sı ve kaynak hash'leri değişmedi; önceki volume/ağ envanteri korundu.
+  Mevcut DB'lere test yazımı yapılmadı; veri içeriklerinin kapsamlı karşılaştırması yok.
+
+#### Runtime provenance
+
+API/Worker önce cache kullanılmadan HEAD revision etiketiyle build edildi;
+harness `start-api` sırasında yeniden build etti. Çalışan image'lar revision
+etiketli image'larla aynı image/layer kimliği olarak sunulmaz. Her iki çalışan
+ana DLL'nin SHA-256 değeri fresh revision-etiketli build'deki DLL ile birebir eşleşti.
+
+| Servis | Çalışan image ID | Ana DLL SHA-256 |
+|---|---|---|
+| API | `de9f96ea8a47bf156e3ed482ef94db92031c48c3aae5c9b4a88c276aec31293d` | `d0c4e338273b390209ac29c99a5f3836a687ecfa395c9aac39ce68fd797fd75b` |
+| Worker | `6e491d1cd1fba45015228fb94d60289d51ce077c104c1b67942c96f835ff83b0` | `c2f4984b9c0f9f2089f80131de1d814a5fb08a16aa10bc7433302b1d3a52ca94` |
+
+#### Çıkarım, ölçülmeyen ve çalıştırılmayan
+
+- **Çıkarım:** Primary Worker'ın `newlyClaimed:true` kabulü, doğrulanmış binary'nin
+  kabul kapısı ve başarılı execution üzerinden çıkarılır; raw claim HTTP response
+  bağımsız yakalanmadı. Doğrudan true/false gözlemi safety task'ında alındı.
+- **NOT MEASURED:** Bağımsız model HTTP invocation sayısı; stub sayaç sunmuyor.
+  Stub-only endpoint, boş model anahtarı ve internal ağ doğrulandı; bu ölçümler
+  kesin bir model çağrısı veya kapsamlı network-traffic capture iddiası değildir.
+- **NOT RUN / NOT VERIFIED:** Runtime crash recovery, lease expiry/takeover,
+  destructive fault injection, gerçek/cloud LLM ve exactly-once external side effects.
+  Lease/heartbeat/recovery uygulanmadı; R3/R4 ve Bridge kapsam dışı kaldı.
+- A2.2'de static validation ve 34 offline harness testi tekrar geçti;
+  önceki 119/119 Release suite ve 12/12 PG testi yeniden çalıştırılmadı.
+  A2.3 checkpoint hazırlığında aynı static/34 offline test ve whitespace
+  kontrolleri yeniden geçti; runtime veya SQL işlemi çalıştırılmadı.
