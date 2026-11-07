@@ -1,7 +1,8 @@
-import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { api, ApiError, type Task } from './api';
 import { Status } from './components';
 import { DESCRIPTION_MAX_LENGTH, TITLE_MAX_LENGTH, deriveTitle, validateCreateTask } from './limits';
+import { readUnsentDraft, saveUnsentDraft } from './unsentDraft';
 
 const FALLBACK_UNKNOWN = 'The Control Plane did not confirm the request. The task may or may not have been created — check the Tasks list before submitting again.';
 
@@ -14,16 +15,24 @@ interface Props {
 
 export function CommandCenter({ hidden, onCreated, onViewTask, onCheckTasks }: Props) {
   const ids = useId();
-  const [description, setDescription] = useState('');
-  const [title, setTitle] = useState('');
+  const [initialDraft] = useState(readUnsentDraft);
+  const [description, setDescription] = useState(initialDraft.description);
+  const [title, setTitle] = useState(initialDraft.title);
+  const [localSaveOk, setLocalSaveOk] = useState(true);
   const [attempted, setAttempted] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [uncertain, setUncertain] = useState(false);
+  const [uncertain, setUncertain] = useState(initialDraft.uncertain);
   const [checking, setChecking] = useState(false);
   const [created, setCreated] = useState<Task | null>(null);
   const submitting = useRef(false);
   const requestRef = useRef<HTMLTextAreaElement>(null);
+
+  // Save only browser-local UNSENT input. Never create a Control Plane task in an effect.
+  // Persist the ambiguous-write lock across reloads to avoid duplicate task creation.
+  useEffect(() => {
+    setLocalSaveOk(saveUnsentDraft({ title, description, uncertain }));
+  }, [title, description, uncertain]);
 
   const derived = deriveTitle(description);
   const effectiveTitle = title.trim() || derived;
@@ -45,7 +54,10 @@ export function CommandCenter({ hidden, onCreated, onViewTask, onCheckTasks }: P
     setError(null);
     try {
       const task = await api.createTask(validation.value);
+      // Confirmed 201 Draft only: clear the local unsent buffer and its retry lock.
+      saveUnsentDraft({ title: '', description: '', uncertain: false });
       setCreated(task);
+      setUncertain(false);
       setDescription('');
       setTitle('');
       setAttempted(false);
@@ -90,6 +102,11 @@ export function CommandCenter({ hidden, onCreated, onViewTask, onCheckTasks }: P
         <span className="outline-badge">CREATES DRAFT ONLY</span></div>
       <p className="muted">Describe the work in natural language. Submitting saves a <strong>Draft</strong> task in the Control Plane.
         Nothing is approved, dispatched or executed, no model is called and no command is run.</p>
+      <p className="muted small">Unsent text is kept in this browser profile while you write, even when the Control Plane is offline.
+        Browser storage is not encrypted: do not enter secrets. Nothing is sent automatically.</p>
+      <p className="muted small" role="status">{localSaveOk
+        ? (title || description || uncertain ? 'Unsent input stored locally in this browser — not a Control Plane task.' : 'No unsent text stored.')
+        : 'Local save unavailable or input exceeds limits. Keep this page open until storage works or input is shortened.'}</p>
       <form className="command-form" onSubmit={onFormSubmit} noValidate aria-busy={pending}>
         <label className="field-label" htmlFor={`${ids}-request`}>Request <span className="required">required</span></label>
         <textarea id={`${ids}-request`} ref={requestRef} className="command-input" rows={8} value={description}
