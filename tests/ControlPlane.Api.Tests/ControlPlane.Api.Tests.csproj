@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\agent-lab\control-plane\ControlPlane.Api.csproj" />
+    <ProjectReference Include="..\..\agent-lab\hic-native-host\Hic.NativeHost.csproj" />
   </ItemGroup>
 
 </Project>
