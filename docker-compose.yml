@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: agentlab
       POSTGRES_PASSWORD: agentlab
       POSTGRES_DB: agentlab
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -19,8 +17,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: agentlab-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
 
@@ -35,7 +31,7 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab
       ConnectionStrings__Redis: redis:6379
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${HIC_CONTROL_PLANE_PORT:-19480}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +39,8 @@ services:
         condition: service_started
 
   agent-worker:
+    # Disabled by default. Requires explicit execution profile and separate approval.
+    profiles: ['manual-worker']
     build:
       context: ./agent-lab/agent-worker
       dockerfile: Dockerfile

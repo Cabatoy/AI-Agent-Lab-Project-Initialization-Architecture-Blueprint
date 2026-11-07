@@ -4,6 +4,24 @@ using Xunit;
 public sealed class NativeActionPolicyTests
 {
     [Theory]
+    [InlineData(null, 19481)]
+    [InlineData("", 19481)]
+    [InlineData("19481", 19481)]
+    [InlineData("5248", 5248)]
+    public void NativePortAcceptsValidOverrides(string? input, int expected) =>
+        Assert.Equal(expected, NativePortOptions.Parse(input));
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("80")]
+    [InlineData("abc")]
+    [InlineData("65536")]
+    [InlineData("-1")]
+    [InlineData("19481;cmd")]
+    public void NativePortRejectsInvalidOverrides(string input) =>
+        Assert.Throws<InvalidOperationException>(() => NativePortOptions.Parse(input));
+
+    [Theory]
     [InlineData("{\"action\":\"workspace.inspect\"}", true)]
     [InlineData("{\"action\":\"workspace.inspect\",\"command\":\"whoami\"}", false)]
     [InlineData("{\"action\":\"workspace.inspect\",\"path\":\"other\"}", false)]

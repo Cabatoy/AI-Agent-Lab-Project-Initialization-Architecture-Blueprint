@@ -2,7 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-const int port = 5248;
+var port = NativePortOptions.Parse(Environment.GetEnvironmentVariable("HIC_NATIVE_PORT"));
 var token = Environment.GetEnvironmentVariable("HIC_NATIVE_TOKEN")
     ?? throw new InvalidOperationException("HIC_NATIVE_TOKEN is required.");
 byte[] tokenBytes;

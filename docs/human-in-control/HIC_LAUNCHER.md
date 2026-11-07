@@ -21,3 +21,8 @@ The HIC launcher is an incremental step toward one-click local operation. It **d
 - Existing HIC UI 5173/5174, DB volumes and all existing worktrees remain unchanged.
 
 Next separate milestone: review the Issue #13 Control Plane diagnosis and create a minimal, consent-gated and rollback-capable **infrastructure start** operation using existing containers without running unsafe Compose up/down; implement isolated Windows Native Host lifecycle management and a durable status dashboard before self-healing.
+
+
+## Portable host ports
+
+New defaults: Control Plane 19480, Native Host 19481, UI 19482 (loopback only), configurable with `HIC_CONTROL_PLANE_PORT`, `HIC_NATIVE_PORT`, `HIC_WEB_PORT`. Existing local 8080/5248/5180 services are not moved or restarted. See [portable ports](PORTABLE_PORTS.md).

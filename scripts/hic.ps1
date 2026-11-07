@@ -13,15 +13,18 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
     $PSNativeCommandUseErrorActionPreference = $false
 }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'hic-ports.ps1')
+$ports = Get-HicPorts
 
 function Test-HttpReady {
-    param([string]$Uri, [string]$RequiredField, [string]$ExpectedValue)
+    param([string]$Uri, [string]$RequiredField, [string]$ExpectedValue, [string]$ExpectedService = '')
     try {
         $response = Invoke-WebRequest -Uri $Uri -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
         if ([int]$response.StatusCode -ne 200) { return $false }
         if (-not $RequiredField) { return $true }
         $jsonResponse = $response.Content | ConvertFrom-Json
-        return ($jsonResponse.$RequiredField -ceq $ExpectedValue)
+        return (($jsonResponse.$RequiredField -ceq $ExpectedValue) -and
+                ((-not $ExpectedService) -or ($jsonResponse.service -ceq $ExpectedService)))
     }
     catch { return $false }
 }
@@ -59,17 +62,34 @@ function Get-PodmanReadOnlyStatus {
 
 function Get-HicStatus {
     $podman = Get-PodmanReadOnlyStatus
-    $cp = Test-HttpReady 'http://127.0.0.1:8080/health' 'status' 'ok'
-    $native = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready'
-    $ui = Test-HttpReady 'http://127.0.0.1:5180/'
+    $cpPort = $ports.ControlPlane
+    $cp = Test-HttpReady "http://127.0.0.1:$cpPort/health" 'status' 'ok' 'control-plane'
+    $legacyCP = $false
+    if (-not $cp -and -not $env:HIC_CONTROL_PLANE_PORT -and $cpPort -ne 8080) {
+        # Preserve installed 8080 runtimes, but only when the service identity matches HIC.
+        $legacyCP = Test-HttpReady 'http://127.0.0.1:8080/health' 'status' 'ok' 'control-plane'
+        if ($legacyCP) { $cp = $true; $cpPort = 8080 }
+    }
+
+    $native = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
+    $ui = Test-HttpReady "http://127.0.0.1:$($ports.WebUI)/"
+    # Existing PR #15 preview can remain on its old ports. Never replace it implicitly.
+    $oldNative = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
+    $oldUI = Test-HttpReady 'http://127.0.0.1:5180/'
     return [ordered]@{
-        action        = $Action
-        controlPlane  = if ($cp) { 'ready' } else { 'unavailable' }
-        nativeHost    = if ($native) { 'ready' } else { 'unavailable' }
-        webUI         = if ($ui) { 'ready' } else { 'unavailable' }
-        podmanMachine = $podman.machine
-        worker        = $podman.worker
-        workerSafe    = $podman.worker -in @('exited', 'stopped', 'created', 'configured', 'not-found')
+        action           = $Action
+        controlPlane     = if ($cp) { 'ready' } else { 'unavailable' }
+        controlPlanePort = $cpPort
+        legacyControlPlane = $legacyCP
+        nativeHost       = if ($native) { 'ready' } else { 'unavailable' }
+        nativeHostPort   = $ports.NativeHost
+        webUI            = if ($ui) { 'ready' } else { 'unavailable' }
+        webUIPort        = $ports.WebUI
+        legacyNative     = $oldNative
+        legacyWebUI      = $oldUI
+        podmanMachine    = $podman.machine
+        worker           = $podman.worker
+        workerSafe       = $podman.worker -in @('exited', 'stopped', 'created', 'configured', 'not-found')
     }
 }
 
@@ -80,10 +100,12 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
     }
     else {
         Write-Host 'Human In Control — read-only status'
-        Write-Host "Control Plane 8080 : $($status.controlPlane)"
-        Write-Host "Native Host 5248   : $($status.nativeHost)"
-        Write-Host "HIC Web UI 5180    : $($status.webUI)"
+        Write-Host "Control Plane $($status.controlPlanePort) : $($status.controlPlane)"
+        Write-Host "Native Host $($status.nativeHostPort)   : $($status.nativeHost)"
+        Write-Host "HIC Web UI $($status.webUIPort)    : $($status.webUI)"
         Write-Host "Podman machine     : $($status.podmanMachine)"
+        if ($status.legacyControlPlane) { Write-Host "Existing legacy Control Plane verified at 127.0.0.1:8080 (no migration)." }
+        if ($status.legacyNative -or $status.legacyWebUI) { Write-Host "Legacy Native preview detected on 5248/5180; not touching it." }
         Write-Host "Worker             : $($status.worker)"
         if ($Action -eq 'doctor') {
             if ($status.controlPlane -ne 'ready') {
@@ -106,16 +128,26 @@ if (-not $status.workerSafe) {
     throw "Worker status is $($status.worker). Refusing to launch without confirming it is stopped."
 }
 if ($status.controlPlane -ne 'ready') {
-    throw 'Control Plane 8080 is unavailable. Guarded startup will not restart Podman, containers or databases. Run hic.cmd doctor and review Issue #13.'
+    throw "Control Plane on configured port $($status.controlPlanePort) is unavailable. No container restart or automatic port migration. Run hic.cmd doctor and review Issue #13."
 }
 if ($status.nativeHost -eq 'ready' -and $status.webUI -eq 'ready') {
     Write-Host 'HIC native session is already running. No action needed.'
-    Write-Host 'Open http://127.0.0.1:5180'
+    Write-Host "Open http://127.0.0.1:$($status.webUIPort)"
     exit 0
 }
 if ($status.nativeHost -eq 'ready' -or $status.webUI -eq 'ready') {
     throw 'Only one of Native Host / HIC UI is running. Refusing to replace or terminate any existing process.'
 }
+if ($status.legacyNative -or $status.legacyWebUI) {
+    if ($status.legacyNative -and $status.legacyWebUI) {
+        Write-Host 'Existing native preview on 5248/5180 is running. No second Native Host started.'
+        Write-Host 'Open http://127.0.0.1:5180. Change ports only after an independently approved manual cutover.'
+        exit 0
+    }
+    throw 'Partial legacy Native Host/UI session detected. Refusing to start a second native process.'
+}
+# Share the selected, identity-verified legacy or configured CP port with the UI proxy.
+$env:HIC_CONTROL_PLANE_PORT = [string]$status.controlPlanePort
 
 $nativeLauncher = Join-Path $root 'scripts/hic-native.ps1'
 if (-not (Test-Path $nativeLauncher)) { throw 'Native launcher script not found.' }
