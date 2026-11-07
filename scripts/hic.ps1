@@ -68,6 +68,7 @@ function Get-PodmanReadOnlyStatus {
     $result = [ordered]@{
         machine = 'not-detected'
         worker = 'unknown'
+        profile = 'unknown'
         controlPlaneContainer = 'unknown'
         postgresContainer = 'unknown'
         redisContainer = 'unknown'
@@ -83,9 +84,34 @@ function Get-PodmanReadOnlyStatus {
         if ($running.Count -eq 0) { return $result }
 
         $result.worker = Get-ContainerReadOnlyState 'agentlab-worker'
-        $result.controlPlaneContainer = Get-ContainerReadOnlyState 'agentlab-control-plane'
-        $result.postgresContainer = Get-ContainerReadOnlyState 'agentlab-postgres'
-        $result.redisContainer = Get-ContainerReadOnlyState 'agentlab-redis'
+        $legacyCP = Get-ContainerReadOnlyState 'agentlab-control-plane'
+        $legacyPostgres = Get-ContainerReadOnlyState 'agentlab-postgres'
+        $legacyRedis = Get-ContainerReadOnlyState 'agentlab-redis'
+        $managedCP = Get-ContainerReadOnlyState 'hic-managed-control-plane'
+        $managedPostgres = Get-ContainerReadOnlyState 'hic-managed-postgres'
+        $managedRedis = Get-ContainerReadOnlyState 'hic-managed-redis'
+        $hasLegacy = @($legacyCP, $legacyPostgres, $legacyRedis, $result.worker) -ne 'not-found'
+        $hasManaged = @($managedCP, $managedPostgres, $managedRedis) -ne 'not-found'
+        $legacyPresent = @($hasLegacy | Where-Object { $_ }).Count -gt 0
+        $managedPresent = @($hasManaged | Where-Object { $_ }).Count -gt 0
+        if ($managedPresent -and -not $legacyPresent) {
+            $result.profile = 'managed'
+            $result.controlPlaneContainer = $managedCP
+            $result.postgresContainer = $managedPostgres
+            $result.redisContainer = $managedRedis
+        }
+        elseif ($managedPresent -and $legacyPresent) {
+            $result.profile = 'mixed'
+            $result.controlPlaneContainer = $legacyCP
+            $result.postgresContainer = $legacyPostgres
+            $result.redisContainer = $legacyRedis
+        }
+        else {
+            $result.profile = if ($legacyPresent) { 'legacy' } else { 'none' }
+            $result.controlPlaneContainer = $legacyCP
+            $result.postgresContainer = $legacyPostgres
+            $result.redisContainer = $legacyRedis
+        }
     }
     catch {
         # Reporting an unknown status is safer than assuming an unhealthy runtime is stopped.
@@ -122,6 +148,7 @@ function Get-HicStatus {
         legacyNative     = $oldNative
         legacyWebUI      = $oldUI
         podmanMachine    = $podman.machine
+        infrastructureProfile = $podman.profile
         controlPlaneContainer = $podman.controlPlaneContainer
         postgresContainer = $podman.postgresContainer
         redisContainer = $podman.redisContainer
@@ -150,6 +177,7 @@ function Get-DoctorFindings {
     if ($State.podmanMachine -eq 'stopped') {
         $messages.Add('Podman machine is stopped. Launcher never starts the Podman machine automatically.')
     }
+    if ($State.infrastructureProfile -eq 'mixed') { $messages.Add('Mixed legacy and HIC-managed containers detected. Do not reconcile automatically.') }
     if ($State.postgresContainer -ne 'running' -or $State.redisContainer -ne 'running') {
         $messages.Add('PostgreSQL/Redis container availability is not confirmed. No database actions will be taken.')
     }
@@ -196,6 +224,7 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
         Write-Host "Native Host $($status.nativeHostPort)   : $($status.nativeHost)"
         Write-Host "HIC Web UI $($status.webUIPort)    : $($status.webUI)"
         Write-Host "Podman machine     : $($status.podmanMachine)"
+        Write-Host "Infrastructure profile: $($status.infrastructureProfile)"
         if ($status.legacyControlPlane) { Write-Host "Existing legacy Control Plane verified at 127.0.0.1:8080 (no migration)." }
         if ($status.legacyNative -or $status.legacyWebUI) { Write-Host "Legacy Native preview detected on 5248/5180; not touching it." }
         Write-Host "Worker             : $($status.worker)"
