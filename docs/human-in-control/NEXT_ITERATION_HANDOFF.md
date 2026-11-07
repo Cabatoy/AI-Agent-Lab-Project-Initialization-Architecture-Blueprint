@@ -2,13 +2,13 @@
 
 **Son doğrulama:** 2026-11-08, yerel saat (UTC+03:00).
 
-**Durum: Kısmi.** PR #36 ve #37 remote'a entegre edilmiştir. Provider diagnostics dalı güncel `origin/develop` üzerine rebase edilmiştir; provider PR'ı CI ve insan incelemesini beklemektedir.
+**Durum: Kısmi.** PR #36 ve #37 remote'a entegre edilmiştir. Provider diagnostics dalı güncel `origin/develop` üzerine rebase edilip push edilmiştir. PR oluşturma denemesinde GitHub sayfası oturum açılmamış durumda olduğundan PR açılamadı; authenticated GitHub oturumu gerekir.
 
 ## Doğrulanan depo düzeni
 
 - Kanonik kaynaklar `src/ControlPlane`, `src/AgentWorker`, `src/NativeHost`, `src/WebUI` ve `src/AgentBridge` altındadır. Testler `tests/`, dağıtım tanımları `deploy/`, araçlar `tools/`, komutlar `scripts/` altındadır; çözüm dosyası kökte `HumanInControl.sln` adını taşır.
 - PR #36 refactor commit'i `759ae099742c1705c8a5c211b6d0ed6baaa9c903`, güncel `origin/develop` merge commit'i ise `92488229c813aac9c8c9ac77c452546e08362adb` içindedir.
-- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiştir. Worktree `hic-dx-provider-config` altındadır; güncel HEAD'i `git rev-parse HEAD` ile doğrulayın.
+- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiş ve push edilmiştir. Altıncı dokümantasyon commit'i `0791f7b64149ca1354b64ad487d6fd175c22eb01`'dir. Worktree `hic-dx-provider-config` altındadır; güncel HEAD'i `git rev-parse HEAD` ile doğrulayın.
 - Ana checkout'un son hedefi `develop`/`origin/develop` SHA'sıdır. Provider, refactor, AgentBridge, Command Center, Web UI ve detached worktree'ler korunmuştur. AgentBridge worktree'sindeki `handoffs/` untracked dosyaları ve worktree'lerdeki ignored yerel çıktılar silinmemiştir.
 - PR #36 ve #37 doğrulanmış merge commit'leriyle remote geçmişindedir. Provider dalı, #36'nın eski tabanını tekrarlamadan güncel `develop` için ayrı PR'a hazırlanmıştır.
 
@@ -54,13 +54,13 @@ Yeni mimari karar alınmadı. Plan, PR incelemesi ve production deploy için ins
 
 - [PR #36](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/36) `develop` dalına merge edilmiştir. Remote `develop` SHA: `92488229c813aac9c8c9ac77c452546e08362adb`.
 - [PR #37](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/37) `main` dalına merge edilmiştir. Remote `main` SHA: `eceead60fb04f41d146d02a532ae5d5d6d71e6e3`; bu SHA #36 tarihçesini içerir.
-- Provider diagnostics için açılan PR'ın hedefi `develop` olmalıdır. Merge öncesinde required checks, insan incelemesi ve v3 tetiklenmediği doğrulanmalıdır; branch protection hakkında varsayım yapılmamalıdır.
+- Provider diagnostics PR'ı henüz açılmamıştır; GitHub browser oturumu sign-in sayfasına yönlendi. Authenticated oturumda [compare linkini](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/compare/develop...feature/hic-provider-config-diagnostics?expand=1) açıp `develop` hedefli PR oluşturun. Merge öncesinde required checks, insan incelemesi ve v3 tetiklenmediği doğrulanmalıdır; branch protection hakkında varsayım yapılmamalıdır.
 - Bu iterasyonda branch/worktree silinmedi. Bir worktree'de untracked handoff, diğerlerinde ignored yerel build/runtime çıktıları bulunduğundan silme güvenli kabul edilmedi. Temizliği daha sonra yalnız güncel PR/worktree/reachability envanteriyle değerlendirin.
 - CI istisnası ve korunan blob kontrolleri [WORKSPACE_REFACTOR_CI.md](WORKSPACE_REFACTOR_CI.md) içinde açıklanır. Başka bir branch için v3 güvenliği ayrıca gerçek PR diff'i ve workflow path filtreleriyle doğrulanmalıdır.
 
 ## Öncelikli sonraki işler
 
-1. Provider PR'ındaki CI, security boundary kontrolü ve insan incelemesini tamamlayın; PostgreSQL v3 migration/test'i çalıştırmayın.
+1. Authenticated GitHub oturumunda provider branch'inden `develop` hedefli PR oluşturun; ardından CI/security boundary sonuçlarını ve insan incelemesini tamamlayın. PostgreSQL v3 migration/test'i çalıştırmayın.
 2. Provider change merge öncesinde diff'i ve provider error içeriklerinin gizlilik sınırını gözden geçirin. Worker execution izinlerini genişletmeyin ve Worker'ı başlatmayın.
 3. `develop`/`main` yeniden karşılaştırmasını ancak yeni terfi isteği olduğunda yapın; release onayı olmadan merge/deploy etmeyin.
 5. Güvenilmeyen ağ veya cloud erişiminden önce Control Plane service authentication, actor binding, authorization ve audit ihtiyaçlarını değerlendirin; provider hata içerikleri, dual-write penceresi ve R2 recovery için ayrı kapsam ve kabul ölçütleri belirleyin.
@@ -68,4 +68,4 @@ Yeni mimari karar alınmadı. Plan, PR incelemesi ve production deploy için ins
 
 ## English continuation prompt
 
-> Start from the repository root and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md`. Recheck Git status, worktrees, remote refs, and the provider PR. Preserve ignored files, untracked handoffs, archived reports, and all unfinished work. Do not modify runtime state, start Worker/task execution, or run PostgreSQL v3 migrations/tests. Keep execution permissions unchanged. Require CI, human review, and explicit release approval before integration or deployment. Make no new architecture or provider decisions without approval.
+> Start from the repository root and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md`. Recheck Git status, worktrees, remote refs, and the provider branch. Create its `develop` PR from an authenticated GitHub session, then verify CI and human review. Preserve ignored files, untracked handoffs, archived reports, and all unfinished work. Do not modify runtime state, start Worker/task execution, or run PostgreSQL v3 migrations/tests. Keep execution permissions unchanged. Require explicit release approval before integration or deployment. Make no new architecture or provider decisions without approval.
