@@ -3,7 +3,8 @@ $ErrorActionPreference = 'Stop'
 $paths = @(
     (Join-Path $PSScriptRoot 'hic.ps1'),
     (Join-Path $PSScriptRoot 'hic-native.ps1'),
-    (Join-Path $PSScriptRoot 'hic-ports.ps1')
+    (Join-Path $PSScriptRoot 'hic-ports.ps1'),
+    (Join-Path $PSScriptRoot 'hic-decisions.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -65,3 +66,38 @@ finally {
     }
 }
 Write-Host 'HIC port overrides / collision validation: PASS'
+
+# Pure decision matrix: does not start a Native Host or touch any local service.
+. (Join-Path $PSScriptRoot 'hic-decisions.ps1')
+$state = [ordered]@{
+    controlPlane = 'unavailable'
+    nativeHost = 'unavailable'
+    webUI = 'unavailable'
+    legacyNative = $false
+    legacyWebUI = $false
+    nativePortState = 'free'
+    webUIPortState = 'free'
+    worker = 'unknown'
+}
+$decision = Get-HicStartupDecision $state
+if ($decision.action -ne 'launch-native') { throw 'Degraded mode must allow read-only native startup without a Control Plane.' }
+
+$state.nativePortState = 'occupied'
+if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'An occupied port must block startup.' }
+$state.nativePortState = 'unknown'
+if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'An unknown port must block startup.' }
+$state.nativePortState = 'free'
+$state.webUIPortState = 'occupied'
+if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'An occupied UI port must block startup.' }
+$state.webUIPortState = 'free'
+$state.nativeHost = 'ready'
+if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'A partial Native Host session must block startup.' }
+$state.webUI = 'ready'
+if ((Get-HicStartupDecision $state).action -ne 'reuse') { throw 'A complete session must be reused.' }
+$state.nativeHost = 'unavailable'
+$state.webUI = 'unavailable'
+$state.legacyNative = $true
+if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'A partial legacy session must block startup.' }
+$state.legacyWebUI = $true
+if ((Get-HicStartupDecision $state).action -ne 'reuse-legacy') { throw 'A healthy legacy session must be reused.' }
+Write-Host 'HIC startup decision matrix: PASS'
