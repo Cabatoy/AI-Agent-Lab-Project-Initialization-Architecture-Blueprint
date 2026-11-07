@@ -1,0 +1,24 @@
+name: HIC Native Approval Revocation and Revision Race CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/hic-ledger-races-ci.yml'
+      - 'tests/security-contracts/native-ledger-races*'
+      - '**/Migrations/003-native-run-approval-ledger.sql'
+      - 'deploy/hic-managed/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-revocation-races:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify claim-vs-revocation and claim-vs-task-version lock races
+        shell: bash
+        run: python3 tests/security-contracts/native-ledger-races.py
