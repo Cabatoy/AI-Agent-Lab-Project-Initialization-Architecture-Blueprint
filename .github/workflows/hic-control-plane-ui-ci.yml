@@ -10,6 +10,7 @@ on:
       - 'agent-lab/hic-native-host/**'
       - 'tests/Hic.NativeHost.Tests/**'
       - 'scripts/hic-native.ps1'
+      - 'scripts/hic-preview.smoke.tests.ps1'
       - 'run-hic-native.cmd'
       - 'hic.cmd'
       - 'scripts/hic.ps1'
@@ -114,3 +115,20 @@ jobs:
           assert cp_ports[0]["host_ip"] == "127.0.0.1"
           print("Managed Compose topology and loopback isolation: PASS")
           PY
+
+  native-preview-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: agent-lab/hic-web-ui/package-lock.json
+      - name: Test real Windows Native Host and Vite with Control Plane offline
+        shell: pwsh
+        run: ./scripts/hic-preview.smoke.tests.ps1
