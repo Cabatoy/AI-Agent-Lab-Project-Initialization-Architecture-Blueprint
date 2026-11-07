@@ -1,5 +1,7 @@
 # AI Agent Lab — Faz + Epik + Task Roadmap
 
+> Tarihsel yol haritası: kaynak yolları yeni yerleşimi gösterir; öneriler onay veya güncel durum beyanı değildir. Bkz. `docs-md/continuation.md`.
+
 ## Yönetici Özeti
 
 Bu roadmap, mevcut local prototipi ürün seviyesine taşımak için uygulanabilir bir yürütme planıdır.
@@ -15,12 +17,12 @@ Yaklaşım:
 
 ## Güncel İlerleme Notu (Uygulandı)
 
-- `agent-lab/control-plane/Program.cs` içinde task state modeli genişletildi.
+- `src/ControlPlane/Program.cs` içinde task state modeli genişletildi.
 - Merkezi geçiş doğrulaması (`TaskStatusTransitions`) eklendi.
 - `approve/retry/status` endpointleri merkezi transition kuralına bağlandı.
 - `task_status_transitions` geçmiş tablosu ve kayıt fonksiyonu eklendi.
 - Retry akışı `Failed -> Retrying` olacak şekilde güncellendi.
-- `agent-lab/agent-worker/Program.cs` içinde transient/permanent hata sınıflandırması, status update retry ve in-memory idempotency guard uygulandı.
+- `src/AgentWorker/Program.cs` içinde transient/permanent hata sınıflandırması, status update retry ve in-memory idempotency guard uygulandı.
 - Worker tarafında dead-letter queue baseline eklendi (`TASK_DEAD_LETTER_QUEUE_KEY`, `DeadLetterMessage`, terminal failure path’lerinde enqueue).
 - `tests/AgentWorker.Tests` projesi oluşturuldu, solution’a eklendi ve Worker reliability testleri (12 test) başarıyla geçti.
 - `tests/ControlPlane.Api.Tests` projesi eklendi; status transition kuralları için 11 test yazıldı.

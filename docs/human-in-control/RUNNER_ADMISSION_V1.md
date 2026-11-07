@@ -29,7 +29,7 @@
 
 ## Contract prototype in source (not wired)
 
-`agent-lab/hic-native-host/NativeRunAdmissionPolicy.cs` defines a **pure function** accepting `ProposedNativeRun` and a *hypothetical trusted internal* `VerifiedNativeApproval` snapshot. It checks fixed action/scope, no arbitrary arguments, nonempty task/run/actor IDs, positive task version, matching binding, identity/proof/persistence indicators, a five-minute maximum grant lifetime, and an exclusive run claim indicator. Results are **structural eligibility codes, never permission to execute**. The Host does not expose this as an HTTP endpoint and no code constructs these snapshots from live inputs.
+`src/NativeHost/NativeRunAdmissionPolicy.cs` defines a **pure function** accepting `ProposedNativeRun` and a *hypothetical trusted internal* `VerifiedNativeApproval` snapshot. It checks fixed action/scope, no arbitrary arguments, nonempty task/run/actor IDs, positive task version, matching binding, identity/proof/persistence indicators, a five-minute maximum grant lifetime, and an exclusive run claim indicator. Results are **structural eligibility codes, never permission to execute**. The Host does not expose this as an HTTP endpoint and no code constructs these snapshots from live inputs.
 
 The four evidence booleans are NOT evidence by themselves. A future implementation must compute them from actual verified credentials, persisted approval and atomic claim under an authenticated authority, not deserialize them from caller-controlled JSON. Until then, **task execution stays disabled**.
 

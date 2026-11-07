@@ -48,7 +48,7 @@ B1 tasarım/mock işleri A1'e paralel olabilir; bu A1'i atlama veya güvenilirli
 #### Git/worktree önerisi ve dosya sahipliği
 
 - Ayrı onayla aynı gözden geçirilmiş checkpoint'ten `feature/hic-reliability-r2` ve `feature/hic-agent-bridge` branch'leri, repo kökü dışında ayrı worktree'lerde açılabilir. Aktif migration branch'i B0 sırasında değiştirilmez; worktree Git ref/object ve bazı ayarları paylaşır, runtime izolasyonu sağlamaz.
-- Track A: `agent-lab/control-plane/TaskTransitionStore.cs`, task mutation/execution yüzeyleri, `agent-lab/agent-worker/`, reliability testleri ve onaylı runtime testleri.
+- Track A: `src/ControlPlane/TaskTransitionStore.cs`, task mutation/execution yüzeyleri, `src/AgentWorker/`, reliability testleri ve onaylı runtime testleri.
 - Track B: B0 bridge belgesi, ileride ayrıca onaylanan bridge adapter/contract test dosyaları. B1 mevcut read endpoint'lerini tüketir; Worker/state transition dosyalarını değiştirmez.
 - Ortak `Program.cs`, solution/project dosyaları, `ARCHITECTURE.md`, `ROADMAP.md`, `INTEGRATION_CONTRACTS.md` ve handoff belgelerinde tek entegrasyon sahibi belirlenir. İki worktree aynı dosyayı eşzamanlı düzenlemez; Track B API değişikliği gerekirse Track A ile contract-first koordinasyon yapılır.
 - Her track'in dependency/package/runtime kaynakları ve sentetik verileri ayrı olmalı; aynı task/queue üzerinde paralel test yok. Paylaşılan çalışma ağacında branch switch ile paralellik taklit edilmez.

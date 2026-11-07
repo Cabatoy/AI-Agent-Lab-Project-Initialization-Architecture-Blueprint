@@ -22,7 +22,7 @@ services:
 
   control-plane:
     build:
-      context: ./agent-lab/control-plane
+      context: ./src/ControlPlane
       dockerfile: Dockerfile
     container_name: agentlab-control-plane
     environment:
@@ -42,7 +42,7 @@ services:
     # Disabled by default. Requires explicit execution profile and separate approval.
     profiles: ['manual-worker']
     build:
-      context: ./agent-lab/agent-worker
+      context: ./src/AgentWorker
       dockerfile: Dockerfile
     container_name: agentlab-worker
     environment:

@@ -10,32 +10,62 @@ Depo, mimari belgelerin yanında Podman ile çalıştırılabilen bir local prot
 
 ## Belgeler
 
-- [Proje vizyonu](docs/00-project-vision.md)
-- [Mimari ilkeler](docs/01-architecture-principles.md)
-- [Mevcut kararlar](docs/02-current-decisions.md)
-- [Açık sorular](docs/03-open-questions.md)
-- [Mimari taslak](docs/04-architecture-blueprint.md)
-- [Uygulama yol haritası](docs/05-implementation-roadmap.md)
-- [Maliyet ve altyapı](docs/06-cost-and-infrastructure.md)
-- [Devam noktası ve yeni sohbet rehberi](docs/continuation.md)
-- [Local Copilot akış rehberi](docs/local-onboarding.md)
-- [Mimari karar kayıtları](docs/decisions/README.md)
+- [Proje vizyonu](docs-md/00-project-vision.md)
+- [Mimari ilkeler](docs-md/01-architecture-principles.md)
+- [Mevcut kararlar](docs-md/02-current-decisions.md)
+- [Açık sorular](docs-md/03-open-questions.md)
+- [Mimari taslak](docs-md/04-architecture-blueprint.md)
+- [Uygulama yol haritası](docs-md/05-implementation-roadmap.md)
+- [Maliyet ve altyapı](docs-md/06-cost-and-infrastructure.md)
+- [Devam noktası ve yeni sohbet rehberi](docs-md/continuation.md)
+- [Local Copilot akış rehberi](docs-md/local-onboarding.md)
+- [Mimari karar kayıtları](docs-md/decisions/README.md)
 
 Gelecekteki AI coding oturumlarının proje bağlamı için [.github/copilot-instructions.md](.github/copilot-instructions.md) dosyasına bakın.
 
+## Kanonik çalışma alanı
+
+```text
+src/
+  ControlPlane/   Control Plane API ve migration kaynakları
+  AgentWorker/    Worker
+  NativeHost/     Salt okunur Native Host
+  WebUI/          HIC Web UI
+  AgentBridge/    Agent Bridge
+tests/            .NET ve güvenlik sözleşmesi testleri
+deploy/           Compose manifestleri ve izole runtime harness
+scripts/          Local lifecycle ve HIC launcher'ları
+docs-md/          Belge kaynakları ve devam noktası
+docs/             HIC belgeleri ve yayımlanmış PDF'ler
+tools/            run.me gibi yardımcı araçlar
+HumanInControl.sln
+hic.cmd
+.local/           Git dışında yerel worktree, rapor, tanı ve yedek alanları
+```
+
+`.local/` Git tarafından yok sayılır; kişisel raporlar, çalışma ağaçları ve
+sırlar commit edilmez. Eski checkout yolları yeni düzen için uyumluluk yolu
+değildir. Mevcut checkout'u değiştirmeden çalışma yürütmek için ayrı bir Git
+worktree kullanılabilir. Native Host yalnız `workspace.inspect` aksiyonuna
+izin verir; task execution bu düzenlemeyle etkinleştirilmez.
+
+Yayımlanmış PDF'ler önceki belge snapshot'ını korur ve eski kaynak yollarını
+gösterebilir. Bu refactor'a üretilmiş PDF çıktıları dahil edilmez; güncel
+yerleşim için bu bölüm ve Markdown kaynakları esas alınmalıdır.
+
 ## Depoyu indirdikten sonra
 
-1. Depoyu klonlayıp IDE'de açın. VS Code'da depo kökünü **File > Open Folder** ile açın. Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın; solution Control Plane, Worker ve `run.me` projelerini içerir.
+1. Depoyu klonlayıp IDE'de açın. VS Code'da depo kökünü **File > Open Folder** ile açın. Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın; solution Control Plane, Worker, Native Host, Agent Bridge, `run.me` ve .NET test projelerini içerir.
 2. Önce dosya denetimi ve sohbet handoff'u için `run.me` rehberini başlatın. Bu aşamalarda Podman çalıştırılmaz. `approve-podman` onayından sonra rehber salt okunur Podman durum kontrolünü kendisi çalıştırır; sorun bulunursa `approve-setup` onayıyla `scripts/local.ps1`/`scripts/local.sh new-build` komutunu da kendisi başlatır. Rehberde `repo review`, `handoff check`, `podman check` ve `setup repair` komutlarıyla Chat mesajlarını dosyadan (`tools/run-me/prompts.tr.json`) da alıp kopyalayabilirsiniz. İstediğiniz adımı doğrudan çağırmak için `step <n>` komutunu da kullanabilirsiniz.
 
    Konsolu çalıştırmadan doğrudan Chat'e de `repo review`, `handoff check`, `podman check` ve `setup repair` komutları yazılabilir. Bu durumda da aynı onay kapıları geçerlidir (`podman check` için Podman onayı, `setup repair` için ayrı setup/onarım onayı).
 
-3. VS Code repo talimatlarını `.github/copilot-instructions.md` dosyasından yükler. Visual Studio sürümüne göre davranış değişebileceğinden Copilot Chat'ten bu dosyayı ve [devam rehberini](docs/continuation.md) açıkça okumasını isteyin.
+3. VS Code repo talimatlarını `.github/copilot-instructions.md` dosyasından yükler. Visual Studio sürümüne göre davranış değişebileceğinden Copilot Chat'ten bu dosyayı ve [devam rehberini](docs-md/continuation.md) açıkça okumasını isteyin.
 4. Podman durum kontrolü ancak rehberde `approve-podman` ile açıkça onaylandıktan sonra, rehberin kendisi tarafından çalıştırılır. Bu onay yalnızca salt okunur kontroller içindir. Sorun tespit edilirse rehber `approve-setup` ile ayrı onay ister ve onaylanırsa yalnızca `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi çalıştırır; başka lifecycle komutu (rebuild-all, delete-all) veya ayar değişikliği için ayrıca onay gerekir.
 
 Tüm .NET projelerini terminalden derlemek için repo kökünde `dotnet build HumanInControl.sln` çalıştırın.
 
-Yeni bir Copilot sohbetinde `docs/continuation.md` dosyasını okuyup oradaki sıradaki kontrol noktasından devam etmesini isteyin. Sohbet geçmişi Git'e kaydedilmez; dosya güncel proje handoff'unun kalıcı kaynağıdır.
+Yeni bir Copilot sohbetinde `docs-md/continuation.md` dosyasını okuyup oradaki sıradaki kontrol noktasından devam etmesini isteyin. Sohbet geçmişi Git'e kaydedilmez; dosya güncel proje handoff'unun kalıcı kaynağıdır.
 
 ## Local Podman kurulumu
 
@@ -75,12 +105,12 @@ Komut eski compose container/network nesnelerini kaldırıp image'ları build ed
 
 Servisler:
 
-- `control-plane` -> `http://localhost:8080/health`
-- `agent-worker` -> Redis kuyruktan task alır ve status günceller
-- `postgres` -> `localhost:5432`
-- `redis` -> `localhost:6379`
+- `control-plane` -> varsayılan `http://127.0.0.1:19480/health`; mevcut eski kurulumlar `8080` kullanabilir
+- `agent-worker` -> varsayılan olarak kapalıdır; `manual-worker` profili ve ayrı açık onay gerektirir
+- `postgres` -> Compose ağı içinde `postgres:5432`; host portu yayımlanmaz
+- `redis` -> Compose ağı içinde `redis:6379`; host portu yayımlanmaz
 
-İlk depo incelemesi, handoff ve onaylı Podman durum kontrolü için depo kökünde Windows'ta `./run.me.ps1`, macOS/Linux'ta `bash ./run.me` çalıştırın. Bu rehber stack'i başlatmaz. Sonradan ayrıca onaylanan local task smoke test'i ve komutlar için [local onboarding](docs/local-onboarding.md) sayfasına bakın.
+İlk depo incelemesi, handoff ve onaylı Podman durum kontrolü için depo kökünde Windows'ta `./run.me.ps1`, macOS/Linux'ta `bash ./run.me` çalıştırın. Bu rehber stack'i başlatmaz. Sonradan ayrıca onaylanan local task smoke test'i ve komutlar için [local onboarding](docs-md/local-onboarding.md) sayfasına bakın.
 
 İstekleri elle denemek için:
 

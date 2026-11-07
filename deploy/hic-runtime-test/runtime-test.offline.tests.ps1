@@ -12,7 +12,7 @@ foreach ($node in $ast.EndBlock.Statements) {
     }
 }
 $root = $PSScriptRoot
-$sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\agent-lab\control-plane\Program.cs'))
+$sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\src\ControlPlane\Program.cs'))
 $migrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\002-execution-ownership.sql'
 $versionPath = Join-Path (Split-Path $sourcePath) 'ExecutionSchema.cs'
 $templatePath = Join-Path $root 'compose.json'

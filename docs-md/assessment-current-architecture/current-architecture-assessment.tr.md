@@ -1,5 +1,7 @@
 # AI Agent Lab — Mevcut Mimari Değerlendirme (TR)
 
+> Tarihsel değerlendirme: kaynak yolları yeni yerleşimi gösterir; runtime durumu ise geçmiş bir kesittir. Güncel handoff için `docs-md/continuation.md` dosyasına bakın.
+
 ## Yönetici Özeti
 
 Bu belge, `C:\Enterprise` deposundaki mevcut implementasyonu temel alarak sistemin bugün ne yaptığı, hangi parçaların gerçekten çalıştığı ve hedef vizyona göre hangi alanların eksik kaldığını özetler.
@@ -25,8 +27,8 @@ Bu depo, “ürünleşmiş çok ajanlı platform”dan çok, “kanıtlanmış l
 
 - Solution: `HumanInControl.sln`
 - Projeler:
-  - `agent-lab/control-plane/ControlPlane.Api.csproj`
-  - `agent-lab/agent-worker/AgentWorker.csproj`
+  - `src/ControlPlane/ControlPlane.Api.csproj`
+  - `src/AgentWorker/AgentWorker.csproj`
   - `tools/run-me/RunMe.csproj`
 
 ## 2) Çalışan mimari (as-is)
@@ -41,7 +43,7 @@ flowchart LR
 	W --> MP[Optional Model Provider]
 ```
 
-### Control Plane (`agent-lab/control-plane/Program.cs`)
+### Control Plane (`src/ControlPlane/Program.cs`)
 - Minimal API endpointleri:
   - `GET /health`
   - `GET /tasks`
@@ -53,7 +55,7 @@ flowchart LR
 - PostgreSQL şemasını başlatır (retry ile).
 - Redis’e approve edilen task kimliğini kuyruğa atar.
 
-### Worker (`agent-lab/agent-worker/Program.cs`)
+### Worker (`src/AgentWorker/Program.cs`)
 - `BackgroundService` ile kuyruğu dinler.
 - Task payload’ını API’den alır.
 - Durum güncellemesini API’ye geri yazar.

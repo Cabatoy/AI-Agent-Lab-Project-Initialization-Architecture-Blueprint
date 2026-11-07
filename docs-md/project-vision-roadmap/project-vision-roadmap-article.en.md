@@ -1,5 +1,7 @@
 # AI Agent Lab — Project Draft and Journey Story (EN)
 
+> Historical project perspective: source paths reflect the reorganized layout; proposed work is not an approval or a current status claim. See `docs-md/continuation.md`.
+
 ## Executive Summary
 
 AI Agent Lab is not intended to be only a code-generating chat bot. It is intended to be a platform that transforms natural-language product requests into traceable software delivery workflows.
@@ -85,8 +87,8 @@ Outcome:
 
 ## As-is technical anchor points
 
-- Control Plane API: `agent-lab/control-plane/Program.cs`
-- Worker runtime: `agent-lab/agent-worker/Program.cs`
+- Control Plane API: `src/ControlPlane/Program.cs`
+- Worker runtime: `src/AgentWorker/Program.cs`
 - Local orchestration: `docker-compose.yml`
 - Lifecycle scripts: `scripts/local.ps1`, `scripts/local.sh`
 - Onboarding and architecture docs: `docs/*`

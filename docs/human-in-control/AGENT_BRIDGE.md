@@ -32,11 +32,11 @@ planlanmıştır. Snapshot Control Plane otoritesi veya execution ownership değ
 
 | Mevcut yüzey | Yeniden kullanım / sınır |
 |---|---|
-| [Control Plane](../../agent-lab/control-plane/Program.cs): `GET /tasks`, `GET /tasks/{id}` | Task durumu/result/attempt/timestamp projection'ı; project scope, pagination ve durable execution kimliği yok |
+| [Control Plane](../../src/ControlPlane/Program.cs): `GET /tasks`, `GET /tasks/{id}` | Task durumu/result/attempt/timestamp projection'ı; project scope, pagination ve durable execution kimliği yok |
 | `POST /tasks`, `/tasks/{id}/approve`, `/retry`, `/status` | Mevcut tek task engine; B1 bu mutasyonları sunmaz |
-| [TaskTransitionStore](../../agent-lab/control-plane/TaskTransitionStore.cs) | R1 row lock + transaction/audit, expected-state ve conflict; kalıcı sahiplik değil |
+| [TaskTransitionStore](../../src/ControlPlane/TaskTransitionStore.cs) | R1 row lock + transaction/audit, expected-state ve conflict; kalıcı sahiplik değil |
 | `/plans`, `/plans/generate`, `/plans/{id}/approve` | Metadata tabanlı plan iskeleti; graph/versioned human approval/replanning yok |
-| [Worker](../../agent-lab/agent-worker/Program.cs) | Yalnız doğrulanmış Executing cevabıyla model; mevcut adapter isimleri aynı OpenAI-compatible client'a gider |
+| [Worker](../../src/AgentWorker/Program.cs) | Yalnız doğrulanmış Executing cevabıyla model; mevcut adapter isimleri aynı OpenAI-compatible client'a gider |
 | PostgreSQL task transition audit | Kaynak DB'de mevcut; public history endpoint'i yok. B1 DB erişim yetkisi otomatik kazanmaz |
 | Model output | Task `result` alanında metin; artifact registry, doğrulama kanıtı deposu ve usage telemetry yok |
 | GitHub/MCP | Tracked Actions workflow, MCP server/SDK veya bridge kodu bulunmadı; `run.me` Chat yönlendirmesi orchestration entegrasyonu değildir |

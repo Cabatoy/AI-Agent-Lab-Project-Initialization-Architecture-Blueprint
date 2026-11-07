@@ -1,0 +1,44 @@
+# Scope and limitations: docs/human-in-control/WORKSPACE_REFACTOR_CI.md
+name: HIC Workspace Layout Evidence (v3 not run)
+
+on:
+  workflow_call:
+    inputs:
+      base-sha:
+        required: true
+        type: string
+      head-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  layout-only-evidence:
+    name: Verify unchanged contracts; v3 tests deferred
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject manual execution of v3 on this branch
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          echo '::error::This refactor branch does not permit manual v3 ledger tests.'
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test the no-v3 guard with synthetic Git repositories
+        run: node --test tests/security-contracts/layout-only-guard.test.mjs
+      - name: Verify unchanged migration and protected source contents
+        env:
+          HIC_BASE_SHA: ${{ inputs.base-sha }}
+          HIC_HEAD_SHA: ${{ inputs.head-sha }}
+        run: node tests/security-contracts/layout-only-guard.mjs "$HIC_BASE_SHA" "$HIC_HEAD_SHA"
+      - name: Record deferred ledger coverage
+        run: |
+          echo '::warning::Ledger v3 integration tests were NOT run; this is layout-only evidence, not a v3 test result.'
+          echo 'Ledger v3 integration tests were **not run** for this refactor. Separate authorization and validation are required before relying on v3 coverage.' >> "$GITHUB_STEP_SUMMARY"

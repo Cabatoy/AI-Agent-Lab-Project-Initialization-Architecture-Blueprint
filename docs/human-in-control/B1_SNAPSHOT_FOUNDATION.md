@@ -14,9 +14,10 @@ uzak agent/ChatGPT connector'ı, authentication servisi ve otomatik Copilot
 kontrolü uygulanmadı. İnternet üzerinden insan kopyalaması olmadan teslim
 B1.2'nin ayrıca onaylanacak yayıncı/okuyucu entegrasyonuna bağlıdır.
 
-Kaynak dal `feature/hic-agent-bridge`, ayrı worktree
-`C:\Enterprise-AgentBridge`; temel commit
-`0f36c20dc4d01750f634aaad17ea2d1b6bd6e6e5`.
+Kaynak dal `feature/hic-agent-bridge`, başlangıçta ayrı bir worktree'de;
+temel commit `0f36c20dc4d01750f634aaad17ea2d1b6bd6e6e5`.
+Worktree yolu zamanla değişebileceğinden güncel konumu
+`git worktree list --porcelain` ile doğrulayın.
 Reliability worktree'si ve uygulama dosyaları değiştirilmez.
 [B0 tasarımı](./AGENT_BRIDGE.md) tarihsel kapsamıyla korunur.
 
@@ -41,21 +42,21 @@ account authentication kimliği canonical owner ile aynı olmak zorunda değildi
 
 ### Uygulama ve sahiplik
 
-- [CLI projesi](../../tools/agent-bridge/AgentBridge.csproj): .NET 10 console;
+- [CLI projesi](../../src/AgentBridge/AgentBridge.csproj): .NET 10 console;
   ek runtime paketi yok. Ayrı solution, engine, scheduler, queue veya HTTP
   servisi yok.
-- [Contract](../../tools/agent-bridge/Contracts.cs),
-  [üretici](../../tools/agent-bridge/SnapshotProducer.cs),
-  [canonical JSON](../../tools/agent-bridge/CanonicalJson.cs),
-  [alan/path güvenliği](../../tools/agent-bridge/Safety.cs),
-  [salt okunur Git adapter](../../tools/agent-bridge/LocalGit.cs),
-  [yerel artifact store/reader](../../tools/agent-bridge/ArtifactStore.cs),
-  [CLI entry point](../../tools/agent-bridge/Program.cs).
+- [Contract](../../src/AgentBridge/Contracts.cs),
+  [üretici](../../src/AgentBridge/SnapshotProducer.cs),
+  [canonical JSON](../../src/AgentBridge/CanonicalJson.cs),
+  [alan/path güvenliği](../../src/AgentBridge/Safety.cs),
+  [salt okunur Git adapter](../../src/AgentBridge/LocalGit.cs),
+  [yerel artifact store/reader](../../src/AgentBridge/ArtifactStore.cs),
+  [CLI entry point](../../src/AgentBridge/Program.cs).
 - [Offline test projesi](../../tests/AgentBridge.Tests/AgentBridge.Tests.csproj)
   mevcut xUnit/Test SDK sürümlerini kullanır.
-- Ortak solution/project dosyalarına sahiplik çatışması yaratmamak için iki yeni
-  proje mevcut solution'a eklenmedi; aşağıdaki ayrı test komutu zorunludur.
-  Mevcut solution build/test'i Bridge testlerini kendiliğinden çalıştırmaz.
+- B1.1 checkpoint'inde iki proje solution'a eklenmemişti. Kanonik
+  `HumanInControl.sln` artık Agent Bridge'i ve testlerini içerir; aşağıdaki
+  ayrı test komutu gerektiğinde hedefli doğrulama için kullanılabilir.
 - Mevcut task durum adları yalnız projection olarak taşınır. `AgentTask.Result`
   ve Worker `ModelResult.Content` serbest metindir; otomatik içeri alınmaz.
   R2 ExecutionId verilirse aynen taşınır; task ID execution ID'ye dönüştürülmez.
@@ -140,10 +141,13 @@ dotnet restore .\tests\AgentBridge.Tests\AgentBridge.Tests.csproj
 dotnet build .\tests\AgentBridge.Tests\AgentBridge.Tests.csproj -c Release --no-restore
 dotnet test .\tests\AgentBridge.Tests\AgentBridge.Tests.csproj -c Release --no-build --no-restore
 
-$repo = 'C:\Enterprise-AgentBridge'
-$dll = '.\tools\agent-bridge\bin\Release\net10.0\AgentBridge.dll'
-$input = 'tools/agent-bridge/sample-input.json'
-$approval = (Get-FileHash .\tools\agent-bridge\sample-input.json -Algorithm SHA256).Hash.ToLowerInvariant()
+$repo = (Resolve-Path '.').Path
+$expectedSource = & git -C $repo rev-parse --verify HEAD
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($expectedSource)) { throw 'Worktree HEAD doğrulanamadı.' }
+$expectedSource = $expectedSource.Trim()
+$dll = '.\src\AgentBridge\bin\Release\net10.0\AgentBridge.dll'
+$input = 'src/AgentBridge/sample-input.json'
+$approval = (Get-FileHash .\src\AgentBridge\sample-input.json -Algorithm SHA256).Hash.ToLowerInvariant()
 
 # Varsayılan dry-run: doğrular, ID/boyut basar; hiçbir artifact yazmaz.
 dotnet $dll generate --repo $repo --input $input --approval-sha256 $approval
@@ -152,7 +156,7 @@ dotnet $dll generate --repo $repo --input $input --approval-sha256 $approval
 dotnet $dll generate --repo $repo --input $input --approval-sha256 $approval --write-local
 
 # Başka bir yerel agent aynı dosyayı bu komutla okuyabilir:
-dotnet $dll read --repo $repo --project bridge-synthetic --expected-source 0f36c20dc4d01750f634aaad17ea2d1b6bd6e6e5 --max-age-minutes 1440
+dotnet $dll read --repo $repo --project bridge-synthetic --expected-source $expectedSource --max-age-minutes 1440
 ```
 
 Komut başına exit code kontrol edilmelidir; nonzero sonuçtan sonra akışı
@@ -161,7 +165,7 @@ yeni inceleme/digest gerektirir. Hash/flag kriptografik insan kimliği veya
 server-side approval değildir: CLI kullanıcısının önceden onaylanmış input'u
 seçtiğini beyan eder. Örnekteki digest hesaplama tek başına insan onayı sağlamaz.
 
-[Sentetik input](../../tools/agent-bridge/sample-input.json) yalnız fixture'dır;
+[Sentetik input](../../src/AgentBridge/sample-input.json) yalnız fixture'dır;
 runtime/test başarısı iddia etmez. Yeni HEAD/zaman için onaylı input
 hazırlanmalıdır; CLI kaynak revision'ını sessizce değiştirmez.
 

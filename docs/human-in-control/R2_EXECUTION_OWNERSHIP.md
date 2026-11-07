@@ -83,7 +83,7 @@ kendiliğinden owner atanmaz.
 ### Açık migration ve rollout kapısı
 
 Schema tanımı:
-[002-execution-ownership.sql](../../agent-lab/control-plane/Migrations/002-execution-ownership.sql).
+[002-execution-ownership.sql](../../src/ControlPlane/Migrations/002-execution-ownership.sql).
 SQL uygulama tarafından **otomatik uygulanmaz**. API startup schema version 2
 kaydını arar ve eksikse hata ile durur; schema kontrolünden önce base schema
 initializer çalışmaz. SQL mevcut R1 `tasks`/`task_status_transitions` şemasını

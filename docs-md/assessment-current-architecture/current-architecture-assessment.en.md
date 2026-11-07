@@ -1,5 +1,7 @@
 # AI Agent Lab — Current Architecture Assessment (EN)
 
+> Historical assessment: source paths reflect the reorganized layout, but runtime status is a snapshot. For the current handoff, see `docs-md/continuation.md`.
+
 ## Executive Summary
 
 This document summarizes what is currently implemented in the `C:\Enterprise` repository, what is operational today, and what remains missing compared to the target multi-agent platform vision.
@@ -25,8 +27,8 @@ The repository is not yet a full productized multi-agent platform; it is a valid
 
 - Solution: `HumanInControl.sln`
 - Projects:
-  - `agent-lab/control-plane/ControlPlane.Api.csproj`
-  - `agent-lab/agent-worker/AgentWorker.csproj`
+  - `src/ControlPlane/ControlPlane.Api.csproj`
+  - `src/AgentWorker/AgentWorker.csproj`
   - `tools/run-me/RunMe.csproj`
 
 ## 2) Working architecture (as-is)
@@ -41,7 +43,7 @@ flowchart LR
 	W --> MP[Optional Model Provider]
 ```
 
-### Control Plane (`agent-lab/control-plane/Program.cs`)
+### Control Plane (`src/ControlPlane/Program.cs`)
 - Minimal API endpoints:
   - `GET /health`
   - `GET /tasks`
@@ -53,7 +55,7 @@ flowchart LR
 - Initializes PostgreSQL schema with retry.
 - Pushes approved task IDs into Redis queue.
 
-### Worker (`agent-lab/agent-worker/Program.cs`)
+### Worker (`src/AgentWorker/Program.cs`)
 - Uses `BackgroundService` to poll queue.
 - Loads task payload from API.
 - Writes status updates back to API.

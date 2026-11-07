@@ -6,8 +6,8 @@ on:
     paths:
       - 'deploy/hic-managed/**'
       - 'scripts/hic-managed.ps1'
-      - 'agent-lab/control-plane/**'
-      - 'agent-lab/hic-web-ui/**'
+      - 'src/ControlPlane/**'
+      - 'src/WebUI/**'
       - '.github/workflows/hic-managed-runtime-smoke.yml'
   workflow_dispatch:
 
@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: agent-lab/hic-web-ui/package-lock.json
+          cache-dependency-path: src/WebUI/package-lock.json
       - name: Start brand-new disposable Postgres and Redis, initialize schema v2, then CP
         shell: bash
         run: |
@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd agent-lab/hic-web-ui
+          cd src/WebUI
           npm ci --no-audit --no-fund
           npm run dev -- --port 19482 --strictPort >/tmp/hic-ci-vite.log 2>&1 &
           vite_pid=$!

@@ -2,9 +2,9 @@
 # No WSL, Podman, Worker, database, local user machine or task creation.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$ui = Join-Path $root 'agent-lab\hic-web-ui'
-$project = Join-Path $root 'agent-lab\hic-native-host\Hic.NativeHost.csproj'
-$dll = Join-Path $root 'agent-lab\hic-native-host\bin\Release\net10.0\Hic.NativeHost.dll'
+$ui = Join-Path $root 'src\WebUI'
+$project = Join-Path $root 'src\NativeHost\Hic.NativeHost.csproj'
+$dll = Join-Path $root 'src\NativeHost\bin\Release\net10.0\Hic.NativeHost.dll'
 $vite = Join-Path $ui 'node_modules\vite\bin\vite.js'
 $outDir = $env:RUNNER_TEMP
 if (-not $outDir) { throw 'Only run this smoke test on an isolated CI runner.' }

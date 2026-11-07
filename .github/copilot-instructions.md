@@ -4,7 +4,7 @@
 
 AI Agent Lab, birden fazla bağımsız yazılım projesini yapay zekâ ajanlarıyla planlamayı ve geliştirmeyi hedefleyen bir platformdur. İlk müşteri projesi pazaryeridir ve platformdan bağımsız kalmalıdır. Repo mimari belgeler ve Podman ile çalıştırılan local prototip içerir. Kullanıcı önce local akışı doğrulayıp ardından AWS'e taşımayı planlıyor; cloud provisioning henüz yapılmadı.
 
-Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [devam noktasını](../docs/continuation.md) oku ve repo ile karşılaştır. Bu dosya güncel handoff kaynağıdır; sohbet geçmişinin otomatik olarak korunduğunu varsayma. Önerilen sonraki adımları onaylanmış karar gibi ele alma.
+Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [devam noktasını](../docs-md/continuation.md) oku ve repo ile karşılaştır. Bu dosya güncel handoff kaynağıdır; sohbet geçmişinin otomatik olarak korunduğunu varsayma. Önerilen sonraki adımları onaylanmış karar gibi ele alma.
 
 ## Dil ve iletişim
 
@@ -37,9 +37,9 @@ Yeni checkout veya sohbette önce dosyaları salt okunur denetle, ardından [dev
 
 ## Kararların bakımı
 
-- [Mevcut kararlar](../docs/02-current-decisions.md) yalnızca açıkça onaylanan kararları içerir.
-- [Açık sorular](../docs/03-open-questions.md) karara bağlanmamış başlıkları tutar.
+- [Mevcut kararlar](../docs-md/02-current-decisions.md) yalnızca açıkça onaylanan kararları içerir.
+- [Açık sorular](../docs-md/03-open-questions.md) karara bağlanmamış başlıkları tutar.
 - Mimari bir karar değiştiğinde ilgili karar kaydını ve etkilenen blueprint, roadmap, maliyet veya ilke belgelerini aynı değişiklikte güncelle.
-- Local Podman prototipi, lifecycle komutları ve devam bağlamı için [README](../README.md), [kararlar](../docs/02-current-decisions.md) ve [ADR-001](../docs/decisions/adr-001-podman-local-prototype.md) kaydını güncel tut.
-- Büyük bir milestone tamamlandığında [devam noktasını](../docs/continuation.md) güncelle: doğrulanmış durum, açık teknik işler ve önerilen bir sonraki kontrol noktası. Mimari kararları ve açık soruları kendi kayıtlarında tut.
+- Local Podman prototipi, lifecycle komutları ve devam bağlamı için [README](../README.md), [kararlar](../docs-md/02-current-decisions.md) ve [ADR-001](../docs-md/decisions/adr-001-podman-local-prototype.md) kaydını güncel tut.
+- Büyük bir milestone tamamlandığında [devam noktasını](../docs-md/continuation.md) güncelle: doğrulanmış durum, açık teknik işler ve önerilen bir sonraki kontrol noktası. Mimari kararları ve açık soruları kendi kayıtlarında tut.
 - AWS, GitHub, framework, fiyat veya mevzuata ilişkin zamana duyarlı iddiaları doğrulamadan kesin bilgi gibi sunma.

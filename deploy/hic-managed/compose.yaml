@@ -34,12 +34,12 @@ services:
         condition: service_healthy
     volumes:
       - ./migrations:/bootstrap:ro
-      - ../../agent-lab/control-plane/Migrations:/control-plane-migrations:ro
+      - ../../src/ControlPlane/Migrations:/control-plane-migrations:ro
     entrypoint: ['psql']
     command: ['-h','postgres','-U','hic','-d','hic','-v','ON_ERROR_STOP=1','--single-transaction','-f','/bootstrap/000-bootstrap-v2.sql']
   control-plane:
     build:
-      context: ../../agent-lab/control-plane
+      context: ../../src/ControlPlane
       dockerfile: Dockerfile
     container_name: hic-managed-control-plane
     environment:
