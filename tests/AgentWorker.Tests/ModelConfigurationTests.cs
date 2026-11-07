@@ -23,6 +23,7 @@ public class ModelConfigurationTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
+    [InlineData(" ")]
     public async Task MissingEndpoint_DisablesModelWithActionableMessage(string? endpoint)
     {
         var client = Worker.CreateModelClient(
@@ -34,6 +35,36 @@ public class ModelConfigurationTests
         Assert.False(result.Success);
         Assert.False(result.IsTransient);
         Assert.Contains("MODEL_ENDPOINT and MODEL_NAME", result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task MissingModel_DisablesModelWithActionableMessage(string model)
+    {
+        var client = Worker.CreateModelClient(
+            new ModelOptions("ollama", "http://127.0.0.1:1234", model, null, 30),
+            NullLogger.Instance);
+
+        var result = await client.GenerateAsync("not sent", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.IsTransient);
+        Assert.Contains("MODEL_ENDPOINT and MODEL_NAME", result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("podman-ai-lab")]
+    [InlineData("ollama")]
+    [InlineData("openai-compatible")]
+    [InlineData("OPENAI-COMPATIBLE")]
+    public void SupportedProvider_WithValidConfigurationRemainsEnabled(string provider)
+    {
+        var client = Worker.CreateModelClient(
+            new ModelOptions(provider, "http://127.0.0.1:1234", "test-model", null, 30),
+            NullLogger.Instance);
+
+        Assert.IsType<PodmanAiLabModelClient>(client);
     }
 
     [Theory]

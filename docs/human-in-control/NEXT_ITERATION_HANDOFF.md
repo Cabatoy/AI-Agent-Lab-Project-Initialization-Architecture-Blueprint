@@ -1,106 +1,74 @@
-# HIC — Next Iteration Handoff
+# HIC — Sonraki İterasyon Devir Notu
 
-**Verified:** 2026-11-08 (local time, UTC+03:00)
+**Son doğrulama:** 2026-11-08, yerel saat (UTC+03:00).
 
-**Status:** provider diagnostics committed locally; workspace refactor and PR promotion remain unmerged.
+**Durum: Kısmi.** Workspace refactor ve provider diagnostics hazır durumdadır; `develop` entegrasyonu ve `main` terfisi insan incelemesi ve doğrulama kapılarını beklemektedir.
 
-## Current repository state
+## Doğrulanan depo düzeni
 
-- Isolated worktree: `C:\Enterprise\.local\worktrees\hic-dx-provider-config`
-- Branch: `feature/hic-provider-config-diagnostics`
-- Base: refactor commit `759ae099742c1705c8a5c211b6d0ed6baaa9c903`
-- Provider diagnostics commit: `36afd7a230271d6c9a62d7e1e97d6a5a1ef606e6`
-- This branch is local-only and intentionally not pushed. Its base includes the complete refactor diff; opening a PR before PR #36 lands would repeat that diff.
-- The tracked working tree at `C:\Enterprise`, all other worktrees, and `C:\Enterprise2` were left unchanged. The requested local-only report under `.local/reports` was updated outside Git.
+- Kanonik kaynaklar `src/ControlPlane`, `src/AgentWorker`, `src/NativeHost`, `src/WebUI` ve `src/AgentBridge` altındadır. Testler `tests/`, dağıtım tanımları `deploy/`, araçlar `tools/`, komutlar `scripts/` altındadır; çözüm dosyası kökte `HumanInControl.sln` adını taşır.
+- Refactor worktree'si `C:\Enterprise\.local\worktrees\workspace-refactor` içindedir. PR #36 HEAD'i `759ae099742c1705c8a5c211b6d0ed6baaa9c903`; doğrulanan `origin/develop` tabanı `608eae91aa73d5782e74c72cdf8b78bbc6402c9d` idi.
+- Provider worktree'si `C:\Enterprise\.local\worktrees\hic-dx-provider-config`, dalı `feature/hic-provider-config-diagnostics` ve provider uygulama commit'i `36afd7a230271d6c9a62d7e1e97d6a5a1ef606e6` şeklindedir. Dal yalnızca yereldedir; en güncel HEAD için `git rev-parse HEAD` kullanın.
+- `C:\Enterprise` aktif checkout'u `feature/hic-reliability-r2` üzerindedir ve değiştirilmemiştir. Altı taşınmış worktree'nin Git bağlantıları korunmuştur; başka worktree'lerdeki kullanıcı değişikliklerine dokunulmamıştır.
+- Provider dalı refactor tabanını içerdiği için #36 birleşmeden açılacak PR hem refactor diff'ini tekrarlar hem de dal adına özel v3 CI istisnasının dışında kalabilir. Bu nedenle provider dalını henüz push etmeyin veya PR açmayın.
 
-## Changes in this iteration
+## Provider diagnostics
 
-The Worker now fails closed for unsupported providers, missing endpoint/model settings, non-absolute or non-HTTP(S) endpoints, and endpoint URLs containing embedded credentials. Warnings and task errors identify the needed setting without echoing endpoint or credential values. The `disabled` provider retains its prior explicit result. README guidance and nine model-configuration cases cover the behavior.
+Worker, tanınmayan provider, eksik endpoint/model, mutlak HTTP(S) olmayan endpoint ve URL içine gömülü kimlik bilgileri için model istemcisini fail-closed kapatır. `disabled` davranışı korunur; `podman-ai-lab`, `ollama` ve `openai-compatible` geçerli yapılandırmayla kullanılabilir. Yapılandırma doğrulama uyarıları ve görev hata mesajları endpoint veya anahtar değerlerini yansıtmaz. Ayrıntılar [README](../../README.md) içindedir.
 
-This only validates model configuration. It does not start the Worker, authorize task execution, or change the model-provider architecture decision.
+Bu garanti yalnızca yapılandırma doğrulamasına aittir: çalışma zamanı provider hata yanıtları ve bağlantı exception metinleri görev sonucuna veya Redis dead-letter kaydına aktarılabilir. Bunların sır içermediği varsayılmamalıdır; gerçek provider kullanımından önce ayrıca değerlendirilmelidir. Bu çalışma Worker'ı başlatmaz, görev yürütmeyi yetkilendirmez ve provider mimarisi kararı vermez.
 
-## Verification
+## Doğrulama sonuçları
 
-| Check | Result |
+| Kontrol | Sonuç |
 |---|---|
-| Release solution build | Passed; 0 warnings, 0 errors |
-| Full .NET suite before the added credential test case | 371 passed, 12 skipped; the 12 are PostgreSQL integration tests not configured for this run |
-| Updated AgentWorker tests | 45/45 passed |
-| AgentBridge | 150/150 passed in the full suite and again in a sequential isolated rerun (3m48s) |
-| Runtime-boundary synthetic tests and live source scan | 7/7 passed; Native Host remains `workspace.inspect`-only, execution disabled, and no runtime v3 reference was found |
-| Layout-only CI contract | 4/4 passed; no v3 migration ran |
-| Launcher offline contract | Passed, including port, recovery, startup-policy, managed Compose, and schema-bootstrap guards |
-| Web UI | Prior verified result: 63/63 tests and production build; UI was not changed in this iteration |
-| PostgreSQL integration | Prior verified result: 12/12 against an isolated disposable v2 fixture; not rerun here |
+| Release solution build | Önceki doğrulama başarılı; 0 uyarı, 0 hata. |
+| Tam .NET suite | Önceki koşuda 371 başarılı, PostgreSQL bağlantısı yapılandırılmadığı için 12 integration testi atlandı; yeni testlerden sonra tüm çözüm yeniden çalıştırılmadı. |
+| AgentWorker | Güncel suite 52/52; bunun 16/16'sı provider yapılandırma testidir. Geçerli provider'lar ile eksik model/endpoint durumları da kapsanır. |
+| AgentBridge | Önceki tam suite ve ardından sıralı ayrı koşuda 150/150 başarılı. |
+| Runtime boundary | Sentetik guard testleri 7/7 ve kaynak taraması başarılı; Native Host yalnız `workspace.inspect` sunuyor, yürütme kapalı. |
+| Layout-only CI guard | 4/4 başarılı; #36'nın gerçek base/HEAD karşılaştırmasında korunan blob'lar doğrulandı. Hiçbir v3 migration çalıştırılmadı. |
+| Launcher | Önceki offline contract ve `hic.cmd preview` doğrulandı. |
+| Web UI | Önceki doğrulama: 63/63 test ve production build başarılı; bu iterasyonda UI değiştirilmedi. |
+| PostgreSQL integration | Önceki doğrulama: yalnız izole, geçici v2 veritabanında 12/12 başarılı; bu iterasyonda yeniden çalıştırılmadı. |
+| Dokümantasyon kapsamı | İzlenen metin, yol ve PDF içerikleri HIC dışı istenmeyen referanslar açısından tarandı; yerel arşivler değiştirilmedi. |
 
-During overlapping solution and standalone AgentBridge test runs, one standalone attempt hit a Windows `File.Move` access-denied error. The complete solution run passed, and an isolated sequential rerun passed 150/150. Avoid running two AgentBridge suites concurrently; investigate further if the failure recurs sequentially.
+Eşzamanlı solution ve ayrı AgentBridge koşularından birinde Windows `File.Move` erişim hatası görüldü; tam suite ve ardından sıralı ayrı koşu başarılıydı. AgentBridge suite'lerini aynı anda çalıştırmayın; hata sıralı koşuda tekrarlarsa ayrıca inceleyin.
 
-## Runtime and safety boundaries
+## Runtime ve güvenlik sınırları
 
-- WSL and `podman-machine-default` were running.
-- Read-only checks showed `agentlab-postgres` healthy with schema version 2, `agentlab-redis` answering `PONG`, and the Control Plane health endpoint returning `ok`.
-- `agentlab-worker` remained `Exited`; it was not started. No task execution was initiated.
-- `podman compose ps --all` could not connect because the configured external Docker Compose provider tried a missing Windows Podman named pipe. Direct Podman API queries worked and confirmed the existing container states; no connection or service configuration was changed.
-- No migration, restore, volume cleanup, service restart, or deploy was performed. PostgreSQL v3 remains unrun and disabled.
-- `C:\Enterprise` remains on `feature/hic-reliability-r2`; its tracked checkout was not modified. Six relocated worktrees remain in `.local/worktrees`; their branch/HEAD bindings were retained.
+- Salt okunur kontrolde WSL ve `podman-machine-default` çalışıyordu; PostgreSQL sağlıklı ve schema v2, Redis yanıtı `PONG`, Control Plane health yanıtı `ok` idi.
+- `agentlab-worker` durumu `Exited` idi; Worker başlatılmadı ve görev yürütülmedi. Bu çalışmada migration, restore, volume temizliği, servis yeniden başlatma veya deploy yapılmadı.
+- `podman compose ps --all`, harici Docker Compose sağlayıcısının eksik Windows Podman named pipe bağlantısı nedeniyle çalışmadı. Doğrudan Podman API kontrolü container durumlarını doğruladı; bağlantı ayarları değiştirilmedi.
+- PostgreSQL v3 bu çalışmada çalıştırılmadı. #36 için dört v3 job atlanır; bu istisna diğer branch'lerdeki workflow davranışını otomatik olarak değiştirmez.
 
-## Architecture and UX review
+## Mimari durum ve açık riskler
 
-**Verified current behavior**
+- Web UI Draft görev oluşturur ve görev/plan listeler; otonom orchestration arayüzü değildir. `/plans/generate` metadatadan plan iskeleti oluşturur, zamanlanmış görev grafiği oluşturmaz.
+- Control Plane approve/mutation endpoint'leri henüz doğrulanmış servis kimliği, insan aktör bağlama ve kalıcı governance receipt sağlamaz. Bu halleriyle güvenilmeyen ağa veya cloud workload'larına açılmamalıdır.
+- Worker ayrı başlatılır ve kuyruktaki görevleri tüketir. R2 generation/fencing vardır; lease expiry, heartbeat, takeover ve crash recovery henüz yoktur.
+- PostgreSQL durum kaydı ve Redis enqueue ayrı işlemlerdir; aralarında dual-write kayıp penceresi vardır. Outbox olası bir seçenektir, onaylanmış karar değildir.
+- Native Host loopback/token sınırındadır, yalnız `workspace.inspect` allowlist'e dahildir ve `/v1/status` için `taskExecutionEnabled=false` döner. Agent Bridge görev yürütmeden ayrıdır; gerçek üçüncü taraf yayını veya ChatGPT entegrasyonu doğrulanmamıştır.
 
-- The Web UI creates Draft tasks and lists tasks/plans; it is not an autonomous orchestration interface.
-- `/plans/generate` persists a metadata-derived plan skeleton, not a scheduled task graph.
-- Control Plane approve/mutation routes do not yet bind a verified service identity, human actor, or durable governance receipt. They must not be exposed to untrusted networks or cloud workloads as-is.
-- The Worker is separately started and consumes queued task IDs. R2 generation/fencing exists, but lease expiry, heartbeat, takeover, and crash recovery do not.
-- Task state persistence and Redis enqueue are separate operations, leaving a database/queue dual-write gap. An outbox is a candidate, not an approved design decision.
-- Native Host stays loopback/token protected and allowlists only `workspace.inspect`; `/v1/status` reports `taskExecutionEnabled=false`.
-- Agent Bridge is separate from task execution; real third-party publication or ChatGPT integration has not been verified.
+Yeni mimari karar alınmadı. Plan, PR incelemesi ve production deploy için insan onayı korunmalı; model çıktısı ve üretilen kod güvenilmez kabul edilmelidir.
 
-**No new architecture decisions were made.** Preserve the human approval gates for plans, PR review, and production deployment. Treat model output and generated code as untrusted.
+## GitHub ve branch kapıları
 
-## GitHub and branch cleanup
+- [PR #36](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/36) açık ve draft: 12 check başarılı, dört v3 job atlanmış, insan review'u yok. Atlanan job'lar başarılı v3 testi değildir. Diff ve dört istisna yetkili bir insan tarafından incelenip onaylanmadan merge yapılmamalıdır.
+- [PR #37](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/37) açık ve draft; hedef `main` commit'i `b767a27059a709b8a54fcadd83ee240dfdb89810`. Yalnız GitGuardian sonucu vardır; release doğrulaması ve insan review'u yoktur. Doğrulanan karşılaştırmada `develop`, `main`den 110 commit ilerideydi.
+- Branch-protection ayrıntıları yetkisiz API sorgusuyla doğrulanamadı (HTTP 401). Yetkili bir kişi gerçek required check, review ve draft gereksinimlerini doğrulamalıdır; koruma olmadığı varsayılmamalıdır.
+- Önceki çalışmada kısa süreli kaldırılan 22 remote ref özgün SHA'larıyla geri yüklendi. Bu iterasyonda branch silinmedi. PR #37 terfisi tamamlanmadan cleanup yapılmamalıdır; sonrasında yalnız tam entegre, özgün commit'i olmayan, aktif worktree veya PR bağı bulunmayan ve korunmayan branch'ler yeniden değerlendirilmelidir.
+- CI istisnası ve korunan blob kontrolleri [WORKSPACE_REFACTOR_CI.md](WORKSPACE_REFACTOR_CI.md) içinde açıklanır. Başka bir branch için v3 güvenliği ayrıca gerçek PR diff'i ve workflow path filtreleriyle doğrulanmalıdır.
 
-- [PR #36](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/36) is still open and draft, targeting `develop` at `608eae91aa73d5782e74c72cdf8b78bbc6402c9d`. It has 12 successful checks and four intentionally skipped v3 jobs; there are no human reviews. The skipped jobs are not passing v3 tests.
-- [PR #37](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/37) is still open and draft, targeting `main` at `b767a27059a709b8a54fcadd83ee240dfdb89810`. Only GitGuardian has run; release checks and human review are absent. `develop` is 110 commits ahead of `main`.
-- Neither PR was merged. Branch-protection requirements remain unverified; the prior API lookup returned 404.
-- The 22 candidate remote branches were temporarily deleted, then restored at their exact original SHAs after re-reading PR #37's documented post-promotion pruning gate. All tips remain ancestors of `origin/develop`, with no local/worktree binding or open PR; defer pruning until that gate is satisfied. No commits were lost.
-- Preserved active worktree branches, `pbi/newSetup`, the `copilot/` branch, local-only `feature/hic-foundation`, the unbound `feature/dotnet10-migration` local/remote ref, the v3-named branch, and both PR head branches. No local branch was deleted.
+## Öncelikli sonraki işler
 
-Cleanup candidates retained pending PR #37 promotion:
-
-```text
-feat/hic-asymmetric-approval-receipt-v2
-feat/hic-isolated-native-input-preview
-feat/hic-offline-input-draft
-feat/hic-runner-admission-contract-v1
-feat/hic-signed-approval-receipt-verifier
-feat/hic-v2-issuer-interop-contract
-feature/hic-launcher-degraded-doctor
-feature/hic-launcher-guarded-start
-feature/hic-managed-stack-one-command
-feature/hic-native-host-bootstrap
-feature/hic-pinned-podman-cold-start
-feature/hic-recovery-readonly-preflight
-feature/hic-safe-local-diagnostics
-feature/hic-solution-rename
-fix/hic-bounded-podman-probes
-fix/hic-fast-reuse-without-wsl
-fix/hic-greenfield-schema-v2-bootstrap
-fix/hic-offline-recovery-ci-smoke
-test/hic-approval-revocation-races
-test/hic-ledger-crash-durability
-test/hic-ledger-parallel-claim-security
-test/hic-native-runtime-safety-gates
-```
-
-## Prioritized next work
-
-1. Obtain human review of PR #36, including an explicit decision about the four skipped v3 checks. Do not run or enable those migrations as a shortcut; keep the PR unmerged until its review gates are met.
-2. Keep PR #37 open. After #36 is reviewed and integrated, reassess the full `develop...main` promotion and require appropriate release checks and human acceptance before any merge.
-3. Before any untrusted-network or cloud exposure, design and implement real service authentication, actor binding, authorization, and audit for Control Plane mutations.
-4. Define failure modes and acceptance criteria for the database/Redis dual-write window and R2 lease/recovery gaps. Compare outbox and lease options without treating either as already approved.
-5. After #36 lands, create a fresh branch from updated `develop` and replay only commit `36afd7a230271d6c9a62d7e1e97d6a5a1ef606e6` using a history-preserving approach. Revalidate CI before pushing or opening a focused provider-diagnostics PR.
+1. Yetkili reviewer PR #36 diff'ini ve dört v3 job istisnasını incelesin; gerçek branch-protection kuralları doğrulansın, draft durumu uygun yetkiyle kaldırılsın ve yalnız gerekli insan onayı ile check kapıları sağlanırsa merge edilsin. PostgreSQL v3 çalıştırılmasın.
+2. #36 entegrasyonu sonrasında güncel `develop`ten izole bir branch oluşturun. `36afd7a` provider uygulamasını ve sonraki provider testlerini kayıpsız taşıyın; bu temiz handoff ve ilgili README düzeltmesini yeni tabana uyarlayın. Eski handoff commit'lerini körlemesine tekrar uygulamayın. PR diff'inin v3 job'larını tetiklemediğini push öncesinde doğrulayın.
+3. Provider entegrasyonunda tam .NET, UI, launcher ve offline security kontrollerini; PostgreSQL testlerini yalnız izole, geçici v2 veritabanında yeniden çalıştırın. Worker'ı kapalı tutun; mevcut veritabanlarını koruyun.
+4. Konsolide `develop` hazır olduğunda #37 karşılaştırmasının tamamını, migration/deploy tetiklerini, uygun release doğrulamasını ve insan onayını yeniden değerlendirin. Kapılar sağlanmadan merge etmeyin.
+5. Güvenilmeyen ağ veya cloud erişiminden önce Control Plane service authentication, actor binding, authorization ve audit ihtiyaçlarını değerlendirin; provider hata içerikleri, dual-write penceresi ve R2 recovery için ayrı kapsam ve kabul ölçütleri belirleyin.
+6. Ancak promotion sonrasında branch'lerin entegrasyon, özgün commit, worktree ve açık PR durumlarını yeniden sorgulayarak cleanup envanteri hazırlayın.
 
 ## English continuation prompt
 
-> Continue from `C:\Enterprise\.local\worktrees\hic-dx-provider-config` and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md` first. Recheck status, worktrees, PRs, and runtime rather than assuming this handoff is still current. Do not modify `C:\Enterprise2`, the active `C:\Enterprise` checkout, or unrelated worktrees. Keep the Worker stopped and task execution disabled. Never run, apply, enable, or route CI to PostgreSQL schema v3; preserve production and existing databases. PR #36 and #37 are drafts without human reviews; do not merge. The provider diagnostics commit is local-only because its base contains PR #36's refactor. Wait for human review and PR #36 integration before creating a focused PR from updated `develop`. Keep the 22 verified remote branch refs until PR #37's documented post-promotion cleanup gate is met. Make no new architecture or provider decisions without explicit approval.
+> Continue from `C:\Enterprise\.local\worktrees\hic-dx-provider-config` and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md` first. Recheck Git status, worktrees, PRs, and runtime; do not modify the active `C:\Enterprise` checkout, other worktrees, unrelated project directories, user backups, or archived reports. Keep the Worker stopped and task execution disabled. Never run, apply, enable, or route CI to PostgreSQL schema v3; preserve existing databases. PR #36 and #37 are drafts without human review; do not merge without verified approvals and required checks. The provider diagnostics work is local-only because its base includes PR #36. After #36 is approved and integrated, transfer the provider implementation, its subsequent tests, and the cleaned documentation to a branch from updated `develop`; check the actual CI path filters before pushing or opening a focused PR. Retain all remote branches until post-promotion cleanup gates are met. Make no new architecture or provider decisions without explicit approval.
