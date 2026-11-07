@@ -23,7 +23,7 @@ Bu depo, “ürünleşmiş çok ajanlı platform”dan çok, “kanıtlanmış l
 
 ## 1) Depo ve çözüm yapısı
 
-- Solution: `AI-Agent-Lab.sln`
+- Solution: `HumanInControl.sln`
 - Projeler:
   - `agent-lab/control-plane/ControlPlane.Api.csproj`
   - `agent-lab/agent-worker/AgentWorker.csproj`
