@@ -1,0 +1,47 @@
+# Dedicated HIC greenfield runtime. Never run against an existing legacy R2 deployment.
+name: hic-managed
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hic-managed-postgres
+    environment:
+      POSTGRES_USER: hic
+      POSTGRES_PASSWORD: ${HIC_DB_PASSWORD:?HIC_DB_PASSWORD_required}
+      POSTGRES_DB: hic
+    volumes:
+      - hic-managed-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hic -d hic"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: hic-managed-redis
+    volumes:
+      - hic-managed-redis-data:/data
+
+  control-plane:
+    build:
+      context: ../../agent-lab/control-plane
+      dockerfile: Dockerfile
+    container_name: hic-managed-control-plane
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=hic;Username=hic;Password=${HIC_DB_PASSWORD:?HIC_DB_PASSWORD_required}
+      ConnectionStrings__Redis: redis:6379
+    ports:
+      - "127.0.0.1:${HIC_CONTROL_PLANE_PORT:?HIC_CONTROL_PLANE_PORT_required}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  hic-managed-postgres-data:
+    name: hic-managed-postgres-data
+  hic-managed-redis-data:
+    name: hic-managed-redis-data
