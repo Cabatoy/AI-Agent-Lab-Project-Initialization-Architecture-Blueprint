@@ -83,11 +83,15 @@ function Get-HicManagedContainerRecords {
 }
 
 function Assert-HicManagedIdentity {
-    param([string]$ManifestPath, [int]$ExpectedPort)
+    param([string]$ManifestPath, [string]$CredentialsPath, [int]$ExpectedPort)
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    if ($manifest.version -ne 1 -or $manifest.project -cne 'hic-managed' -or
+    if ($manifest.version -ne 2 -or $manifest.project -cne 'hic-managed' -or
         $manifest.controlPlanePort -ne $ExpectedPort) {
         throw 'Managed manifest differs from configured runtime. No automatic migration.'
+    }
+    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $CredentialsPath).Hash.ToLowerInvariant()
+    if ($manifest.credentialsSha256 -cne $digest) {
+        throw 'Managed credentials file changed. Refusing to start services with an unknown database credential.'
     }
     $current = Get-HicManagedContainerRecords
     foreach ($name in $HicManagedNames) {
@@ -175,6 +179,10 @@ function Start-HicManagedInfrastructure {
             if (-not (Test-Path -LiteralPath $paths.compose)) {
                 throw 'Dedicated HIC-managed Compose manifest is missing.'
             }
+            # Prevent ambient shell variables from overriding the newly generated env file.
+            if ([Environment]::GetEnvironmentVariable('HIC_DB_PASSWORD')) {
+                throw 'An ambient HIC_DB_PASSWORD would override the private managed credential. Unset it before first provisioning.'
+            }
             # A dedicated Compose file excludes Worker and never publishes DB/Redis ports.
             $null = @(Invoke-HicPodmanReadOnly -CommandArgs @('compose', 'version'))
             [System.IO.Directory]::CreateDirectory($paths.directory) | Out-Null
@@ -191,9 +199,10 @@ function Start-HicManagedInfrastructure {
             $records = Get-HicManagedContainerRecords
 
             $manifest = [ordered]@{
-                version = 1
+                version = 2
                 project = 'hic-managed'
                 controlPlanePort = $ControlPlanePort
+                credentialsSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $paths.credentials).Hash.ToLowerInvariant()
                 containers = $records
             } | ConvertTo-Json -Depth 6
             $temporaryManifest = "$($paths.manifest).tmp"
@@ -202,7 +211,7 @@ function Start-HicManagedInfrastructure {
             return [pscustomobject]@{ outcome = 'ready'; reason = 'Fresh managed HIC infrastructure initialized.' }
         }
 
-        $records = Assert-HicManagedIdentity $paths.manifest $ControlPlanePort
+        $records = Assert-HicManagedIdentity -ManifestPath $paths.manifest -CredentialsPath $paths.credentials -ExpectedPort $ControlPlanePort
         $startOrder = @('hic-managed-postgres', 'hic-managed-redis', 'hic-managed-control-plane')
         foreach ($name in $startOrder) {
             $state = $records[$name].status
