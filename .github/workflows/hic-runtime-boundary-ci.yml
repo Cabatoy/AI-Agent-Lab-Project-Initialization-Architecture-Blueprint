@@ -1,0 +1,29 @@
+name: HIC Runtime Execution Safety Boundary CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'agent-lab/**'
+      - 'scripts/**'
+      - 'deploy/**'
+      - 'tools/**'
+      - 'tests/security-contracts/hic_runtime_guard.py'
+      - 'tests/security-contracts/test_hic_runtime_guard.py'
+      - '.github/workflows/hic-runtime-boundary-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-runtime-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the safety scanner rejects dangerous synthetic changes
+        run: python3 -m unittest discover -s tests/security-contracts -p 'test_hic_runtime_guard.py' -v
+      - name: Verify production Native Host stays read-only and v3 remains manual
+        run: python3 tests/security-contracts/hic_runtime_guard.py
