@@ -1,6 +1,7 @@
 # HIC-managed local Podman stack. Deliberate invocation from hic.cmd up only.
 # No modifications to legacy agentlab containers/volumes, no Worker, no migrations of existing DBs.
 . (Join-Path $PSScriptRoot 'hic-managed-policy.ps1')
+. (Join-Path $PSScriptRoot 'hic-machine.ps1')
 
 $HicManagedNames = @('hic-managed-postgres', 'hic-managed-redis', 'hic-managed-control-plane')
 
@@ -15,6 +16,60 @@ function Get-HicManagedPaths {
         manifest = Join-Path $directory 'manifest.json'
         compose = Join-Path (Join-Path $PSScriptRoot '..') 'deploy\hic-managed\compose.yaml'
     }
+}
+
+function Get-HicPodmanMachines {
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        throw 'Podman CLI unavailable. Cannot verify machine identity.'
+    }
+    $lines = @(& podman machine list --format json 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0) {
+        throw 'Cannot read Podman machine inventory safely.'
+    }
+    return @(($lines -join [Environment]::NewLine) | ConvertFrom-Json)
+}
+
+function Get-HicSingleRunningMachineName {
+    $machines = @(Get-HicPodmanMachines)
+    if ($machines.Count -ne 1 -or $machines[0].Running -ne $true) {
+        throw 'The managed profile requires exactly one currently running Podman machine.'
+    }
+    $name = [string]$machines[0].Name
+    if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
+        throw 'Podman machine name is invalid or unavailable.'
+    }
+    return $name
+}
+
+function Start-HicPinnedPodmanMachine {
+    param([System.Collections.IDictionary]$Status, [pscustomobject]$Paths)
+    if (-not (Test-Path -LiteralPath $Paths.manifest) -or
+        -not (Test-Path -LiteralPath $Paths.credentials)) {
+        return [pscustomobject]@{ outcome='skipped'; reason='No existing managed profile to resume; Podman machine not started.' }
+    }
+    $manifest = Get-Content -LiteralPath $Paths.manifest -Raw | ConvertFrom-Json
+    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $Paths.credentials).Hash.ToLowerInvariant()
+    if ($manifest.credentialsSha256 -cne $digest -or $digest -cnotmatch '^[0-9a-f]{64}$') {
+        return [pscustomobject]@{ outcome='skipped'; reason='Stored managed credentials digest does not verify; Podman machine was not started.' }
+    }
+    $machines = @(Get-HicPodmanMachines)
+    $decision = Get-HicMachineStartDecision -Manifest $manifest -Machines $machines -CredentialsPresent $true
+    if ($decision.action -eq 'skip') {
+        return [pscustomobject]@{ outcome='skipped'; reason=$decision.reason }
+    }
+    if ($decision.action -eq 'start') {
+        Write-Host "Starting previously pinned HIC Podman machine $($decision.machineName); no machine configuration changes."
+        & podman machine start $decision.machineName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Pinned HIC Podman machine did not start.' }
+    }
+    $verifiedMachines = @(Get-HicPodmanMachines)
+    if ($verifiedMachines.Count -ne 1 -or
+        $verifiedMachines[0].Name -cne $manifest.machineName -or
+        $verifiedMachines[0].Running -ne $true) {
+        throw 'Podman machine identity/running state did not verify after start.'
+    }
+    $Status['podmanMachine'] = 'running'
+    return [pscustomobject]@{ outcome='ready'; reason='Pinned managed Podman machine verified running.' }
 }
 
 function Invoke-HicPodmanReadOnly {
@@ -85,9 +140,12 @@ function Get-HicManagedContainerRecords {
 function Assert-HicManagedIdentity {
     param([string]$ManifestPath, [string]$CredentialsPath, [int]$ExpectedPort)
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    if ($manifest.version -ne 2 -or $manifest.project -cne 'hic-managed' -or
+    if ($manifest.version -notin @(2, 3) -or $manifest.project -cne 'hic-managed' -or
         $manifest.controlPlanePort -ne $ExpectedPort) {
         throw 'Managed manifest differs from configured runtime. No automatic migration.'
+    }
+    if ($manifest.version -eq 3 -and $manifest.machineName -cne (Get-HicSingleRunningMachineName)) {
+        throw 'Runtime Podman machine differs from the originally pinned HIC machine.'
     }
     $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $CredentialsPath).Hash.ToLowerInvariant()
     if ($manifest.credentialsSha256 -cne $digest) {
@@ -157,6 +215,12 @@ function Start-HicManagedInfrastructure {
     param([System.Collections.IDictionary]$Status, [int]$ControlPlanePort)
 
     $paths = Get-HicManagedPaths
+    if ($Status.podmanMachine -ne 'running') {
+        $machineResult = Start-HicPinnedPodmanMachine -Status $Status -Paths $paths
+        if ($machineResult.outcome -ne 'ready') {
+            return [pscustomobject]@{ outcome='skipped'; reason=$machineResult.reason }
+        }
+    }
     $snapshot = Get-HicManagedSnapshot $Status $ControlPlanePort
     $decision = Get-HicManagedDecision $snapshot
     if ($decision.action -eq 'skip') {
@@ -183,6 +247,8 @@ function Start-HicManagedInfrastructure {
             if ([Environment]::GetEnvironmentVariable('HIC_DB_PASSWORD')) {
                 throw 'An ambient HIC_DB_PASSWORD would override the private managed credential. Unset it before first provisioning.'
             }
+            # Pin the current single Podman machine on first clean install.
+            $machineName = Get-HicSingleRunningMachineName
             # A dedicated Compose file excludes Worker and never publishes DB/Redis ports.
             $null = @(Invoke-HicPodmanReadOnly -CommandArgs @('compose', 'version'))
             [System.IO.Directory]::CreateDirectory($paths.directory) | Out-Null
@@ -199,8 +265,9 @@ function Start-HicManagedInfrastructure {
             $records = Get-HicManagedContainerRecords
 
             $manifest = [ordered]@{
-                version = 2
+                version = 3
                 project = 'hic-managed'
+                machineName = $machineName
                 controlPlanePort = $ControlPlanePort
                 credentialsSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $paths.credentials).Hash.ToLowerInvariant()
                 containers = $records

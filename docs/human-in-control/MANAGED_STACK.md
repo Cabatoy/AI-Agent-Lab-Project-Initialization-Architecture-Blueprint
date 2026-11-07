@@ -10,7 +10,7 @@ Run **hic.cmd up** (or double-click hic.cmd) in an approved local Windows checko
 | Clean, new Podman environment with an already-running machine | Provision an isolated HIC-managed PostgreSQL, Redis and Control Plane, then start Native Host + UI |
 | Prior successful managed installation | Verify manifest/container IDs/images/data volumes/CP loopback port, then start only stopped registered containers; never rebuild |
 | Legacy agentlab containers or prior DB volumes, stopped or running | Skip infrastructure changes; allow Native Host/UI degraded mode |
-| Podman machine stopped/missing | Do not start it automatically; allow Native Host/UI degraded mode |
+| Podman machine stopped/missing | Automatically start only the single exact previously pinned HIC-managed machine if WSL user-mode networking is explicitly false; otherwise open degraded mode |
 | Partial managed installation, changed images/identity, unknown port bindings | Fail closed; no deletion or recreation |
 | Worker | Never started by managed Compose |
 
@@ -24,7 +24,7 @@ The initial fresh database necessarily creates its new schema. This is NOT a mig
 
 ## Prerequisites and limitations
 
-Windows with .NET 10 SDK, Node/npm, Podman with Compose, and an already-running Podman machine. A stopped Podman machine or absent tools are not silently initialized/installed. Port conflicts and unexpected legacy/partial resources block infrastructure startup. The user may still use Native Host/UI with reduced functionality.
+Windows with .NET 10 SDK, Node/npm, Podman with Compose, and an running Podman machine, or a previously pinned/registered stopped Podman machine with safe networking. A stopped Podman machine or absent tools are not silently initialized/installed. Port conflicts and unexpected legacy/partial resources block infrastructure startup. The user may still use Native Host/UI with reduced functionality.
 
 Podman on Windows may have host/WSL networking behavior that differs from Compose metadata; verify actual exposure before treating the setup as hardened. The Control Plane API currently lacks durable authenticated task approvals, so this is a LOCAL DEVELOPMENT stack, not a production deployment or an arbitrary-agent sandbox.
 

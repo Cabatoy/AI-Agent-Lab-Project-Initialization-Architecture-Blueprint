@@ -7,7 +7,8 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-decisions.ps1'),
     (Join-Path $PSScriptRoot 'hic-recovery.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
-    (Join-Path $PSScriptRoot 'hic-managed.ps1')
+    (Join-Path $PSScriptRoot 'hic-managed.ps1'),
+    (Join-Path $PSScriptRoot 'hic-machine.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -201,3 +202,39 @@ if ($composeText -notmatch '127\.0\.0\.1:' -or $composeText -notmatch 'HIC_DB_PA
     throw 'Managed Compose must use loopback CP binding and per-install credentials.'
 }
 Write-Host 'Managed single-command policy + Compose isolation: PASS'
+
+
+# Cold-start is permitted only for exactly one known HIC-managed machine.
+. (Join-Path $PSScriptRoot 'hic-machine.ps1')
+$pinned = [pscustomobject]@{ version=3; project='hic-managed'; machineName='podman-machine-default' }
+$single = @([pscustomobject]@{ Name='podman-machine-default'; Running=$false; UserModeNetworking=$false })
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $true).action -ne 'start') {
+    throw 'An exact previously pinned stopped machine should be eligible for one-command startup.'
+}
+$single[0].Running=$true
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $true).action -ne 'noop') {
+    throw 'An already-running pinned machine must not restart.'
+}
+$single[0].Running=$false
+$single[0].UserModeNetworking=$true
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $true).action -ne 'skip') {
+    throw 'WSL user-mode networking must not auto-start.'
+}
+$single[0].UserModeNetworking=$false
+$single[0].Name='other-machine'
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $true).action -ne 'skip') {
+    throw 'Machine name mismatch must refuse startup.'
+}
+$single[0].Name='podman-machine-default'
+$other = @($single[0], [pscustomobject]@{Name='unrelated-machine';Running=$false;UserModeNetworking=$false})
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $other -CredentialsPresent $true).action -ne 'skip') {
+    throw 'Multiple Podman machines must block unattended cold-start.'
+}
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $false).action -ne 'skip') {
+    throw 'Missing saved credentials must block cold-start.'
+}
+$pinned.version=2
+if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -CredentialsPresent $true).action -ne 'skip') {
+    throw 'Old/unsupported manifest version must block cold-start.'
+}
+Write-Host 'HIC pinned Podman machine cold-start policy: PASS'

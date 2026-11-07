@@ -30,4 +30,4 @@ Next milestone for **existing R2 environments**: explicitly approved rollback-sa
 
 ## Single-command managed mode
 
-For a clean Windows + Podman installation with an already running Podman machine, 'hic.cmd up' initializes an isolated database/cache/Control Plane and starts Native Host/UI. Subsequent launches resume only previously registered managed containers after identity, image, volume mount and port checks. Existing legacy installations stay on native-only degraded mode if their Control Plane is down. For details see MANAGED_STACK.md.
+For a clean Windows + Podman installation with an already running Podman machine, 'hic.cmd up' initializes an isolated database/cache/Control Plane and starts Native Host/UI. On later cold boots it may start only the uniquely pinned managed Podman machine with disabled user-mode networking; subsequent launches resume only previously registered managed containers after identity, image, volume mount and port checks. Existing legacy installations stay on native-only degraded mode if their Control Plane is down. For details see MANAGED_STACK.md.
