@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [develop]
     paths:
-      - 'agent-lab/control-plane/Migrations/003-native-run-approval-ledger.sql'
+      - 'src/ControlPlane/Migrations/003-native-run-approval-ledger.sql'
       - 'tests/ControlPlane.Api.Tests/sql/native-run-ledger-v3-ci.sql'
       - '.github/workflows/hic-native-ledger-ci.yml'
   workflow_dispatch:
@@ -27,7 +27,7 @@ jobs:
           docker run -d --name hic-native-ledger-test \
             -e POSTGRES_USER=hic -e POSTGRES_DB=hic -e POSTGRES_PASSWORD="$db_password" \
             -v "$PWD/deploy/hic-managed/migrations:/bootstrap:ro" \
-            -v "$PWD/agent-lab/control-plane/Migrations:/control-plane-migrations:ro" \
+            -v "$PWD/src/ControlPlane/Migrations:/control-plane-migrations:ro" \
             -v "$PWD/tests/ControlPlane.Api.Tests/sql:/test-sql:ro" \
             postgres:16-alpine
           # pg_isready is also true for the TEMPORARY postmaster during initdb.

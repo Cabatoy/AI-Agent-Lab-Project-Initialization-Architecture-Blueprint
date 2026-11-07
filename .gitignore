@@ -5,3 +5,4 @@
 .fake
 .env
 task.json
+/.local/

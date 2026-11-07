@@ -89,7 +89,7 @@ binary hash kanıtı otomatik üretilmez; R2 E2E raporunda ayrıca doğrulanmal�
 
 ### Base schema kaynağı ve v2 transaction
 
-Tek authoritative base schema [Control Plane initializer](../../agent-lab/control-plane/Program.cs)
+Tek authoritative base schema [Control Plane initializer](../../src/ControlPlane/Program.cs)
 içindeki `InitializeSchemaAsync` metodudur. Harness bu metodun **tam, bilinen**
 biçimini (tek bağlantı ve tek sabit C# verbatim SQL literal'i) doğrular,
 literal'i okuyup C# çift tırnak escaping'ini çözer. SQL kopyası veya bağımsız
@@ -108,7 +108,7 @@ migration veya servis authentication modeli olarak sunulmaz.
 1. Authoritative base SQL, `psql -X --single-transaction -v ON_ERROR_STOP=1`
    ile stdin üzerinden uygulanır; üç base tablo doğrulanır.
 2. Değiştirilmemiş
-   [002-execution-ownership.sql](../../agent-lab/control-plane/Migrations/002-execution-ownership.sql)
+   [002-execution-ownership.sql](../../src/ControlPlane/Migrations/002-execution-ownership.sql)
    aynı fail-on-error yöntemiyle **ayrı explicit transaction** içinde uygulanır.
 3. Version 2, generation kolonu/check, execution kolonları,
    primary/unique/foreign/check constraint'ler, audit execution foreign key'i

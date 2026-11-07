@@ -7,10 +7,40 @@ Bu belge yeni bir checkout veya Copilot sohbeti için kısa ve kalıcı handoff 
 Aşağıdaki R1 durum/eksik/öneri kayıtları tarihsel checkpoint'tir; güncel R2
 kanıtı ve sınırları için bu bağlantıyı esas alın. Bu not yeni runtime izni değildir.
 
+## Kanonik Kaynak Yerleşimi
+
+- Uygulama kaynakları `src/ControlPlane`, `src/AgentWorker`, `src/NativeHost`,
+  `src/WebUI` ve `src/AgentBridge` altındadır. Testler `tests/`, deployment
+  manifestleri `deploy/`, launcher'lar `scripts/` ve yardımcı araçlar `tools/`
+  altındadır.
+- `HumanInControl.sln`, Agent Bridge ve testleri dahil dokuz .NET projesini
+  içerir. Proje adları, assembly kimlikleri ve mevcut onay kapıları korunur.
+- `.local/` yalnızca Git dışında tutulan yerel worktree, rapor, tanı ve yedek
+  alanıdır. Başka checkout'larda veya makinelerde yerel durumun taşındığını
+  varsaymayın.
+- Native Host yalnız `workspace.inspect` sunar. Worker ve task execution
+  kendiliğinden başlatılmaz; runtime işlemleri için mevcut onaylar geçerlidir.
+
+## Workspace Refactor Doğrulama Checkpoint'i — 7 Kasım 2026
+
+- Ayrı refactor worktree'sinde Release solution build'i ve 375 .NET testi
+  geçti: Control Plane 95, Worker 36, Native Host 94 ve Agent Bridge 150.
+  Control Plane'in 12 PostgreSQL testi, mevcut veritabanı yerine ayrı ve
+  geçici bir v2 fixture'da çalıştırıldı. Web UI için 63 test ve build geçti.
+- `hic.cmd preview`, yalnız test için ayrılan portlarda doğrulandı:
+  `workspace.inspect` başarılı, diğer action'lar reddedildi ve
+  `taskExecutionEnabled` false kaldı. Worker başlatılmadı.
+- Türkçe/İngilizce güncellenen Markdown belgelerinin PDF eşleri yenilendi;
+  geçmiş değerlendirmeler güncel runtime veya onay beyanı olarak sunulmaz.
+- Bu görevin v3 migration yasağı, ilgili PR açılınca disposable CI'da v3
+  çalıştıran mevcut ledger workflow'larıyla çakışıyor. PR/CI ve merge,
+  bu sınır çözülmeden doğrulanmış sayılmamalı; kontroller zayıflatılmamalı.
+  Ayrı worktree'deki sonuçlar etkin checkout'a veya cloud'a dağıtım değildir.
+
 ## Depoyu İndirme
 
 1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın.
-2. `HumanInControl.sln`, Control Plane API, Agent Worker, `run.me` console ve iki test projesi olmak üzere beş .NET projesini içerir. Solution Explorer'dan çalışacağınız projeyi seçin; `dotnet build HumanInControl.sln` tüm .NET projelerini derler.
+2. `HumanInControl.sln`, beş uygulama/araç ve dört test projesini içerir. Solution Explorer'dan çalışacağınız projeyi seçin; `dotnet build HumanInControl.sln` tüm .NET projelerini derler.
 3. Önce `.github/copilot-instructions.md`, bu handoff dosyası, `README.md`, karar/açık-soru/yol-haritası belgeleri ve kaynak proje yapısını salt okunur kontrol edin. `bin/` ve `obj/` çıktıları kaynak incelemesine dahil değildir.
 4. Copilot talimatı VS Code'da repo ayarı olarak yüklenir. Visual Studio'da otomatik yükleme sürüme göre değişebileceği için Copilot Chat'ten talimat dosyasını açıkça okumasını isteyin.
 5. Podman Desktop/Compose veya .NET 10 SDK kurulumu gerekiyorsa önce gereksinimleri konuşun. Podman kontrolü ve başlatma adımları birbirinden ayrıdır; [local onboarding](local-onboarding.md) içindeki onay kapılarını izleyin.
@@ -26,9 +56,9 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 ## Doğrulanmış Durum
 
 - Repo, mimari belgeler ve Podman Compose ile çalışan local prototip içeriyor; AWS provisioning veya production deployment yapılmadı.
-- Repo kökündeki [HumanInControl.sln](../HumanInControl.sln) beş .NET projesini bir araya getiriyor: `ControlPlane.Api`, `AgentWorker`, `RunMe`, `ControlPlane.Api.Tests`, `AgentWorker.Tests`.
+- Repo kökündeki [HumanInControl.sln](../HumanInControl.sln), Control Plane, Worker, Native Host, Agent Bridge, `RunMe` ve bunların dört test projesini bir araya getiriyor.
 - .NET 10 migration tamamlandı ve `feature/dotnet10-migration` dalında `699bd116bf49cbef0e8ac97d791f1b02b4c51305` (`build: migrate AI Agent Lab to .NET 10 LTS`) commit'i ile kaydedildi. Beş proje `net10.0` hedefliyor; API/Worker Dockerfile SDK/runtime image'ları 10.0 kullanıyor. Migration doğrulamasında restore, build, 23/23 test ve API/Worker/RunMe Release publish geçti; belge güncellemesinde yeniden çalıştırılmadı.
-- Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
+- Local stack Control Plane API, PostgreSQL ve Redis içerir; Agent Worker varsayılan Compose profilinde kapalıdır ve ayrıca onay gerektirir.
 - `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi yönlendiriyor; bu iki adımda Chat mesajı göstermekten öte bir şey yapmıyor. `approve-podman` onayından sonra salt okunur Podman durum kontrolünü (`podman --version`, `podman machine list`, `podman compose version`, `podman compose ps`) kendisi çalıştırıyor; sorun bulunursa ve kullanıcı `approve-setup` ile açıkça onaylarsa `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi başlatıyor. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasında `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile de gösterebilir.
 - `run.me` ilerlemesi `.run-me-state.json` dosyasında yalnızca o checkout'ta tutulur ve Git tarafından yok sayılır. Başka makineye veya yeni clone'a taşınmaz; bu dosya sohbet bağlamı değildir.
 - Worker task detayını Control Plane'den alır, prompt üretir ve opsiyonel model provider üzerinden çağrı yapar. Podman AI Lab için önce `chat/completions`, sonra `completions` fallback'i dener; geçici hatalarda retry uygular.
@@ -61,7 +91,7 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 ## R1 PostgreSQL Integration Checkpoint — 6 Kasım 2026
 
 - R1 uygulama/test checkpoint'i: `6448ae1ad126e037f7309906f905679af7859d13` (`fix(reliability): enforce atomic transitions and safe worker execution`).
-- R1, approve/retry/status mutasyonlarını ortak [TaskTransitionStore](../agent-lab/control-plane/TaskTransitionStore.cs) üzerinden aynı PostgreSQL transaction'ında satır kilidi, mevcut duruma koşullu update ve audit insert ile uygular. Opsiyonel `expectedStatus` uyuşmazlığı veya aynı-status tekrarı `409 Conflict` döndürür; geçersiz geçiş `400`, bulunamayan task `404` olarak kalır.
+- R1, approve/retry/status mutasyonlarını ortak [TaskTransitionStore](../src/ControlPlane/TaskTransitionStore.cs) üzerinden aynı PostgreSQL transaction'ında satır kilidi, mevcut duruma koşullu update ve audit insert ile uygular. Opsiyonel `expectedStatus` uyuşmazlığı veya aynı-status tekrarı `409 Conflict` döndürür; geçersiz geçiş `400`, bulunamayan task `404` olarak kalır.
 - Worker yalnızca HTTP `200` ve eşleşen task ID/status cevabıyla `Executing` kabulünü doğrularsa model çağırır. Conflict, timeout ve eksik/bozuk cevap execution'ı engeller; belirsiz sonuç otomatik `Failed` yapılmaz. Bu protokol durable ownership veya exactly-once sağlamaz.
 - [PostgreSQL fixture](../tests/ControlPlane.Api.Tests/TaskTransitionPostgresTests.cs), dedicated database/owner/marker doğrulaması ve GUID schema/token/OID kontrolü kullanır; cleanup yalnızca kendi iki tablosu ve schema'sında transaction/lock/`RESTRICT` ile yapılır.
 - Mevcut runtime projesinden ayrı kaynaklar oluşturuldu: container `hic-r1-pg-10a8cae2ef06` (`312a9bef6457`), volume `hic-r1-pg-10a8cae2ef06-data`, ağ `hic-r1-pg-10a8cae2ef06-net`; yalnızca `127.0.0.1:18432` portu açıldı. Image `postgres:16-alpine`; database `hic_r1_tests`, owner `hic_r1_test_runner`, database comment `HIC:R1:dedicated-integration:v1`. Rol superuser/CREATEROLE/CREATEDB yetkilerine sahip değil. Credential bu belgede veya repoda tutulmaz.

@@ -5,7 +5,7 @@ Goal: reach the **new Command Center input field** on Windows, retain an unsent 
 ## Known last on-device evidence (from local VS Code Fusion report — not current verified state)
 
 - The active feature checkout is `C:\Enterprise` on `feature/hic-reliability-r2` (clean at last report). **Do not reset, switch or merge into it.**
-- An isolated old develop worktree was prepared at `C:\Enterprise-HicDevelop`; its last confirmed commit then was `f6eb861` (PR #20). Refresh independently with `fetch` and a clean fast-forward/checkout only after verifying its worktree status.
+- An isolated old develop worktree was originally prepared at `C:\Enterprise-HicDevelop`; its last confirmed commit then was `f6eb861` (PR #20). The path and commit are historical: discover its current location with `git worktree list --porcelain` before checking or updating it.
 - Prior native host `127.0.0.1:5248` and UI `127.0.0.1:5180` returned HTTP 200; UI 5173/5174 also had listeners. This may have changed.
 - Control Plane `127.0.0.1:8080` disappeared after `wslrelay` stopped listening; `podman machine list` was hung because WSL `wsl -l --quiet --running` did not return.
 - Historical R2 schema/task state (four tasks at last report) must be re-verified. Never assume old counts/images/backups are current.
@@ -20,8 +20,8 @@ Goal: reach the **new Command Center input field** on Windows, retain an unsent 
 
 ## Phase A — verify new Native input without repairing WSL (minimal scope)
 
-1. On the actual PC, first verify whether old 5248/5180 listeners and `C:\Enterprise-HicDevelop` still exist. Identify live processes by executable path and start time, **not stale PID alone**. Never kill an unrelated listener.
-2. Verify `C:\Enterprise-HicDevelop` git status is clean and detached/isolated as expected. Update **only this worktree** to the approved `origin/develop` head, without touching `C:\Enterprise` and without force-resetting local changes. Record the real commit.
+1. On the actual PC, first verify whether old 5248/5180 listeners still exist and resolve the isolated worktree's current path with `git worktree list --porcelain`. Identify live processes by executable path and start time, **not stale PID alone**. Never kill an unrelated listener.
+2. Verify the selected worktree's git status is clean and detached/isolated as expected. Update **only that worktree** to the approved `origin/develop` head, without touching `C:\Enterprise` and without force-resetting local changes. Record the real commit.
 3. Run `hic.cmd preview` from that isolated worktree (new ports default 19481/19482). This does **not** call Podman and does not replace the old session. If ports are occupied/unknown, stop and diagnose instead of killing services.
 4. Open `http://127.0.0.1:19482` and navigate to Command Center. Confirm the new *Unsent input stored locally* text. Enter a non-sensitive **test description** and refresh; verify it remains. Do NOT click `Create Draft task` yet, and do NOT run Worker. The expected Control Plane status can still be unavailable.
 5. Verify the read-only `Inspect local workspace` action works via the new native proxy. Do not grant arbitrary shell or file action permission.

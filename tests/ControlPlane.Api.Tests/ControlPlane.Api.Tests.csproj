@@ -19,8 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\agent-lab\control-plane\ControlPlane.Api.csproj" />
-    <ProjectReference Include="..\..\agent-lab\hic-native-host\Hic.NativeHost.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\ControlPlane.Api.csproj" />
+    <ProjectReference Include="..\..\src\NativeHost\Hic.NativeHost.csproj" />
   </ItemGroup>
 
 </Project>

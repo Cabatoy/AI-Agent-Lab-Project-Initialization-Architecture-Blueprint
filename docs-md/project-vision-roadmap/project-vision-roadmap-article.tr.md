@@ -1,5 +1,7 @@
 # AI Agent Lab — Proje Taslağı ve Yolculuk Hikayesi (TR)
 
+> Tarihsel proje değerlendirmesi: kaynak yolları yeni yerleşimi gösterir; öneriler onay veya güncel durum beyanı değildir. Bkz. `docs-md/continuation.md`.
+
 ## Yönetici Özeti
 
 AI Agent Lab’ın amacı, “kod üreten bir sohbet botu” olmak değil; ürün sahibinin doğal dilde verdiği hedefleri, denetlenebilir yazılım geliştirme iş akışlarına dönüştüren bir platform olmaktır.
@@ -85,8 +87,8 @@ Hedef:
 
 ## As-is teknik dayanak
 
-- Control Plane API: `agent-lab/control-plane/Program.cs`
-- Worker runtime: `agent-lab/agent-worker/Program.cs`
+- Control Plane API: `src/ControlPlane/Program.cs`
+- Worker runtime: `src/AgentWorker/Program.cs`
 - Local orchestration: `docker-compose.yml`
 - Lifecycle scriptleri: `scripts/local.ps1`, `scripts/local.sh`
 - Onboarding ve karar belgeleri: `docs/*`

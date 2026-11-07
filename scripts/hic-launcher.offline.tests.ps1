@@ -1,5 +1,36 @@
 # Offline contract tests for HIC Launcher. Never invokes "up" or any mutating command.
 $ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$requiredSourceFiles = @(
+    'src/ControlPlane/ControlPlane.Api.csproj',
+    'src/ControlPlane/Migrations/002-execution-ownership.sql',
+    'src/AgentWorker/AgentWorker.csproj',
+    'src/NativeHost/Hic.NativeHost.csproj',
+    'src/WebUI/package.json',
+    'src/WebUI/vite.config.ts',
+    'src/AgentBridge/AgentBridge.csproj'
+)
+foreach ($relativePath in $requiredSourceFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root $relativePath) -PathType Leaf)) {
+        throw "Expected workspace source file is missing: $relativePath"
+    }
+}
+$solution = (Get-Content -Raw (Join-Path $root 'HumanInControl.sln')).Replace('\', '/')
+foreach ($project in @(
+    'src/ControlPlane/ControlPlane.Api.csproj',
+    'src/AgentWorker/AgentWorker.csproj',
+    'src/NativeHost/Hic.NativeHost.csproj',
+    'src/AgentBridge/AgentBridge.csproj',
+    'tests/AgentBridge.Tests/AgentBridge.Tests.csproj'
+)) {
+    if (-not $solution.Contains($project)) { throw "Solution is missing project: $project" }
+}
+$nativeLauncher = (Get-Content -Raw (Join-Path $PSScriptRoot 'hic-native.ps1')).Replace('\', '/')
+foreach ($expectedPath in @('src/NativeHost/Hic.NativeHost.csproj', 'src/WebUI')) {
+    if (-not $nativeLauncher.Contains($expectedPath)) { throw "Native launcher is missing path: $expectedPath" }
+}
+Write-Host 'HIC canonical workspace paths and solution: PASS'
+
 $paths = @(
     (Join-Path $PSScriptRoot 'hic.ps1'),
     (Join-Path $PSScriptRoot 'hic-native.ps1'),

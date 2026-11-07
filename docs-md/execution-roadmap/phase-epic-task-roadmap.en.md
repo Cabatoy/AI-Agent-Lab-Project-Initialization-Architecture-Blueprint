@@ -1,5 +1,7 @@
 # AI Agent Lab — Phase + Epic + Task Roadmap
 
+> Historical roadmap: source paths reflect the reorganized layout; proposed work is not an approval or a current status claim. See `docs-md/continuation.md`.
+
 ## Executive Summary
 
 This roadmap defines an execution path to evolve the current local prototype into a product-grade platform.
@@ -15,12 +17,12 @@ Approach:
 
 ## Current Progress Note (Implemented)
 
-- Task state model was expanded in `agent-lab/control-plane/Program.cs`.
+- Task state model was expanded in `src/ControlPlane/Program.cs`.
 - Centralized transition validation (`TaskStatusTransitions`) was added.
 - `approve/retry/status` endpoints now use centralized transition rules.
 - `task_status_transitions` history table and insertion helper were added.
 - Retry flow was updated to `Failed -> Retrying`.
-- In `agent-lab/agent-worker/Program.cs`, transient/permanent error classification, status update retries, and an in-memory idempotency guard were implemented.
+- In `src/AgentWorker/Program.cs`, transient/permanent error classification, status update retries, and an in-memory idempotency guard were implemented.
 - Worker dead-letter queue baseline was added (`TASK_DEAD_LETTER_QUEUE_KEY`, `DeadLetterMessage`, enqueue on terminal failure paths).
 - `tests/AgentWorker.Tests` was created, added to solution, and Worker reliability tests (12 tests) are passing.
 - `tests/ControlPlane.Api.Tests` was added, with 11 status-transition tests.

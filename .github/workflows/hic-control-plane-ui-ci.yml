@@ -6,8 +6,12 @@ on:
     paths:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
-      - 'agent-lab/control-plane/**'
-      - 'agent-lab/hic-native-host/**'
+      - 'src/ControlPlane/**'
+      - 'src/AgentWorker/**'
+      - 'src/AgentBridge/**'
+      - 'src/NativeHost/**'
+      - 'tests/AgentWorker.Tests/**'
+      - 'tests/AgentBridge.Tests/**'
       - 'tests/Hic.NativeHost.Tests/**'
       - 'scripts/hic-native.ps1'
       - 'scripts/hic-preview.smoke.tests.ps1'
@@ -23,11 +27,11 @@ on:
       - 'scripts/hic-machine.ps1'
       - 'deploy/hic-managed/**'
       - 'scripts/hic-ports.ps1'
-      - 'agent-lab/hic-web-ui/vite.port.ts'
+      - 'src/WebUI/vite.port.ts'
       - 'docs/human-in-control/PORTABLE_PORTS.md'
       - 'docker-compose.yml'
       - 'scripts/hic-launcher.offline.tests.ps1'
-      - 'agent-lab/hic-web-ui/**'
+      - 'src/WebUI/**'
       - 'tests/ControlPlane.Api.Tests/**'
       - '.github/workflows/hic-control-plane-ui-ci.yml'
 
@@ -51,20 +55,24 @@ jobs:
         run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
       - name: Run Native Host policy tests
         run: dotnet test tests/Hic.NativeHost.Tests/Hic.NativeHost.Tests.csproj -c Release
+      - name: Run Agent Worker tests
+        run: dotnet test tests/AgentWorker.Tests/AgentWorker.Tests.csproj -c Release
+      - name: Run Agent Bridge tests
+        run: dotnet test tests/AgentBridge.Tests/AgentBridge.Tests.csproj -c Release
 
   web-ui:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: agent-lab/hic-web-ui
+        working-directory: src/WebUI
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: agent-lab/hic-web-ui/package-lock.json
+          cache-dependency-path: src/WebUI/package-lock.json
       - name: Install locked dependencies
         run: npm ci
       - name: Build UI
@@ -130,7 +138,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: agent-lab/hic-web-ui/package-lock.json
+          cache-dependency-path: src/WebUI/package-lock.json
       - name: Test real Windows Native Host and Vite with Control Plane offline
         shell: pwsh
         run: ./scripts/hic-preview.smoke.tests.ps1

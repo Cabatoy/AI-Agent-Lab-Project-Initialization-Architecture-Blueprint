@@ -18,15 +18,15 @@ private repoyu okuyabildiği veya snapshot'ı kendiliğinden tükettiği doğrul
 
 ### Dosya sahipliği ve B1.1'in korunması
 
-- [SnapshotPublisher](../../tools/agent-bridge/SnapshotPublisher.cs):
+- [SnapshotPublisher](../../src/AgentBridge/SnapshotPublisher.cs):
   candidate/preview, exact approval, staging/commit/push/verification akışı.
-- [PublicationContracts](../../tools/agent-bridge/PublicationContracts.cs):
+- [PublicationContracts](../../src/AgentBridge/PublicationContracts.cs):
   manifest, journal, preview/receipt ve transport sınırı; snapshot contract'ının
   yerine geçen ikinci contract/store değildir.
-- [PublicationGit](../../tools/agent-bridge/PublicationGit.cs),
-  [PublicationTransport](../../tools/agent-bridge/PublicationTransport.cs),
-  [PublicationWorkspace](../../tools/agent-bridge/PublicationWorkspace.cs),
-  [PublicationCli](../../tools/agent-bridge/PublicationCli.cs).
+- [PublicationGit](../../src/AgentBridge/PublicationGit.cs),
+  [PublicationTransport](../../src/AgentBridge/PublicationTransport.cs),
+  [PublicationWorkspace](../../src/AgentBridge/PublicationWorkspace.cs),
+  [PublicationCli](../../src/AgentBridge/PublicationCli.cs).
 - [PublicationTests](../../tests/AgentBridge.Tests/PublicationTests.cs):
   gerçek ama sentetik temp Git/bare-remote testleri.
 - B1.1 canonical serializer, snapshot validation/identity, immutable store,
@@ -194,13 +194,13 @@ ister; state'i source repo'ya veya credential içeren dizine koymayın.
 ```powershell
 # Yerel fake-remote doğrulaması (gerçek GitHub değildir):
 # Bare remote önceden sentetik hedef branch/identity ile test fixture tarafından hazırlanır.
-dotnet .\tools\agent-bridge\bin\Release\net10.0\AgentBridge.dll prepare-publication `
+dotnet .\src\AgentBridge\bin\Release\net10.0\AgentBridge.dll prepare-publication `
   --repo C:\SyntheticSource --source-repository synthetic-owner/source `
   --workspace C:\SyntheticPublication --destination synthetic-owner/destination `
   --branch handoffs/synthetic --project synthetic-project --offline-remote C:\SyntheticRemote.git
 
 # Ayrı insan incelemesinden SONRA preview'daki exact digest:
-dotnet .\tools\agent-bridge\bin\Release\net10.0\AgentBridge.dll publish-publication `
+dotnet .\src\AgentBridge\bin\Release\net10.0\AgentBridge.dll publish-publication `
   --repo C:\SyntheticSource --source-repository synthetic-owner/source `
   --workspace C:\SyntheticPublication --destination synthetic-owner/destination `
   --branch handoffs/synthetic --offline-remote C:\SyntheticRemote.git `

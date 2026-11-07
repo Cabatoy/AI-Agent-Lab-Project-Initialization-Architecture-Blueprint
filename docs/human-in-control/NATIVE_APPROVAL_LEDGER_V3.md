@@ -1,6 +1,6 @@
 # HIC Native Approval Ledger v3 — migration proposal and CI safety
 
-**NOT DEPLOYED. NOT AUTOMATIC.** The migration file `agent-lab/control-plane/Migrations/003-native-run-approval-ledger.sql` is not embedded, referenced by `ExecutionSchema`, called from startup, or included in the dedicated new-installation `schema-init` path. It MUST NOT be applied to the user's existing R2 PostgreSQL without a distinct future migration approval, verified immutable backups and on-device dry run.
+**NOT DEPLOYED. NOT AUTOMATIC.** The migration file `src/ControlPlane/Migrations/003-native-run-approval-ledger.sql` is not embedded, referenced by `ExecutionSchema`, called from startup, or included in the dedicated new-installation `schema-init` path. It MUST NOT be applied to the user's existing R2 PostgreSQL without a distinct future migration approval, verified immutable backups and on-device dry run.
 
 ## Why this is a separate schema
 

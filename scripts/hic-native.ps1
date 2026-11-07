@@ -2,8 +2,8 @@
 # No database migrations, Podman operations, Worker starts or git checkout changes.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$ui = Join-Path $root 'agent-lab\hic-web-ui'
-$project = Join-Path $root 'agent-lab\hic-native-host\Hic.NativeHost.csproj'
+$ui = Join-Path $root 'src\WebUI'
+$project = Join-Path $root 'src\NativeHost\Hic.NativeHost.csproj'
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 $ports = Get-HicPorts
 

@@ -12,6 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
-    <ProjectReference Include="..\..\tools\agent-bridge\AgentBridge.csproj" />
+    <ProjectReference Include="..\..\src\AgentBridge\AgentBridge.csproj" />
   </ItemGroup>
 </Project>
