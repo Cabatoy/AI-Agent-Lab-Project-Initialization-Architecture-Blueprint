@@ -93,19 +93,21 @@ jobs:
           HIC_CONTROL_PLANE_PORT: "19480"
         run: |
           docker compose -f deploy/hic-managed/compose.yaml config --quiet
-          services="$(docker compose -f deploy/hic-managed/compose.yaml config --services | sort)"
-          expected="$(printf 'control-plane\npostgres\nredis')"
+          services="$(docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml config --services | sort)"
+          expected="$(printf 'control-plane\npostgres\nredis\nschema-init')"
           if [ "$services" != "$expected" ]; then
-            echo "Unexpected managed services (Worker must not be present)"
+            echo "Unexpected managed services (Worker must remain absent)"
             exit 1
           fi
-          docker compose -f deploy/hic-managed/compose.yaml config --format json > /tmp/hic-managed-config.json
+          docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml config --format json > /tmp/hic-managed-config.json
           python3 - <<'PY'
           import json
           with open('/tmp/hic-managed-config.json', encoding='utf-8') as f:
               cfg = json.load(f)
           services = cfg["services"]
-          assert set(services) == {"postgres", "redis", "control-plane"}
+          assert set(services) == {"postgres", "redis", "control-plane", "schema-init"}
+          assert services["schema-init"]["profiles"] == ["fresh-bootstrap-only"]
+          assert not services["schema-init"].get("ports")
           assert not services["postgres"].get("ports")
           assert not services["redis"].get("ports")
           cp_ports = services["control-plane"]["ports"]

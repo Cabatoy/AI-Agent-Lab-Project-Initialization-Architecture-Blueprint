@@ -254,9 +254,20 @@ function Start-HicManagedInfrastructure {
             [System.IO.Directory]::CreateDirectory($paths.directory) | Out-Null
             New-HicManagedCredentials $paths.credentials $ControlPlanePort
 
-            Write-Host 'Provisioning isolated NEW HIC-managed PostgreSQL, Redis and Control Plane (no Worker).'
-            & podman compose --project-name hic-managed --file $paths.compose --env-file $paths.credentials up --detach --build postgres redis control-plane
-            if ($LASTEXITCODE -ne 0) { throw 'New managed Compose provisioning failed. No automatic cleanup.' }
+            Write-Host 'Provisioning isolated NEW HIC-managed PostgreSQL and Redis only (no Worker).'
+            & podman compose --project-name hic-managed --file $paths.compose --env-file $paths.credentials up --detach postgres redis
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh managed database/cache provisioning failed. No cleanup performed.' }
+
+            # A fresh PostgreSQL instance has no R2 schema. The CP refuses to start until
+            # v2 exists. Run the single-transaction guard ONLY in this bootstrap branch,
+            # where an empty, new managed volume was verified before any container creation.
+            Write-Host 'Initializing R2 schema v2 on the NEW empty HIC-managed PostgreSQL volume.'
+            & podman compose --project-name hic-managed --profile fresh-bootstrap-only --file $paths.compose --env-file $paths.credentials run --rm schema-init
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh schema v2 initialization failed. Database is preserved for inspection; no retry/migration on an existing volume.' }
+
+            Write-Host 'Starting Control Plane against verified new schema v2 (Worker remains absent).'
+            & podman compose --project-name hic-managed --file $paths.compose --env-file $paths.credentials up --detach --build control-plane
+            if ($LASTEXITCODE -ne 0) { throw 'New managed Control Plane provisioning failed. No automatic cleanup.' }
 
             Wait-HicManagedCP $ControlPlanePort
             Assert-HicManagedMount 'hic-managed-postgres' 'hic-managed-postgres-data' '/var/lib/postgresql/data'

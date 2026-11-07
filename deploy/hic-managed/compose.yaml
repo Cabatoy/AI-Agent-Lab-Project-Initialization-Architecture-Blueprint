@@ -22,6 +22,21 @@ services:
     volumes:
       - hic-managed-redis-data:/data
 
+  schema-init:
+    # One-shot, explicitly targeted ONLY during first empty-db bootstrap.
+    # Omitted from default up; does not run on subsequent HIC starts.
+    image: postgres:16-alpine
+    profiles: ['fresh-bootstrap-only']
+    environment:
+      PGPASSWORD: ${HIC_DB_PASSWORD:?HIC_DB_PASSWORD_required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/bootstrap:ro
+      - ../../agent-lab/control-plane/Migrations:/control-plane-migrations:ro
+    entrypoint: ['psql']
+    command: ['-h','postgres','-U','hic','-d','hic','-v','ON_ERROR_STOP=1','--single-transaction','-f','/bootstrap/000-bootstrap-v2.sql']
   control-plane:
     build:
       context: ../../agent-lab/control-plane

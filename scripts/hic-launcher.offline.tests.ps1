@@ -303,3 +303,25 @@ if ($previewIndex -lt 0 -or $podmanIndex -lt 0 -or $previewIndex -ge $podmanInde
     throw 'Native input preview must be handled before Podman discovery.'
 }
 Write-Host 'Isolated native input preview decision and WSL independence: PASS'
+
+
+# Fresh R2-schema bootstrap is restricted to the greenfield managed branch.
+# CI does not invoke a database migration or start a container here.
+$managedSource = Get-Content -Raw (Join-Path $PSScriptRoot 'hic-managed.ps1')
+$fresh = $managedSource.IndexOf("if (" + '$decision.action' + " -eq 'bootstrap')")
+$dbFirst = $managedSource.IndexOf('up --detach postgres redis', $fresh)
+$schema = $managedSource.IndexOf('run --rm schema-init', $fresh)
+$cpLast = $managedSource.IndexOf('up --detach --build control-plane', $fresh)
+if ($fresh -lt 0 -or $dbFirst -lt $fresh -or $schema -le $dbFirst -or $cpLast -le $schema) {
+    throw 'Brand new managed database must start, get guarded schema v2, then start Control Plane.'
+}
+if ($managedSource.IndexOf('run --rm schema-init', $cpLast) -ne -1) {
+    throw 'Managed schema-init must never be called during the existing-container resume path.'
+}
+$sql = Get-Content -Raw (Join-Path (Join-Path $PSScriptRoot '..') 'deploy/hic-managed/migrations/000-bootstrap-v2.sql')
+if ($sql -notmatch 'RAISE EXCEPTION' -or
+    $sql -notmatch 'schema is not empty' -or
+    $sql -notmatch '002-execution-ownership\.sql') {
+    throw 'Fresh database SQL must refuse a nonempty schema and reuse the canonical v2 migration.'
+}
+Write-Host 'HIC greenfield-only schema bootstrap ordering/guard: PASS'
