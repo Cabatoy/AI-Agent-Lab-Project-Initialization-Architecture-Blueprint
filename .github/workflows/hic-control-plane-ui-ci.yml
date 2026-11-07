@@ -7,6 +7,10 @@ on:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
       - 'agent-lab/control-plane/**'
+      - 'agent-lab/hic-native-host/**'
+      - 'tests/Hic.NativeHost.Tests/**'
+      - 'scripts/hic-native.ps1'
+      - 'run-hic-native.cmd'
       - 'agent-lab/hic-web-ui/**'
       - 'tests/ControlPlane.Api.Tests/**'
       - '.github/workflows/hic-control-plane-ui-ci.yml'
@@ -29,6 +33,8 @@ jobs:
         run: dotnet build HumanInControl.sln -c Release
       - name: Run safe Control Plane tests
         run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
+      - name: Run Native Host policy tests
+        run: dotnet test tests/Hic.NativeHost.Tests/Hic.NativeHost.Tests.csproj -c Release
 
   web-ui:
     runs-on: ubuntu-latest

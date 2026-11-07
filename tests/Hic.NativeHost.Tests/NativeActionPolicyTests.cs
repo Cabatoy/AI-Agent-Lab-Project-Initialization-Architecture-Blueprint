@@ -6,7 +6,7 @@ public sealed class NativeActionPolicyTests
     [Theory]
     [InlineData("{\"action\":\"workspace.inspect\"}", true)]
     [InlineData("{\"action\":\"workspace.inspect\",\"command\":\"whoami\"}", false)]
-    [InlineData("{\"action\":\"workspace.inspect\",\"path\":\"C:\\\\\"}", false)]
+    [InlineData("{\"action\":\"workspace.inspect\",\"path\":\"other\"}", false)]
     [InlineData("{\"action\":\"shell.run\"}", false)]
     [InlineData("{\"action\":\"workspace.inspect\",\"action\":\"workspace.inspect\"}", false)]
     [InlineData("{}", false)]

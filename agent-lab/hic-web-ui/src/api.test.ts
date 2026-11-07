@@ -13,6 +13,38 @@ const plan = {
 };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+describe('native host read-only action', () => {
+  const result = {
+    action: 'workspace.inspect', runId: '01234567-89ab-cdef-0123-456789abcdef',
+    checkedAtUtc: '2026-11-07T00:00:00Z',
+    workspaceAvailable: true, gitCheckoutFound: true, solutionFound: true,
+  };
+
+  it('submits only a fixed action to the native bridge', async () => {
+    const mock = vi.fn().mockResolvedValue(Response.json(result));
+    vi.stubGlobal('fetch', mock);
+    expect(await api.inspectNativeWorkspace()).toEqual(result);
+    const [url, options] = mock.mock.calls[0];
+    expect(url).toBe('/api/native/actions');
+    expect(options.method).toBe('POST');
+    expect(options.credentials).toBe('omit');
+    expect(options.headers['X-HIC-Request']).toBe('native-action');
+    expect(JSON.parse(options.body)).toEqual({ action: 'workspace.inspect' });
+  });
+
+  it('refuses a malformed native response rather than inventing execution', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...result, runId: '../bad' })));
+    await expect(api.inspectNativeWorkspace()).rejects.toMatchObject({ kind: 'invalid' });
+  });
+
+  it('does not retry when native host is unreachable', async () => {
+    const mock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', mock);
+    await expect(api.inspectNativeWorkspace()).rejects.toMatchObject({ kind: 'network' });
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('Control Plane API contract', () => {
   it('reads actual health, task list, task detail and plan shapes using GET', async () => {
     const fetchMock = vi.fn()
