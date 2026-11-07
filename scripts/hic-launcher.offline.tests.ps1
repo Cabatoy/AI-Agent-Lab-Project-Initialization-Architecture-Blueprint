@@ -8,7 +8,8 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-recovery.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed.ps1'),
-    (Join-Path $PSScriptRoot 'hic-machine.ps1')
+    (Join-Path $PSScriptRoot 'hic-machine.ps1'),
+    (Join-Path $PSScriptRoot 'hic-process.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -253,3 +254,24 @@ if ($launcherScript -notmatch "Skipping Podman/WSL inspection") {
     throw 'The fast path must explain when it skips WSL/Podman probing.'
 }
 Write-Host 'WSL frozen / existing HIC session fast-path ordering: PASS'
+
+
+# Regression: frozen WSL/Podman must not hang a read-only HIC query forever.
+. (Join-Path $PSScriptRoot 'hic-process.ps1')
+$command = (Get-Command powershell.exe -ErrorAction Stop).Source
+$ok = Invoke-HicBoundedProcess -FileName $command -Arguments @('-NoProfile','-Command','Write-Output HIC_PROCESS_OK') -TimeoutMs 8000
+if (-not $ok.Success -or $ok.TimedOut -or @($ok.Lines) -notcontains 'HIC_PROCESS_OK') {
+    throw 'Bounded subprocess failed to return successful stdout.'
+}
+
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+$hung = Invoke-HicBoundedProcess -FileName $command -Arguments @('-NoProfile','-Command','Start-Sleep -Seconds 25') -TimeoutMs 1000
+$watch.Stop()
+if ($hung.Success -or -not $hung.TimedOut -or $watch.Elapsed.TotalSeconds -gt 7) {
+    throw "Frozen child process did not fail closed in bounded time (elapsed $($watch.Elapsed.TotalSeconds)s)."
+}
+$script = Get-Content -Raw (Join-Path $PSScriptRoot 'hic.ps1')
+if ($script -match '\& podman machine list' -or $script -match '\& podman inspect') {
+    throw 'Launcher must not use unbounded direct Podman reads.'
+}
+Write-Host 'Frozen WSL bounded subprocess regression: PASS'

@@ -36,3 +36,8 @@ For a clean Windows + Podman installation with an already running Podman machine
 ## Frozen WSL fast-path (existing native session)
 
 `hic.cmd up` now checks for a **verified existing Native Host + Web UI pair** on configured (19481/19482) or legacy (5248/5180) ports **before calling Podman**. If both endpoints match HIC identity, it prints the existing UI address and returns without any WSL or container query. A partial or unexpected port occupant remains a blocker. This keeps an existing read-only HIC preview accessible when `wsl -l` and `podman machine list` hang after sleep. It does not restore PostgreSQL/Redis or Control Plane, and `hic.cmd status`, `hic.cmd doctor` and `recovery-plan` still use Podman inspections that may hang on a broken WSL instance; a separate bounded diagnostics change is required. No WSL restart is authorized by this code.
+
+
+## Frozen WSL / Podman probe timeout
+
+Read-only Podman probes (`machine list`, selected `inspect`, `ps -a`, volume listing and `port`) are now run through a bounded Windows child process with a default 2.5–5s timeout per probe. If WSL blocks, the launcher reports an unresponsive/unknown state rather than waiting indefinitely; diagnostic failures cannot authorize any infrastructure mutation. HIC only terminates its **own newly launched probe process tree**, not `wslservice`, `vmmemWSL`, existing containers or unrelated Podman/WSL sessions. Existing healthy Native Host/UI reuse remains the first fast path before any Podman inspection. Container start/Compose mutation still require existing strict guardrails and are **not** managed by this timeout wrapper.
