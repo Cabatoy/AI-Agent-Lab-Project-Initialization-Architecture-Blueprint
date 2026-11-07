@@ -160,6 +160,8 @@ PowerShell'de `openai-compatible` seçilip endpoint/model parametreleri verilmez
 
 `new-build` ve `rebuild-all` komutları, Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias'ı ile bağlamayı dener. Böylece rastgele container adlarına bağımlılık azaltılır. Worker model çağrısında önce `chat/completions`, ardından `completions` fallback'i dener; geçici hatalarda kısa retry uygular.
 
+Worker yalnızca `disabled`, `podman-ai-lab`, `ollama` ve `openai-compatible` provider değerlerini kabul eder. Desteklenmeyen provider, eksik endpoint/model veya mutlak HTTP(S) olmayan ya da URL içine gömülü kimlik bilgisi taşıyan endpoint model istemcisini kapalı tutar; görev sonucu hangi ayarın düzeltilmesi gerektiğini açıkça belirtir. URL ve anahtar değerleri hata metnine eklenmez. Kimlik doğrulama için `MODEL_API_KEY` kullanın.
+
 `.env` içindeki kişisel/secret değerleri paylaşmayın.
 
 ## Chat komutları

@@ -384,22 +384,34 @@ Task description: {description}
         return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : 30;
     }
 
-    private static IModelClient CreateModelClient(ModelOptions options, ILogger logger)
+    internal static IModelClient CreateModelClient(ModelOptions options, ILogger logger)
     {
+        if (string.Equals(options.Provider, "disabled", StringComparison.OrdinalIgnoreCase))
+            return new DisabledModelClient();
+
         if (string.Equals(options.Provider, "podman-ai-lab", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(options.Provider, "ollama", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(options.Provider, "openai-compatible", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(options.Endpoint) || string.IsNullOrWhiteSpace(options.Model))
             {
-                logger.LogWarning("MODEL_PROVIDER is {Provider} but MODEL_ENDPOINT or MODEL_NAME is missing. Falling back to disabled model client.", options.Provider);
-                return new DisabledModelClient();
+                logger.LogWarning("A supported model provider is missing MODEL_ENDPOINT or MODEL_NAME. Model calls are disabled.");
+                return new DisabledModelClient("Model provider configuration is incomplete. Set MODEL_ENDPOINT and MODEL_NAME.");
+            }
+
+            if (!Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint) ||
+                endpoint.Scheme is not ("http" or "https") ||
+                !string.IsNullOrEmpty(endpoint.UserInfo))
+            {
+                logger.LogWarning("MODEL_ENDPOINT must be an absolute HTTP or HTTPS URL without embedded credentials. Model calls are disabled.");
+                return new DisabledModelClient("MODEL_ENDPOINT must be an absolute HTTP or HTTPS URL; provide credentials through MODEL_API_KEY.");
             }
 
             return new PodmanAiLabModelClient(options);
         }
 
-        return new DisabledModelClient();
+        logger.LogWarning("Unsupported MODEL_PROVIDER. Model calls are disabled.");
+        return new DisabledModelClient("Unsupported MODEL_PROVIDER. Supported values are disabled, podman-ai-lab, ollama, and openai-compatible.");
     }
 }
 
@@ -410,9 +422,16 @@ internal interface IModelClient
 
 internal sealed class DisabledModelClient : IModelClient
 {
+    private readonly string _reason;
+
+    public DisabledModelClient(string reason = "Model provider is disabled.")
+    {
+        _reason = reason;
+    }
+
     public Task<ModelResult> GenerateAsync(string prompt, CancellationToken cancellationToken)
     {
-        return Task.FromResult(ModelResult.Fail("Model provider is disabled."));
+        return Task.FromResult(ModelResult.Fail(_reason));
     }
 }
 
