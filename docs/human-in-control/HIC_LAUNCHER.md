@@ -41,3 +41,11 @@ For a clean Windows + Podman installation with an already running Podman machine
 ## Frozen WSL / Podman probe timeout
 
 Read-only Podman probes (`machine list`, selected `inspect`, `ps -a`, volume listing and `port`) are now run through a bounded Windows child process with a default 2.5–5s timeout per probe. If WSL blocks, the launcher reports an unresponsive/unknown state rather than waiting indefinitely; diagnostic failures cannot authorize any infrastructure mutation. HIC only terminates its **own newly launched probe process tree**, not `wslservice`, `vmmemWSL`, existing containers or unrelated Podman/WSL sessions. Existing healthy Native Host/UI reuse remains the first fast path before any Podman inspection. Container start/Compose mutation still require existing strict guardrails and are **not** managed by this timeout wrapper.
+
+## Independent updated Native input preview when legacy WSL is frozen
+
+Use **hic.cmd preview** from an up-to-date develop worktree to launch the NEW Native Host on 19481 and Web UI on 19482 without Podman/WSL inspection. This is distinct from hic.cmd up, which deliberately reuses the verified legacy 5248/5180 session. The new and old sessions coexist; neither one is terminated or migrated. Unknown/occupied configured ports or an incomplete new session cause a fail-closed error.
+
+If the older 5248/5180 HIC pair is verified and no explicit Control Plane port override exists, preview mode targets legacy CP 8080 for later reconnection. While 8080 remains unavailable, the new Command Center can retain UNSENT local browser text across refreshes, but cannot persist a Control Plane Draft until the user explicitly submits after recovery. No automatic task submission, Worker start, model execution or Podman restart is performed.
+
+This source change alone does NOT install code on the user's Windows machine. The separate worktree must be updated and hic.cmd preview invoked in a real local session to make the updated UI visible; the GitHub connector cannot run Windows processes.

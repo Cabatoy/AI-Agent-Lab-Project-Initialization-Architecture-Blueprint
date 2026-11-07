@@ -5,6 +5,7 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-native.ps1'),
     (Join-Path $PSScriptRoot 'hic-ports.ps1'),
     (Join-Path $PSScriptRoot 'hic-decisions.ps1'),
+    (Join-Path $PSScriptRoot 'hic-preview.ps1'),
     (Join-Path $PSScriptRoot 'hic-recovery.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed.ps1'),
@@ -275,3 +276,27 @@ if ($script -match '\& podman machine list' -or $script -match '\& podman inspec
     throw 'Launcher must not use unbounded direct Podman reads.'
 }
 Write-Host 'Frozen WSL bounded subprocess regression: PASS'
+
+
+# Dedicated updated Native UI preview must work even when WSL/Podman is stuck.
+# Decision matrix is pure; CI never starts a HIC process.
+. (Join-Path $PSScriptRoot 'hic-preview.ps1')
+$preview = [ordered]@{ nativeReady=$false; webReady=$false; nativePortState='free'; webPortState='free' }
+if ((Get-HicPreviewDecision $preview).action -ne 'launch') { throw 'Free isolated preview ports should allow launch.' }
+$preview.nativeReady=$true
+if ((Get-HicPreviewDecision $preview).action -ne 'blocked') { throw 'Partial Native Host must fail closed.' }
+$preview.webReady=$true
+if ((Get-HicPreviewDecision $preview).action -ne 'reuse') { throw 'Complete Native Host/UI should be reused.' }
+$preview.nativeReady=$false
+$preview.webReady=$false
+$preview.webPortState='occupied'
+if ((Get-HicPreviewDecision $preview).action -ne 'blocked') { throw 'Occupied UI port must fail closed.' }
+$preview.webPortState='unknown'
+if ((Get-HicPreviewDecision $preview).action -ne 'blocked') { throw 'Unknown UI port must fail closed.' }
+$hicSource = Get-Content -Raw (Join-Path $PSScriptRoot 'hic.ps1')
+$previewIndex = $hicSource.IndexOf("if (" + '$Action' + " -eq 'preview')")
+$podmanIndex = $hicSource.IndexOf('$status = Get-HicStatus')
+if ($previewIndex -lt 0 -or $podmanIndex -lt 0 -or $previewIndex -ge $podmanIndex) {
+    throw 'Native input preview must be handled before Podman discovery.'
+}
+Write-Host 'Isolated native input preview decision and WSL independence: PASS'

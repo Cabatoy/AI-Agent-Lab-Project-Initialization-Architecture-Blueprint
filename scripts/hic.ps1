@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('up', 'status', 'doctor', 'recovery-plan')]
+    [ValidateSet('up', 'preview', 'status', 'doctor', 'recovery-plan')]
     [string]$Action = 'up',
     [switch]$Json
 )
@@ -15,6 +15,7 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 . (Join-Path $PSScriptRoot 'hic-decisions.ps1')
+. (Join-Path $PSScriptRoot 'hic-preview.ps1')
 . (Join-Path $PSScriptRoot 'hic-recovery.ps1')
 . (Join-Path $PSScriptRoot 'hic-process.ps1')
 . (Join-Path $PSScriptRoot 'hic-managed.ps1')
@@ -163,6 +164,42 @@ function Get-HicStatus {
         worker           = $podman.worker
         workerSafe       = $podman.worker -in @('exited', 'stopped', 'created', 'configured', 'not-found')
     }
+}
+
+# Explicit isolated native preview: runs BEFORE Get-HicStatus and before Podman.
+# New ports allow the updated UI to coexist with the legacy 5248/5180 UI.
+if ($Action -eq 'preview') {
+    $n = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
+    $w = Test-HicWebUI $ports.WebUI
+    $previewState = [ordered]@{
+        nativeReady = $n
+        webReady = $w
+        nativePortState = Get-LoopbackPortState $ports.NativeHost
+        webPortState = Get-LoopbackPortState $ports.WebUI
+    }
+    $previewDecision = Get-HicPreviewDecision $previewState
+    if ($previewDecision.action -eq 'reuse') {
+        Write-Host 'Updated HIC native preview is already running. No action needed.'
+        Write-Host "Open http://127.0.0.1:$($ports.WebUI)"
+        exit 0
+    }
+    if ($previewDecision.action -eq 'blocked') { throw $previewDecision.reason }
+
+    if (-not $env:HIC_CONTROL_PLANE_PORT) {
+        # A verified legacy HIC pair identifies the old CP port without any WSL access.
+        $legacyNative = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
+        $legacyUI = Test-HicWebUI 5180
+        if ($legacyNative -and $legacyUI) {
+            $env:HIC_CONTROL_PLANE_PORT = '8080'
+            Write-Host 'Legacy HIC preview detected; new UI will use CP port 8080 when it recovers.'
+        }
+    }
+    $nativeLauncher = Join-Path $root 'scripts/hic-native.ps1'
+    if (-not (Test-Path $nativeLauncher)) { throw 'Native launcher script not found.' }
+    Write-Host "Launching independent HIC Native Host + UI on $($ports.NativeHost)/$($ports.WebUI), with no Podman probes."
+    & $nativeLauncher
+    if (-not $?) { exit 1 }
+    exit 0
 }
 
 # Fast path MUST run before any Podman machine query. A frozen WSL subsystem
