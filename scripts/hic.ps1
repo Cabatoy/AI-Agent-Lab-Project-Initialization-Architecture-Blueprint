@@ -16,6 +16,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 . (Join-Path $PSScriptRoot 'hic-decisions.ps1')
 . (Join-Path $PSScriptRoot 'hic-recovery.ps1')
+. (Join-Path $PSScriptRoot 'hic-managed.ps1')
 $ports = Get-HicPorts
 
 function Test-HttpReady {
@@ -220,6 +221,28 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
 if ($Action -ne 'up') { throw 'Unsupported action.' }
 if ($decision.action -eq 'blocked') {
     throw $decision.reason
+}
+# First try isolated fresh/resumable infrastructure; never touch legacy R2 resources.
+# A healthy legacy CP is reused, and old Native preview sessions are not replaced.
+if ($status.controlPlane -ne 'ready' -and $decision.action -ne 'reuse-legacy') {
+    try {
+        $managedResult = Start-HicManagedInfrastructure -Status $status -ControlPlanePort $ports.ControlPlane
+        if ($managedResult.outcome -eq 'ready') {
+            Write-Host $managedResult.reason
+            $status = Get-HicStatus
+            $decision = Get-HicStartupDecision $status
+            if ($status.controlPlane -ne 'ready') {
+                Write-Warning 'Managed infrastructure returned but Control Plane health is not ready.'
+            }
+        }
+        else {
+            Write-Warning "Managed infrastructure unchanged: $($managedResult.reason)"
+        }
+    }
+    catch {
+        Write-Warning "Managed infrastructure not ready: $($_.Exception.Message)"
+        Write-Warning 'Partial new-installation resources, if any, are left untouched for safe investigation.'
+    }
 }
 if ($decision.action -eq 'reuse') {
     Write-Host 'HIC native session is already running. No action needed.'
