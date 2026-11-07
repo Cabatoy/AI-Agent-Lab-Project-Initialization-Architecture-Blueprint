@@ -47,12 +47,17 @@ try {
     if ($result.controlPlanePort -ne 20580 -or $result.nativeHostPort -ne 20581 -or $result.webUIPort -ne 20582) {
         throw 'Port overrides were not applied consistently.'
     }
+    # Invalid cases must throw in the pure port resolver; do not invoke the launcher
+    # as a child process because pwsh treats intentional failure as a fatal test error.
+    . (Join-Path $PSScriptRoot 'hic-ports.ps1')
     $env:HIC_WEB_PORT = '20581'
-    $output = & (Join-Path $PSScriptRoot 'hic.ps1') status -Json 2>&1
-    if ($LASTEXITCODE -eq 0) { throw 'Duplicate HIC host ports must be rejected.' }
+    $rejected = $false
+    try { $null = Get-HicPorts } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Duplicate HIC host ports must be rejected.' }
     $env:HIC_WEB_PORT = '70000'
-    $output = & (Join-Path $PSScriptRoot 'hic.ps1') status -Json 2>&1
-    if ($LASTEXITCODE -eq 0) { throw 'Out-of-range HIC ports must be rejected.' }
+    $rejected = $false
+    try { $null = Get-HicPorts } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Out-of-range HIC ports must be rejected.' }
 }
 finally {
     foreach ($key in $previous.Keys) {
