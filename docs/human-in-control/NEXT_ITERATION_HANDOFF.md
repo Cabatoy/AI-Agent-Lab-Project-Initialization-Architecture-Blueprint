@@ -8,8 +8,9 @@
 
 - Kanonik kaynaklar `src/ControlPlane`, `src/AgentWorker`, `src/NativeHost`, `src/WebUI` ve `src/AgentBridge` altındadır. Testler `tests/`, dağıtım tanımları `deploy/`, araçlar `tools/`, komutlar `scripts/` altındadır; çözüm dosyası kökte `HumanInControl.sln` adını taşır.
 - PR #36 refactor commit'i `759ae099742c1705c8a5c211b6d0ed6baaa9c903`, güncel `origin/develop` merge commit'i ise `92488229c813aac9c8c9ac77c452546e08362adb` içindedir.
-- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiş ve push edilmiştir. Altıncı dokümantasyon commit'i `0791f7b64149ca1354b64ad487d6fd175c22eb01`'dir. Worktree `hic-dx-provider-config` altındadır; güncel HEAD'i `git rev-parse HEAD` ile doğrulayın.
-- Ana checkout'un son hedefi `develop`/`origin/develop` SHA'sıdır. Provider, refactor, AgentBridge, Command Center, Web UI ve detached worktree'ler korunmuştur. AgentBridge worktree'sindeki `handoffs/` untracked dosyaları ve worktree'lerdeki ignored yerel çıktılar silinmemiştir.
+- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiş ve push edilmiştir. Güncel remote HEAD `8580ab364b68e3b8768ecf4352e4dea6d5a6e066`'dır; yedi commit `origin/develop` üzerinde değildir ve provider PR'ı için korunmaktadır.
+- Ana checkout temiz `develop` dalındadır: `92488229c813aac9c8c9ac77c452546e08362adb`, `origin/develop` ile aynıdır. Yerel `main` fast-forward edilerek `eceead60fb04f41d146d02a532ae5d5d6d71e6e3` / `origin/main` ile eşitlendi.
+- Provider, AgentBridge, Command Center, Web UI, refactor ve üç detached worktree korundu. AgentBridge worktree'sindeki `handoffs/` untracked dosyaları ile diğer worktree'lerdeki ignored yerel çıktılar bulunduğundan hiçbir worktree silinmedi.
 - PR #36 ve #37 doğrulanmış merge commit'leriyle remote geçmişindedir. Provider dalı, #36'nın eski tabanını tekrarlamadan güncel `develop` için ayrı PR'a hazırlanmıştır.
 
 ## Provider diagnostics
@@ -55,7 +56,7 @@ Yeni mimari karar alınmadı. Plan, PR incelemesi ve production deploy için ins
 - [PR #36](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/36) `develop` dalına merge edilmiştir. Remote `develop` SHA: `92488229c813aac9c8c9ac77c452546e08362adb`.
 - [PR #37](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/37) `main` dalına merge edilmiştir. Remote `main` SHA: `eceead60fb04f41d146d02a532ae5d5d6d71e6e3`; bu SHA #36 tarihçesini içerir.
 - Provider diagnostics PR'ı henüz açılmamıştır; GitHub browser oturumu sign-in sayfasına yönlendi. Authenticated oturumda [compare linkini](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/compare/develop...feature/hic-provider-config-diagnostics?expand=1) açıp `develop` hedefli PR oluşturun. Merge öncesinde required checks, insan incelemesi ve v3 tetiklenmediği doğrulanmalıdır; branch protection hakkında varsayım yapılmamalıdır.
-- Bu iterasyonda branch/worktree silinmedi. Bir worktree'de untracked handoff, diğerlerinde ignored yerel build/runtime çıktıları bulunduğundan silme güvenli kabul edilmedi. Temizliği daha sonra yalnız güncel PR/worktree/reachability envanteriyle değerlendirin.
+- `feature/dotnet10-migration` ve `pbi/newSetup` yerel branch'leri, commit'leri `develop`'de erişilebilir, PR'ları merge edilmiş ve worktree/aktif PR bağı bulunmadığı doğrulandıktan sonra normal `git branch -d` ile silindi; remote branch'lere dokunulmadı. `feature/hic-foundation` ve `feature/hic-reliability-r2` yerel branch'leri mevcut idle session bağlamı nedeniyle korundu; ikisinin de HEAD'i `develop` içinde erişilebilir. Temizliği daha sonra güncel envanterle değerlendirin.
 - CI istisnası ve korunan blob kontrolleri [WORKSPACE_REFACTOR_CI.md](WORKSPACE_REFACTOR_CI.md) içinde açıklanır. Başka bir branch için v3 güvenliği ayrıca gerçek PR diff'i ve workflow path filtreleriyle doğrulanmalıdır.
 
 ## Öncelikli sonraki işler
