@@ -1,0 +1,7 @@
+# HIC Control Plane ↔ Native Host v2 signed receipt interoperability
+
+This PR adds an **unwired** P-256/SHA-256 issuer primitive in the Control Plane project, with no signing key provisioning or HTTP endpoint. The verifier from PR #30 remains in the Native Host and accepts **only a pinned public SPKI key**. It does not load private keys.
+
+In CI, the Control Plane test project references the Native Host **as a test-only reference**, creates an ephemeral P-256 keypair, signs a synthetic approval in the CP type, serializes it as camelCase JSON, deserializes the real Native Host receipt type, compares both independent canonical field encodings, and verifies its ECDSA P1363 signature using only exported public key bytes. Tests also reject malicious action/scope/issuer/audience, wrong version, invalid expiry/digest/actor and public-only signing keys.
+
+**Critical**: The current CP `/tasks/{id}/approve` endpoint is unauthenticated and cannot be used to issue receipts. Signature validity alone does not establish human identity, authorization or a durable single-use run claim. A future CP authority must verify real actor identity, exact task revision, recorded approval, non-revocation and canonical intent before signing; separate PostgreSQL v3 atomic claim and local runner gates remain prerequisites. Neither this issuer nor verifier is called by live APIs. No Worker, WSL, Podman, database migrations, automatic signing, task execution or paid model calls have been introduced.
