@@ -45,3 +45,8 @@ Goal: reach the **new Command Center input field** on Windows, retain an unsent 
 GitHub CI can compile and unit-test launcher/Host/UI and start a fresh isolated Windows runner to verify the preview's HTTP behavior. It **cannot** confirm the user's old `C:\Enterprise` checkout, frozen WSL, existing R2 database/Redis, or 8080 port mapping. Green CI never means that a local recovery or deployment occurred.
 
 Further product work after this milestone: secure task-backed native execution and human approval/audit (Issue #10). Current native host still only permits `workspace.inspect`.
+
+
+## Latest GitHub-side correction: greenfield schema v2
+
+On **brand-new** HIC-managed installs, `schema-init` is a one-time profiled service that refuses a nonempty PostgreSQL schema and applies canonical v2 migration before the new Control Plane starts. It is not a legacy R2 migration command. GitHub ephemeral Docker integration testing must verify this with a Draft POST; it does not replace an on-device check of the existing R2 database.
