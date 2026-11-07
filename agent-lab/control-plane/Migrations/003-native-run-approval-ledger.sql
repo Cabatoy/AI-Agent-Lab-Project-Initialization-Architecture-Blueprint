@@ -159,4 +159,9 @@ BEGIN
 END
 $fn$;
 
+-- Prevent accidental EXECUTE by future unrelated database roles. A future
+-- authenticated, least-privilege CP issuer must be granted explicitly after review.
+-- The migration owner still has implicit execution rights; this is not auth alone.
+REVOKE EXECUTE ON FUNCTION hic_try_claim_native_readonly_run(uuid,uuid,text) FROM PUBLIC;
+
 INSERT INTO app_schema_versions(version) VALUES (3);
