@@ -16,16 +16,16 @@ The new-installation defaults are CP `19480`, Native Host `19481`, UI `19482` on
 
 - Infrastructure startup is permitted only for verified isolated HIC-managed resources; legacy R2 data is never modified. Native preview uses the existing `scripts/hic-native.ps1` launcher. Native API remains restricted to fixed `workspace.inspect`, without shell or arbitrary file reads.
 - `doctor` inspects only selected container **state** via Podman read-only queries; it does not inspect task contents, query the database, load credentials, or capture logs.
-- A stopped/unavailable Podman machine, missing PostgreSQL or Redis, and a nonresponding Control Plane **must not trigger automatic recovery**. Inspect logs/backup/rollback first, follow [Issue #13](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/13), and obtain a separately approved Control Plane cutover.
+- In **existing legacy R2 installations**, a stopped/unavailable Podman machine, missing PostgreSQL or Redis, and a nonresponding Control Plane **must not trigger automatic recovery**. Only the verified isolated HIC-managed stack is eligible for first-time creation/resume. For legacy recovery inspect logs/backup/rollback, follow [Issue #13](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/13), and obtain a separately approved Control Plane cutover.
 - If Worker is running/unknown, the Native preview still only provides read-only workspace inspection; launcher warns about Worker state but does not interact with it.
-- Source `docker-compose.yml` is not yet authorized for use against the existing R2 environment. Never perform Compose `up/down`, schema migrations, container rebuilds, `podman machine start` or port migration automatically.
+- Legacy source `docker-compose.yml` is not authorized for use against an existing R2 environment. The dedicated new-installation Compose file is explicitly limited to initial empty-database provisioning. Never perform Compose `up/down`, image rebuilds, schema migrations, `podman machine start` or port migration against a legacy environment automatically.
 - This is still a development preview, not a hardened always-on Windows service.
 
 ## Acceptance checks
 
-The Windows CI test uses synthetic snapshots to confirm that a disconnected Control Plane permits **only** a read-only native launch decision, while partial native sessions and occupied/unknown ports cause refusal. `status` and `doctor` run against the CI host without starting containers.
+The Windows CI tests use synthetic snapshots to verify degraded native startup, guarded HIC-managed bootstrap/resume decisions, and refusal for legacy data, partial sessions or occupied/unknown ports. The managed Compose file is independently validated without container startup. `status` and `doctor` run against the CI host without starting containers.
 
-Next milestone: **explicitly approved, rollback-safe infrastructure start** using verified R2 state and backup; then native task approval/audit and R3/R4 before autonomous agent execution.
+Next milestone for **existing R2 environments**: explicitly approved rollback-safe Control Plane recovery after verified local R2 evidence. Next product milestones: native task approval/audit and R3/R4 before autonomous agent execution.
 
 
 ## Single-command managed mode
