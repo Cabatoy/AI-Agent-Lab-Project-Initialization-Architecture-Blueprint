@@ -28,7 +28,12 @@ CONTROL_RUN = "20000000-0000-4000-8000-000000000303"
 def run(*args: str, timeout: int = 25) -> str:
     result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError(f"CI subprocess failed (code {result.returncode}, exe {Path(args[0]).name})")
+        # This runner contains only synthetic fixture data. Print SQL ERROR lines,
+        # never commands, connection strings, tokens, task content or passwords.
+        safe_errors = [line.split("ERROR:", 1)[1].strip()[:160]
+                       for line in result.stderr.splitlines() if "ERROR:" in line]
+        phase = Path(args[-1]).name if args and args[-2:-1] == ("-f",) else "sql-client"
+        raise RuntimeError(f"CI {phase} failed (code {result.returncode}; sql_errors={safe_errors[:3]})")
     return result.stdout.strip()
 
 
@@ -133,9 +138,13 @@ def main() -> None:
             time.sleep(0.4)
         if not ready:
             raise AssertionError("Disposable PostgreSQL did not finish startup")
+        print("CI stage: fresh schema v2", flush=True)
         psql_file("/bootstrap/000-bootstrap-v2.sql")
+        print("CI stage: isolated manual ledger v3", flush=True)
         psql_file("/migration/003-native-run-approval-ledger.sql")
+        print("CI stage: synthetic approvals", flush=True)
         psql_file("/fixtures/native-ledger-races-seed.sql")
+        print("CI stage: overlapping row-lock races", flush=True)
 
         race(
             "revoke", REVOCATION_APPROVAL,
