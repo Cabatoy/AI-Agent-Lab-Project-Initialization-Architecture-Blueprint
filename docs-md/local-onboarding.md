@@ -5,7 +5,7 @@ Bu rehber yeni indirilen checkout'ta dosya incelemesinden Copilot handoff'una, o
 ## IDE'de Açma
 
 - **VS Code:** Depo kökünü **File > Open Folder** ile açın. `.github/copilot-instructions.md` repo talimatı olarak yüklenir; yeni sohbette ayrıca `docs/continuation.md` dosyasını okutun.
-- **Visual Studio:** Repo kökündeki `AI-Agent-Lab.sln` dosyasını açın. Solution Control Plane API, Agent Worker ve `run.me` projelerini içerir. Copilot talimatlarının otomatik yüklenmesine güvenmeyin; Chat'ten `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını açıkça okumasını isteyin.
+- **Visual Studio:** Repo kökündeki `HumanInControl.sln` dosyasını açın. Solution Control Plane API, Agent Worker ve `run.me` projelerini içerir. Copilot talimatlarının otomatik yüklenmesine güvenmeyin; Chat'ten `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını açıkça okumasını isteyin.
 
 ## Önkoşul ve Başlatma
 
