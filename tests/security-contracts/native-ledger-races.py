@@ -119,7 +119,7 @@ def main() -> None:
             "docker", "run", "-d", "--name", CONTAINER,
             "-e", "POSTGRES_USER=hic", "-e", "POSTGRES_DB=hic",
             "-e", f"POSTGRES_PASSWORD={secrets.token_hex(32)}",
-            "-v", f"{migrations[0].parent.resolve()}:/migration:ro",
+            "-v", f"{migrations[0].parent.resolve()}:/control-plane-migrations:ro",
             "-v", f"{bootstraps[0].parent.resolve()}:/bootstrap:ro",
             "-v", f"{fixtures.resolve()}:/fixtures:ro",
             "postgres:16-alpine", timeout=60
@@ -141,7 +141,7 @@ def main() -> None:
         print("CI stage: fresh schema v2", flush=True)
         psql_file("/bootstrap/000-bootstrap-v2.sql")
         print("CI stage: isolated manual ledger v3", flush=True)
-        psql_file("/migration/003-native-run-approval-ledger.sql")
+        psql_file("/control-plane-migrations/003-native-run-approval-ledger.sql")
         print("CI stage: synthetic approvals", flush=True)
         psql_file("/fixtures/native-ledger-races-seed.sql")
         print("CI stage: overlapping row-lock races", flush=True)
