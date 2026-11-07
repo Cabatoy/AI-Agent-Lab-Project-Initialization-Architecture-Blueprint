@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [develop]
     paths:
+      - 'HumanInControl.sln'
+      - 'AI-Agent-Lab.sln'
       - 'agent-lab/control-plane/**'
       - 'agent-lab/hic-web-ui/**'
       - 'tests/ControlPlane.Api.Tests/**'
@@ -21,8 +23,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Build Control Plane
-        run: dotnet build agent-lab/control-plane/ControlPlane.Api.csproj -c Release
+      - name: Validate solution projects
+        run: dotnet sln HumanInControl.sln list
+      - name: Build entire HIC solution
+        run: dotnet build HumanInControl.sln -c Release
       - name: Run safe Control Plane tests
         run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
 

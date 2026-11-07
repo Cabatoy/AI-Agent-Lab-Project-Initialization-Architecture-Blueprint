@@ -12,7 +12,7 @@ Bu belge seti Phase 0 temelini ve B0 paralel Agent Bridge tasarımını içerir.
 
 ### Doğrulanmış mevcut işlevler
 
-- `AI-Agent-Lab.sln`, Control Plane API, Agent Worker, RunMe aracı ve iki test projesini içerir.
+- `HumanInControl.sln`, Control Plane API, Agent Worker, RunMe aracı ve iki test projesini içerir.
 - Beş proje .NET 10 hedefler. Control Plane Dapper, Npgsql ve Redis kullanır. PostgreSQL task kayıtlarını, task durum geçiş geçmişini ve execution plan kayıtlarını tutar.
 - Task API'sinde task oluşturma/listeleme/detay, onay, retry ve durum güncelleme uçları bulunur. Durum geçişleri merkezi bir kuralla doğrulanır.
 - Plan API'sinde `/plans`, `/plans/generate` ve `/plans/{id}/approve` bulunur. Plan oluşturma mevcut durumda talep metadata'sından deterministik bir plan özeti iskeleti üretir.

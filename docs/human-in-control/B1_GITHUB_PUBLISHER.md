@@ -216,7 +216,7 @@ korunur. Bu görev bu bayrakların canlı kullanımını **yetkilendirmez**.
 
 ```powershell
 dotnet test .\tests\AgentBridge.Tests\AgentBridge.Tests.csproj -c Release --no-restore
-dotnet test .\AI-Agent-Lab.sln -c Release --no-build --no-restore --filter "Category!=PostgreSQLIntegration"
+dotnet test .\HumanInControl.sln -c Release --no-build --no-restore --filter "Category!=PostgreSQLIntegration"
 ```
 
 ### Doğrulama kapsamı ve açık sınırlar

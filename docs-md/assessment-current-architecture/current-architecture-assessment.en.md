@@ -23,7 +23,7 @@ The repository is not yet a full productized multi-agent platform; it is a valid
 
 ## 1) Repository and solution structure
 
-- Solution: `AI-Agent-Lab.sln`
+- Solution: `HumanInControl.sln`
 - Projects:
   - `agent-lab/control-plane/ControlPlane.Api.csproj`
   - `agent-lab/agent-worker/AgentWorker.csproj`
