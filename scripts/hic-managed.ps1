@@ -22,11 +22,11 @@ function Get-HicPodmanMachines {
     if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
         throw 'Podman CLI unavailable. Cannot verify machine identity.'
     }
-    $lines = @(& podman machine list --format json 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0) {
-        throw 'Cannot read Podman machine inventory safely.'
+    $probe = Invoke-HicBoundedPodman -Arguments @('machine','list','--format','json') -TimeoutMs 5000
+    if (-not $probe.Success -or $probe.Lines.Count -eq 0) {
+        throw 'Podman machine inventory timed out or failed. No automatic infrastructure changes.'
     }
-    return @(($lines -join [Environment]::NewLine) | ConvertFrom-Json)
+    return @(($probe.Lines -join [Environment]::NewLine) | ConvertFrom-Json)
 }
 
 function Get-HicSingleRunningMachineName {
@@ -74,9 +74,9 @@ function Start-HicPinnedPodmanMachine {
 
 function Invoke-HicPodmanReadOnly {
     param([string[]]$CommandArgs)
-    $lines = @(& podman @CommandArgs 2>$null)
-    if ($LASTEXITCODE -ne 0) { throw 'Podman read-only inspection failed; refusing changes.' }
-    return $lines
+    $probe = Invoke-HicBoundedPodman -Arguments $CommandArgs -TimeoutMs 5000
+    if (-not $probe.Success) { throw 'Podman read-only inspection timed out or failed; refusing changes.' }
+    return $probe.Lines
 }
 
 function Get-HicManagedSnapshot {
