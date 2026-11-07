@@ -1,0 +1,25 @@
+name: HIC Native Run Claim Concurrency CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/hic-ledger-concurrency-ci.yml'
+      - 'tests/security-contracts/**'
+      - '**/Migrations/003-native-run-approval-ledger.sql'
+      - '**/Migrations/002-execution-ownership.sql'
+      - 'deploy/hic-managed/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-postgres-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test v3 single-use claim under 24 concurrent SQL clients
+        shell: bash
+        run: bash tests/security-contracts/native-ledger-concurrency.sh
