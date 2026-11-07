@@ -29,6 +29,16 @@ function Test-HttpReady {
     catch { return $false }
 }
 
+function Test-HicWebUI {
+    param([int]$Port)
+    try {
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        return ([int]$response.StatusCode -eq 200 -and
+            $response.Content -like '*<title>HIC | Control Dashboard</title>*')
+    }
+    catch { return $false }
+}
+
 function Get-PodmanReadOnlyStatus {
     $result = [ordered]@{
         machine = 'not-detected'
@@ -72,10 +82,10 @@ function Get-HicStatus {
     }
 
     $native = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
-    $ui = Test-HttpReady "http://127.0.0.1:$($ports.WebUI)/"
+    $ui = Test-HicWebUI $ports.WebUI
     # Existing PR #15 preview can remain on its old ports. Never replace it implicitly.
     $oldNative = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
-    $oldUI = Test-HttpReady 'http://127.0.0.1:5180/'
+    $oldUI = Test-HicWebUI 5180
     return [ordered]@{
         action           = $Action
         controlPlane     = if ($cp) { 'ready' } else { 'unavailable' }
