@@ -14,6 +14,7 @@ on:
       - 'hic.cmd'
       - 'scripts/hic.ps1'
       - 'scripts/hic-decisions.ps1'
+      - 'scripts/hic-recovery.ps1'
       - 'scripts/hic-ports.ps1'
       - 'agent-lab/hic-web-ui/vite.port.ts'
       - 'docs/human-in-control/PORTABLE_PORTS.md'
