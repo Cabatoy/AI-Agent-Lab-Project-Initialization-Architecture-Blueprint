@@ -21,7 +21,8 @@ export function CommandCenter({ hidden, onCreated, onViewTask, onCheckTasks }: P
   const [localSaveOk, setLocalSaveOk] = useState(true);
   const [attempted, setAttempted] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialDraft.uncertain
+    ? 'A previous Draft submission may have reached the Control Plane. Check Tasks list before retrying.' : null);
   const [uncertain, setUncertain] = useState(initialDraft.uncertain);
   const [checking, setChecking] = useState(false);
   const [created, setCreated] = useState<Task | null>(null);

@@ -354,6 +354,8 @@ describe('unsent Command Center input during a WSL/Control Plane outage', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Maybe the first request arrived');
     expect(screen.getByRole('button', { name: 'Create Draft task' })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('A previous Draft submission may have reached the Control Plane.');
+    expect(screen.getByRole('button', { name: 'Check Tasks list' })).toBeEnabled();
     expect(api.createTask).toHaveBeenCalledTimes(1);
   });
 });

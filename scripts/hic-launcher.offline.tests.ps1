@@ -259,14 +259,17 @@ Write-Host 'WSL frozen / existing HIC session fast-path ordering: PASS'
 
 # Regression: frozen WSL/Podman must not hang a read-only HIC query forever.
 . (Join-Path $PSScriptRoot 'hic-process.ps1')
-$command = (Get-Command powershell.exe -ErrorAction Stop).Source
-$ok = Invoke-HicBoundedProcess -FileName $command -Arguments @('-NoProfile','-Command','Write-Output HIC_PROCESS_OK') -TimeoutMs 8000
+# Use two OS-native commands to test process semantics rather than measuring cold
+# Windows PowerShell process startup. The latter can take >8s on hosted runners.
+$quickCommand = (Get-Command cmd.exe -ErrorAction Stop).Source
+$ok = Invoke-HicBoundedProcess -FileName $quickCommand -Arguments @('/d','/c','echo HIC_PROCESS_OK') -TimeoutMs 8000
 if (-not $ok.Success -or $ok.TimedOut -or @($ok.Lines) -notcontains 'HIC_PROCESS_OK') {
-    throw 'Bounded subprocess failed to return successful stdout.'
+    throw "Bounded subprocess failed to return stdout (exit: $($ok.ExitCode), timeout: $($ok.TimedOut))."
 }
 
+$hangCommand = (Get-Command ping.exe -ErrorAction Stop).Source
 $watch = [System.Diagnostics.Stopwatch]::StartNew()
-$hung = Invoke-HicBoundedProcess -FileName $command -Arguments @('-NoProfile','-Command','Start-Sleep -Seconds 25') -TimeoutMs 1000
+$hung = Invoke-HicBoundedProcess -FileName $hangCommand -Arguments @('-n','30','127.0.0.1') -TimeoutMs 1000
 $watch.Stop()
 if ($hung.Success -or -not $hung.TimedOut -or $watch.Elapsed.TotalSeconds -gt 7) {
     throw "Frozen child process did not fail closed in bounded time (elapsed $($watch.Elapsed.TotalSeconds)s)."
