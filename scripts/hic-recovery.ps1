@@ -39,9 +39,11 @@ function Get-HicRecoveryEvidence {
     }
     if (-not (Get-Command podman -ErrorAction SilentlyContinue)) { return $evidence }
 
+    $containerName = if ($State.infrastructureProfile -eq 'managed') { 'hic-managed-control-plane' } else { 'agentlab-control-plane' }
+
     try {
         # Formatting returns the image ID only; never dump inspect JSON, env, volumes or credentials.
-        $imageOutput = & podman inspect --format '{{.Image}}' agentlab-control-plane 2>$null
+        $imageOutput = & podman inspect --format '{{.Image}}' $containerName 2>$null
         $imageId = ($imageOutput -join '').Trim()
         if ($LASTEXITCODE -eq 0 -and $imageId -match '^sha256:[0-9a-fA-F]{64}$') {
             $evidence.currentControlPlaneImageId = $imageId
@@ -51,7 +53,7 @@ function Get-HicRecoveryEvidence {
 
     try {
         # Inspect only the expected container-internal port; never expose raw host addresses.
-        $ports = @(& podman port agentlab-control-plane 8080/tcp 2>$null)
+        $ports = @(& podman port $containerName 8080/tcp 2>$null)
         if ($LASTEXITCODE -eq 0) {
             $evidence.controlPlanePortExposure = Get-HicPortExposure $ports
         }

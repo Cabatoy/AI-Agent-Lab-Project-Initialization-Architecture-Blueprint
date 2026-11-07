@@ -16,6 +16,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 . (Join-Path $PSScriptRoot 'hic-decisions.ps1')
 . (Join-Path $PSScriptRoot 'hic-recovery.ps1')
+. (Join-Path $PSScriptRoot 'hic-managed.ps1')
 $ports = Get-HicPorts
 
 function Test-HttpReady {
@@ -67,6 +68,7 @@ function Get-PodmanReadOnlyStatus {
     $result = [ordered]@{
         machine = 'not-detected'
         worker = 'unknown'
+        profile = 'unknown'
         controlPlaneContainer = 'unknown'
         postgresContainer = 'unknown'
         redisContainer = 'unknown'
@@ -82,9 +84,34 @@ function Get-PodmanReadOnlyStatus {
         if ($running.Count -eq 0) { return $result }
 
         $result.worker = Get-ContainerReadOnlyState 'agentlab-worker'
-        $result.controlPlaneContainer = Get-ContainerReadOnlyState 'agentlab-control-plane'
-        $result.postgresContainer = Get-ContainerReadOnlyState 'agentlab-postgres'
-        $result.redisContainer = Get-ContainerReadOnlyState 'agentlab-redis'
+        $legacyCP = Get-ContainerReadOnlyState 'agentlab-control-plane'
+        $legacyPostgres = Get-ContainerReadOnlyState 'agentlab-postgres'
+        $legacyRedis = Get-ContainerReadOnlyState 'agentlab-redis'
+        $managedCP = Get-ContainerReadOnlyState 'hic-managed-control-plane'
+        $managedPostgres = Get-ContainerReadOnlyState 'hic-managed-postgres'
+        $managedRedis = Get-ContainerReadOnlyState 'hic-managed-redis'
+        $hasLegacy = @($legacyCP, $legacyPostgres, $legacyRedis, $result.worker) -ne 'not-found'
+        $hasManaged = @($managedCP, $managedPostgres, $managedRedis) -ne 'not-found'
+        $legacyPresent = @($hasLegacy | Where-Object { $_ }).Count -gt 0
+        $managedPresent = @($hasManaged | Where-Object { $_ }).Count -gt 0
+        if ($managedPresent -and -not $legacyPresent) {
+            $result.profile = 'managed'
+            $result.controlPlaneContainer = $managedCP
+            $result.postgresContainer = $managedPostgres
+            $result.redisContainer = $managedRedis
+        }
+        elseif ($managedPresent -and $legacyPresent) {
+            $result.profile = 'mixed'
+            $result.controlPlaneContainer = $legacyCP
+            $result.postgresContainer = $legacyPostgres
+            $result.redisContainer = $legacyRedis
+        }
+        else {
+            $result.profile = if ($legacyPresent) { 'legacy' } else { 'none' }
+            $result.controlPlaneContainer = $legacyCP
+            $result.postgresContainer = $legacyPostgres
+            $result.redisContainer = $legacyRedis
+        }
     }
     catch {
         # Reporting an unknown status is safer than assuming an unhealthy runtime is stopped.
@@ -121,6 +148,7 @@ function Get-HicStatus {
         legacyNative     = $oldNative
         legacyWebUI      = $oldUI
         podmanMachine    = $podman.machine
+        infrastructureProfile = $podman.profile
         controlPlaneContainer = $podman.controlPlaneContainer
         postgresContainer = $podman.postgresContainer
         redisContainer = $podman.redisContainer
@@ -149,6 +177,7 @@ function Get-DoctorFindings {
     if ($State.podmanMachine -eq 'stopped') {
         $messages.Add('Podman machine is stopped. Launcher never starts the Podman machine automatically.')
     }
+    if ($State.infrastructureProfile -eq 'mixed') { $messages.Add('Mixed legacy and HIC-managed containers detected. Do not reconcile automatically.') }
     if ($State.postgresContainer -ne 'running' -or $State.redisContainer -ne 'running') {
         $messages.Add('PostgreSQL/Redis container availability is not confirmed. No database actions will be taken.')
     }
@@ -195,6 +224,7 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
         Write-Host "Native Host $($status.nativeHostPort)   : $($status.nativeHost)"
         Write-Host "HIC Web UI $($status.webUIPort)    : $($status.webUI)"
         Write-Host "Podman machine     : $($status.podmanMachine)"
+        Write-Host "Infrastructure profile: $($status.infrastructureProfile)"
         if ($status.legacyControlPlane) { Write-Host "Existing legacy Control Plane verified at 127.0.0.1:8080 (no migration)." }
         if ($status.legacyNative -or $status.legacyWebUI) { Write-Host "Legacy Native preview detected on 5248/5180; not touching it." }
         Write-Host "Worker             : $($status.worker)"
@@ -220,6 +250,28 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
 if ($Action -ne 'up') { throw 'Unsupported action.' }
 if ($decision.action -eq 'blocked') {
     throw $decision.reason
+}
+# First try isolated fresh/resumable infrastructure; never touch legacy R2 resources.
+# A healthy legacy CP is reused, and old Native preview sessions are not replaced.
+if ($status.controlPlane -ne 'ready' -and $decision.action -ne 'reuse-legacy') {
+    try {
+        $managedResult = Start-HicManagedInfrastructure -Status $status -ControlPlanePort $ports.ControlPlane
+        if ($managedResult.outcome -eq 'ready') {
+            Write-Host $managedResult.reason
+            $status = Get-HicStatus
+            $decision = Get-HicStartupDecision $status
+            if ($status.controlPlane -ne 'ready') {
+                Write-Warning 'Managed infrastructure returned but Control Plane health is not ready.'
+            }
+        }
+        else {
+            Write-Warning "Managed infrastructure unchanged: $($managedResult.reason)"
+        }
+    }
+    catch {
+        Write-Warning "Managed infrastructure not ready: $($_.Exception.Message)"
+        Write-Warning 'Partial new-installation resources, if any, are left untouched for safe investigation.'
+    }
 }
 if ($decision.action -eq 'reuse') {
     Write-Host 'HIC native session is already running. No action needed.'

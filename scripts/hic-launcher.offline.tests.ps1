@@ -5,7 +5,9 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-native.ps1'),
     (Join-Path $PSScriptRoot 'hic-ports.ps1'),
     (Join-Path $PSScriptRoot 'hic-decisions.ps1'),
-    (Join-Path $PSScriptRoot 'hic-recovery.ps1')
+    (Join-Path $PSScriptRoot 'hic-recovery.ps1'),
+    (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
+    (Join-Path $PSScriptRoot 'hic-managed.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -148,3 +150,54 @@ if ($report.operation -ne 'recovery-plan' -or $report.restartAuthorized -ne $fal
     throw 'Recovery-plan command must emit a complete non-authorizing report.'
 }
 Write-Host 'HIC recovery-plan safety matrix: PASS'
+
+
+# Pure HIC-managed decision matrix: synthetic only; no Podman service started.
+. (Join-Path $PSScriptRoot 'hic-managed-policy.ps1')
+$virgin = [ordered]@{
+    machine='running'
+    discovery='verified'
+    containers=@()
+    volumes=@()
+    manifestPresent=$false
+    credentialsPresent=$false
+    controlPlanePortState='free'
+}
+if ((Get-HicManagedDecision $virgin).action -ne 'bootstrap') { throw 'Fresh isolated Podman must be eligible for bootstrap.' }
+
+$virgin.machine='stopped'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Stopped Podman machine must not auto-start.' }
+$virgin.machine='running'
+$virgin.discovery='unverified'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Unverified discovery must fail closed.' }
+$virgin.discovery='verified'
+$virgin.containers=@('agentlab-postgres')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Legacy R2 container must prevent fresh installation.' }
+$virgin.containers=@()
+$virgin.volumes=@('agentlab_postgres-data')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Legacy DB volume must prevent provisioning.' }
+$virgin.volumes=@()
+$virgin.controlPlanePortState='occupied'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Occupied CP port must prevent provisioning.' }
+$virgin.controlPlanePortState='free'
+$virgin.containers=@('hic-managed-postgres')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Partial managed install must fail closed.' }
+$virgin.containers=@('hic-managed-postgres','hic-managed-redis','hic-managed-control-plane')
+$virgin.volumes=@('hic-managed-postgres-data','hic-managed-redis-data')
+$virgin.manifestPresent=$true
+$virgin.credentialsPresent=$true
+if ((Get-HicManagedDecision $virgin).action -ne 'resume') { throw 'Complete managed install should use verified resume path.' }
+$virgin.manifestPresent=$false
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Managed containers without manifest must fail closed.' }
+
+$manifestPath = Join-Path (Join-Path $PSScriptRoot '..') 'deploy/hic-managed/compose.yaml'
+$composeText = Get-Content -Raw -LiteralPath $manifestPath
+if ($composeText -match '(?m)^\s*agent-worker\s*:' -or
+    $composeText -match '(?m)^\s*ports\s*:\s*\r?\n\s*-\s*"?5432:' -or
+    $composeText -match '(?m)^\s*ports\s*:\s*\r?\n\s*-\s*"?6379:') {
+    throw 'Managed Compose must not start Worker or publish database/cache ports.'
+}
+if ($composeText -notmatch '127\.0\.0\.1:' -or $composeText -notmatch 'HIC_DB_PASSWORD') {
+    throw 'Managed Compose must use loopback CP binding and per-install credentials.'
+}
+Write-Host 'Managed single-command policy + Compose isolation: PASS'

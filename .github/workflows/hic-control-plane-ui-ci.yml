@@ -15,6 +15,9 @@ on:
       - 'scripts/hic.ps1'
       - 'scripts/hic-decisions.ps1'
       - 'scripts/hic-recovery.ps1'
+      - 'scripts/hic-managed.ps1'
+      - 'scripts/hic-managed-policy.ps1'
+      - 'deploy/hic-managed/**'
       - 'scripts/hic-ports.ps1'
       - 'agent-lab/hic-web-ui/vite.port.ts'
       - 'docs/human-in-control/PORTABLE_PORTS.md'
@@ -73,3 +76,38 @@ jobs:
       - name: Validate offline HIC launcher contract
         shell: pwsh
         run: ./scripts/hic-launcher.offline.tests.ps1
+
+  managed-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate isolated managed HIC Compose topology (no containers started)
+        shell: bash
+        env:
+          HIC_DB_PASSWORD: "synthetic-test-password-not-used-in-runtime"
+          HIC_CONTROL_PLANE_PORT: "19480"
+        run: |
+          docker compose -f deploy/hic-managed/compose.yaml config --quiet
+          services="$(docker compose -f deploy/hic-managed/compose.yaml config --services | sort)"
+          expected="$(printf 'control-plane\npostgres\nredis')"
+          if [ "$services" != "$expected" ]; then
+            echo "Unexpected managed services (Worker must not be present)"
+            exit 1
+          fi
+          docker compose -f deploy/hic-managed/compose.yaml config --format json > /tmp/hic-managed-config.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/hic-managed-config.json', encoding='utf-8') as f:
+              cfg = json.load(f)
+          services = cfg["services"]
+          assert set(services) == {"postgres", "redis", "control-plane"}
+          assert not services["postgres"].get("ports")
+          assert not services["redis"].get("ports")
+          cp_ports = services["control-plane"]["ports"]
+          assert len(cp_ports) == 1
+          assert str(cp_ports[0]["target"]) == "8080"
+          assert str(cp_ports[0]["published"]) == "19480"
+          assert cp_ports[0]["host_ip"] == "127.0.0.1"
+          print("Managed Compose topology and loopback isolation: PASS")
+          PY
