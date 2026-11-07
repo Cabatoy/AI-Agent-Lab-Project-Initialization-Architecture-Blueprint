@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { api, ApiError } from './api';
+import { UNSENT_DRAFT_KEY } from './unsentDraft';
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
@@ -13,12 +14,13 @@ const item = {
   createdAtUtc: '2026-11-06T12:00:00Z', updatedAtUtc: '2026-11-06T12:00:00Z',
 };
 beforeEach(() => {
+  window.localStorage.clear();
   vi.mocked(api.health).mockResolvedValue({ status: 'ok', service: 'control-plane' });
   vi.mocked(api.tasks).mockResolvedValue([]);
   vi.mocked(api.plans).mockResolvedValue([]);
   vi.mocked(api.task).mockResolvedValue(item);
 });
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); window.localStorage.clear(); vi.clearAllMocks(); });
 
 describe('dashboard', () => {
   it('shows loading, then real empty states and a successful refresh timestamp', async () => {
@@ -289,5 +291,69 @@ describe('command center', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Unsent draft');
     expect(api.createTask).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('unsent Command Center input during a WSL/Control Plane outage', () => {
+  it('retains local text across a page remount while Control Plane is unavailable, without posting', async () => {
+    const { unmount } = render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Request/ }), {
+      target: { value: 'Build an auth flow without a running API' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: /Title/ }), {
+      target: { value: 'New agent request' },
+    });
+    await waitFor(() => expect(window.localStorage.getItem(UNSENT_DRAFT_KEY)).toContain('New agent request'));
+    expect(api.createTask).not.toHaveBeenCalled();
+    unmount();
+
+    vi.mocked(api.health).mockRejectedValue(new Error('WSL unavailable'));
+    vi.mocked(api.tasks).mockRejectedValue(new Error('WSL unavailable'));
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Build an auth flow without a running API');
+    expect(screen.getByRole('textbox', { name: /Title/ })).toHaveValue('New agent request');
+    expect(screen.getByText(/Unsent input stored locally/)).toBeInTheDocument();
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
+
+  it('clears only the unsent buffer after a verified Draft creation, never dispatches', async () => {
+    const created = { ...item, id: '11111111-2222-3333-4444-555555555555', title: 'Saved',
+      description: 'Something to implement', status: 'Draft', attemptCount: 0 };
+    vi.mocked(api.createTask).mockResolvedValue(created);
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Request/ }), {
+      target: { value: 'Something to implement' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Draft task' }));
+    await screen.findByText('Created as Draft — not executed');
+    await waitFor(() => expect(window.localStorage.getItem(UNSENT_DRAFT_KEY)).toBeNull());
+    expect(api.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists the uncertain submission lock across reload and never silently resubmits', async () => {
+    vi.mocked(api.createTask).mockRejectedValue(new ApiError('timeout', 'Outcome unknown', 504, true));
+    const { unmount } = render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Request/ }), {
+      target: { value: 'Maybe the first request arrived' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Draft task' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create Draft task' })).toBeDisabled());
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(UNSENT_DRAFT_KEY) ?? '{}').uncertain).toBe(true));
+    unmount();
+
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Maybe the first request arrived');
+    expect(screen.getByRole('button', { name: 'Create Draft task' })).toBeDisabled();
+    expect(api.createTask).toHaveBeenCalledTimes(1);
   });
 });

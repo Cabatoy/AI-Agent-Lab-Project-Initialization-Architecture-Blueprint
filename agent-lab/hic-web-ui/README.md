@@ -119,3 +119,8 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
 - Draft task oluşturma dışında task mutasyonu (approve, retry, dispatch),
   LLM çağrısı, GitHub yazma işlemi, secret, token/maliyet ölçümü, otomatik
   execution veya deployment yapılmaz.
+
+
+## Offline unsent input
+
+Command Center keeps **one unsent text buffer** in this browser profile's `localStorage` while typing, even if Control Plane/WSL is offline. It is not a persisted Control Plane task, not encrypted, and must not contain secrets. It does not sync or submit automatically; only the explicit `Create Draft task` click sends a request. On a confirmed 201 Draft creation the local text is cleared. When a POST outcome cannot be confirmed, an `uncertain` lock is saved across page reloads to prevent blind retry until the real task list is checked. Browser/profile clearing, private browsing, storage denial and simultaneous tabs may affect availability; the UI warns when local saving fails. To access this feature, a new built UI must actually be running; a pre-existing 5180 dev server does not automatically update until it serves the updated checkout.
