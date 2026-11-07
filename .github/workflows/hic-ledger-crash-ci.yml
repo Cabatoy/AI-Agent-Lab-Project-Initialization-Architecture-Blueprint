@@ -1,0 +1,24 @@
+name: HIC Native Ledger Crash Durability CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/hic-ledger-crash-ci.yml'
+      - 'tests/security-contracts/native-ledger-crash*'
+      - '**/Migrations/003-native-run-approval-ledger.sql'
+      - 'deploy/hic-managed/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-postgres-restart-and-crash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify committed claim replay safety and uncommitted crash atomicity
+        shell: bash
+        run: python3 tests/security-contracts/native-ledger-crash.py
