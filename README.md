@@ -49,6 +49,10 @@ değildir. Mevcut checkout'u değiştirmeden çalışma yürütmek için ayrı b
 worktree kullanılabilir. Native Host yalnız `workspace.inspect` aksiyonuna
 izin verir; task execution bu düzenlemeyle etkinleştirilmez.
 
+Yayımlanmış PDF'ler önceki belge snapshot'ını korur ve eski kaynak yollarını
+gösterebilir. Bu refactor'a üretilmiş PDF çıktıları dahil edilmez; güncel
+yerleşim için bu bölüm ve Markdown kaynakları esas alınmalıdır.
+
 ## Depoyu indirdikten sonra
 
 1. Depoyu klonlayıp IDE'de açın. VS Code'da depo kökünü **File > Open Folder** ile açın. Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın; solution Control Plane, Worker, Native Host, Agent Bridge, `run.me` ve .NET test projelerini içerir.

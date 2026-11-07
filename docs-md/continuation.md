@@ -30,12 +30,13 @@ kanıtı ve sınırları için bu bağlantıyı esas alın. Bu not yeni runtime 
 - `hic.cmd preview`, yalnız test için ayrılan portlarda doğrulandı:
   `workspace.inspect` başarılı, diğer action'lar reddedildi ve
   `taskExecutionEnabled` false kaldı. Worker başlatılmadı.
-- Türkçe/İngilizce güncellenen Markdown belgelerinin PDF eşleri yenilendi;
-  geçmiş değerlendirmeler güncel runtime veya onay beyanı olarak sunulmaz.
-- Bu görevin v3 migration yasağı, ilgili PR açılınca disposable CI'da v3
-  çalıştıran mevcut ledger workflow'larıyla çakışıyor. PR/CI ve merge,
-  bu sınır çözülmeden doğrulanmış sayılmamalı; kontroller zayıflatılmamalı.
-  Ayrı worktree'deki sonuçlar etkin checkout'a veya cloud'a dağıtım değildir.
+- Türkçe/İngilizce Markdown belgeleri yeni yolları açıklar. Üretilmiş PDF'ler
+  refactor farkına dahil değildir ve önceki snapshot'ı gösterebilir.
+- Bu refactor dalında ledger v3 CI işleri çalıştırılmaz; aynı depodaki diğer
+  dalların mevcut kontrolleri korunur. Layout-only guard ve açık kapsam sınırı
+  [CI notunda](../docs/human-in-control/WORKSPACE_REFACTOR_CI.md) açıklanır.
+  Atlanan v3 işleri başarılı test veya merge onayı olarak değerlendirilmemeli;
+  ayrı worktree sonuçları etkin checkout'a veya cloud'a dağıtım değildir.
 
 ## Depoyu İndirme
 
