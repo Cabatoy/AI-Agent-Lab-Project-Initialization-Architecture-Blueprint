@@ -121,7 +121,9 @@ def main() -> None:
         )
         ready = False
         for _ in range(90):
-            if "PostgreSQL init process complete" in run("docker", "logs", CONTAINER):
+            log_probe = subprocess.run(["docker", "logs", CONTAINER], text=True,
+                                       capture_output=True, timeout=10, check=False)
+            if "PostgreSQL init process complete" in (log_probe.stdout + log_probe.stderr):
                 try:
                     if psql("SELECT 1;", timeout=5) == "1":
                         ready = True
