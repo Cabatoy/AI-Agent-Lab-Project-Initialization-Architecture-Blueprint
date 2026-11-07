@@ -11,6 +11,13 @@ on:
       - 'tests/Hic.NativeHost.Tests/**'
       - 'scripts/hic-native.ps1'
       - 'run-hic-native.cmd'
+      - 'hic.cmd'
+      - 'scripts/hic.ps1'
+      - 'scripts/hic-ports.ps1'
+      - 'agent-lab/hic-web-ui/vite.port.ts'
+      - 'docs/human-in-control/PORTABLE_PORTS.md'
+      - 'docker-compose.yml'
+      - 'scripts/hic-launcher.offline.tests.ps1'
       - 'agent-lab/hic-web-ui/**'
       - 'tests/ControlPlane.Api.Tests/**'
       - '.github/workflows/hic-control-plane-ui-ci.yml'
@@ -55,3 +62,12 @@ jobs:
         run: npm run build
       - name: Run UI and proxy tests
         run: npm test
+
+  launcher:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate offline HIC launcher contract
+        shell: pwsh
+        run: ./scripts/hic-launcher.offline.tests.ps1

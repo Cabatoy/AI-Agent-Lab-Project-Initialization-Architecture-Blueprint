@@ -7,7 +7,7 @@ const createPath = '/api/tasks';
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 
-export function apiTarget(value = process.env.HIC_API_URL ?? 'http://127.0.0.1:8080'): URL {
+export function apiTarget(value = process.env.HIC_API_URL ?? 'http://127.0.0.1:19480'): URL {
   let url: URL;
   try {
     url = new URL(value);

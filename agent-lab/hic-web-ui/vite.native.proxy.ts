@@ -5,7 +5,7 @@ const ACTION_PATH = '/actions';
 const MAX_BODY_BYTES = 256;
 const REQUEST_TIMEOUT_MS = 5000;
 
-export function nativeTarget(value = process.env.HIC_NATIVE_URL ?? 'http://127.0.0.1:5248'): URL {
+export function nativeTarget(value = process.env.HIC_NATIVE_URL ?? 'http://127.0.0.1:19481'): URL {
   let target: URL;
   try { target = new URL(value); }
   catch { throw new Error('HIC_NATIVE_URL must be an HTTP loopback origin.'); }

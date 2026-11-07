@@ -4,12 +4,14 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ui = Join-Path $root 'agent-lab\hic-web-ui'
 $project = Join-Path $root 'agent-lab\hic-native-host\Hic.NativeHost.csproj'
+. (Join-Path $PSScriptRoot 'hic-ports.ps1')
+$ports = Get-HicPorts
 
 if (-not (Test-Path (Join-Path $root 'HumanInControl.sln'))) { throw 'HumanInControl.sln not found. Use the checked-out HIC develop branch.' }
 if (-not (Test-Path $project)) { throw 'HIC Native Host project not found.' }
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw '.NET 10 SDK is required.' }
 if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'Node.js/npm is required.' }
-foreach ($port in @(5248, 5180)) {
+foreach ($port in @($ports.NativeHost, $ports.WebUI)) {
   $tcp = New-Object System.Net.Sockets.TcpClient
   try {
     $tcp.Connect('127.0.0.1', $port)
@@ -34,8 +36,10 @@ try {
   $env:HIC_NATIVE_TOKEN = [Convert]::ToBase64String($bytes)
   [Array]::Clear($bytes, 0, $bytes.Length)
   $env:HIC_WORKSPACE_ROOT = $root
-  $env:HIC_NATIVE_URL = 'http://127.0.0.1:5248'
-  $env:HIC_API_URL = 'http://127.0.0.1:8080'
+  $env:HIC_NATIVE_PORT = [string]$ports.NativeHost
+  $env:HIC_WEB_PORT = [string]$ports.WebUI
+  $env:HIC_NATIVE_URL = "http://127.0.0.1:$($ports.NativeHost)"
+  $env:HIC_API_URL = "http://127.0.0.1:$($ports.ControlPlane)"
 
   $native = Start-Process -FilePath 'dotnet' -ArgumentList @(
     'run', '--no-build', '--no-launch-profile', '-c', 'Release', '--project', ('"' + $project + '"')
@@ -44,11 +48,11 @@ try {
     Start-Sleep -Seconds 2
     if ($native.HasExited) { throw 'Native Host failed to start.' }
     Write-Host ''
-    Write-Host 'HIC Native preview: http://127.0.0.1:5180'
-    Write-Host 'Existing HIC 5173/5174 and Control Plane 8080 are untouched.'
+    Write-Host "HIC Native preview: http://127.0.0.1:$($ports.WebUI)"
+    Write-Host 'Existing UI and Control Plane are untouched; only the Native Host and a new UI are launched.'
     Write-Host 'Use Command Center -> Inspect local workspace.'
     Write-Host 'Press Ctrl+C to stop this preview and its Native Host.'
-    & npm.cmd run dev -- --port 5180 --strictPort
+    & npm.cmd run dev -- --port $ports.WebUI --strictPort
   }
   finally {
     if ($null -ne $native -and -not $native.HasExited) { Stop-Process -Id $native.Id -Force -ErrorAction SilentlyContinue }
