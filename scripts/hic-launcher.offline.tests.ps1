@@ -4,7 +4,8 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic.ps1'),
     (Join-Path $PSScriptRoot 'hic-native.ps1'),
     (Join-Path $PSScriptRoot 'hic-ports.ps1'),
-    (Join-Path $PSScriptRoot 'hic-decisions.ps1')
+    (Join-Path $PSScriptRoot 'hic-decisions.ps1'),
+    (Join-Path $PSScriptRoot 'hic-recovery.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -101,3 +102,49 @@ if ((Get-HicStartupDecision $state).action -ne 'blocked') { throw 'A partial leg
 $state.legacyWebUI = $true
 if ((Get-HicStartupDecision $state).action -ne 'reuse-legacy') { throw 'A healthy legacy session must be reused.' }
 Write-Host 'HIC startup decision matrix: PASS'
+
+
+# Recovery plan tests: pure plan + binding classification with synthetic evidence only.
+. (Join-Path $PSScriptRoot 'hic-recovery.ps1')
+if ((Get-HicPortExposure @('127.0.0.1:19480')) -ne 'loopback-only') { throw 'Loopback-only binding was rejected.' }
+if ((Get-HicPortExposure @('[::1]:19480')) -ne 'loopback-only') { throw 'IPv6 loopback-only binding was rejected.' }
+if ((Get-HicPortExposure @('0.0.0.0:19480')) -ne 'non-loopback') { throw 'Public wildcard binding not blocked.' }
+if ((Get-HicPortExposure @('127.0.0.1:19480', '0.0.0.0:19480')) -ne 'non-loopback') { throw 'Mixed binding not blocked.' }
+if ((Get-HicPortExposure @('unknown')) -ne 'unverified') { throw 'Unparseable binding must fail closed.' }
+if ((Get-HicPortExposure @()) -ne 'unverified') { throw 'Missing binding must fail closed.' }
+
+$sampleState = [ordered]@{
+    controlPlane = 'unavailable'
+    controlPlanePort = 19480
+    controlPlaneContainer = 'exited'
+    postgresContainer = 'running'
+    redisContainer = 'running'
+    podmanMachine = 'running'
+    worker = 'exited'
+}
+$sampleEvidence = [ordered]@{
+    currentControlPlaneImageId = 'sha256:' + ('a' * 64)
+    controlPlanePortExposure = 'loopback-only'
+}
+$plan = New-HicRecoveryPlan $sampleState $sampleEvidence
+if ($plan.disposition -ne 'manual-preflight-required' -or $plan.restartAuthorized -ne $false) {
+    throw 'Recovery must remain gated even when container state appears favorable.'
+}
+if ($plan.blockers.Count -lt 4) { throw 'Recovery evidence gates must not be omitted.' }
+$sampleState.worker = 'running'
+$plan = New-HicRecoveryPlan $sampleState $sampleEvidence
+if ($plan.restartAuthorized -ne $false -or
+    -not (@($plan.blockers | Where-Object { $_ -like '*Worker must be explicitly*' }).Count -eq 1)) {
+    throw 'Running Worker must block recovery.'
+}
+$sampleState.controlPlane = 'ready'
+$plan = New-HicRecoveryPlan $sampleState $sampleEvidence
+if ($plan.disposition -ne 'no-recovery-needed' -or $plan.restartAuthorized -ne $false) {
+    throw 'Healthy Control Plane must never trigger restart authorization.'
+}
+$report = (& (Join-Path $PSScriptRoot 'hic.ps1') recovery-plan -Json) | ConvertFrom-Json
+if ($report.operation -ne 'recovery-plan' -or $report.restartAuthorized -ne $false -or
+    $null -eq $report.blockers -or $null -eq $report.observed.controlPlane) {
+    throw 'Recovery-plan command must emit a complete non-authorizing report.'
+}
+Write-Host 'HIC recovery-plan safety matrix: PASS'

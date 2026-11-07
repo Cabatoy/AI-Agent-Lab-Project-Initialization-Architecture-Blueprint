@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('up', 'status', 'doctor')]
+    [ValidateSet('up', 'status', 'doctor', 'recovery-plan')]
     [string]$Action = 'up',
     [switch]$Json
 )
@@ -15,6 +15,7 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 . (Join-Path $PSScriptRoot 'hic-decisions.ps1')
+. (Join-Path $PSScriptRoot 'hic-recovery.ps1')
 $ports = Get-HicPorts
 
 function Test-HttpReady {
@@ -157,6 +158,30 @@ function Get-DoctorFindings {
     if ($Decision.action -eq 'blocked') { $messages.Add($Decision.reason) }
     if ($Decision.action -eq 'reuse-legacy') { $messages.Add('Legacy Native Host/UI running at 5248/5180: no second session is started or migrated.') }
     return $messages.ToArray()
+}
+
+if ($Action -eq 'recovery-plan') {
+    $evidence = Get-HicRecoveryEvidence $status
+    $plan = New-HicRecoveryPlan $status $evidence
+    if ($Json) {
+        $plan | ConvertTo-Json -Depth 6
+    }
+    else {
+        Write-Host 'HIC Infrastructure Recovery — read-only preflight'
+        Write-Host "Disposition: $($plan.disposition)"
+        Write-Host "Control Plane: $($plan.observed.controlPlane) on port $($plan.observed.controlPlaneHostPort)"
+        Write-Host "Container CP/PG/Redis: $($plan.observed.controlPlaneContainer) / $($plan.observed.postgresContainer) / $($plan.observed.redisContainer)"
+        Write-Host "Podman: $($plan.observed.podmanMachine); Worker: $($plan.observed.worker)"
+        Write-Host "Control Plane binding: $($plan.observed.controlPlanePortExposure)"
+        Write-Host "Current image ID: $($plan.observed.currentControlPlaneImageId)"
+        Write-Host ''
+        Write-Host 'BLOCKERS / EVIDENCE REQUIRED:'
+        foreach ($blocker in $plan.blockers) { Write-Host "- $blocker" }
+        Write-Host ''
+        Write-Host $plan.nextStep
+        Write-Host 'No restart was authorized or performed.'
+    }
+    exit 0
 }
 
 if ($Action -eq 'status' -or $Action -eq 'doctor') {

@@ -6,7 +6,8 @@
 
 - Double-click `hic.cmd` or use `hic.cmd up`: reuse an existing verified HIC Native session, or start the Native Host and Vite UI if their configured ports are free. A missing Control Plane does **not** block the Native Host. It starts **degraded mode**: workspace inspection works while Tasks/Plans show Control Plane unavailable.
 - `hic.cmd status`: report actual HTTP health, Podman machine, expected container states, configured host ports and Worker state. Read-only.
-- `hic.cmd doctor`: report the same facts and safe suggestions, without changing runtime state. Structured output: `powershell -NoProfile -File scripts/hic.ps1 doctor -Json`.
+- `hic.cmd doctor`: report the same facts and safe suggestions, without changing runtime state.
+- `hic.cmd recovery-plan`: inspect container states, the current Control Plane image ID (when available) and host-port exposure, and explain mandatory preflight blockers. It **never** starts/restarts/recreates containers, even if all infrastructure appears healthy. Use `hic.cmd recovery-plan -Json` for machine-readable diagnostics. Structured output: `powershell -NoProfile -File scripts/hic.ps1 doctor -Json`.
 - If existing HIC 5248/5180 is running, the launcher **reuses it** instead of creating a second Native Host. A partial old/new session or occupied configured ports cause a **fail-closed** error; it doesn't terminate another process.
 
 The new-installation defaults are CP `19480`, Native Host `19481`, UI `19482` on loopback. Use `HIC_CONTROL_PLANE_PORT`, `HIC_NATIVE_PORT`, `HIC_WEB_PORT` overrides. An identity-verified older HIC Control Plane on 8080 remains supported; no existing service is migrated. See [portable ports](PORTABLE_PORTS.md).
