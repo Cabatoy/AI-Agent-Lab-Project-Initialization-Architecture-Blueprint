@@ -1,0 +1,38 @@
+name: HIC Native Run Claim Concurrency CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/hic-ledger-concurrency-ci.yml'
+      - 'tests/security-contracts/**'
+      - '**/Migrations/003-native-run-approval-ledger.sql'
+      - '**/Migrations/002-execution-ownership.sql'
+      - 'deploy/hic-managed/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refactor-v3-deferred:
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711') }}
+    uses: ./.github/workflows/hic-layout-only-ci.yml
+    with:
+      base-sha: ${{ github.event.pull_request.base.sha || '' }}
+      head-sha: ${{ github.event.pull_request.head.sha || '' }}
+
+  disposable-postgres-concurrency:
+    if: ${{ !((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse v3 execution for the isolated layout refactor
+        shell: bash
+        env:
+          HIC_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: bash tests/security-contracts/refuse-v3-on-layout.sh
+      - name: Test v3 single-use claim under 24 concurrent SQL clients
+        shell: bash
+        run: bash tests/security-contracts/native-ledger-concurrency.sh

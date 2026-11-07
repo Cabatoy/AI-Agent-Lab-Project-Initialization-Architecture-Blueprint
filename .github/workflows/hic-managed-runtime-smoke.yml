@@ -1,0 +1,116 @@
+name: HIC Managed Runtime CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'deploy/hic-managed/**'
+      - 'scripts/hic-managed.ps1'
+      - 'src/ControlPlane/**'
+      - 'src/WebUI/**'
+      - '.github/workflows/hic-managed-runtime-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Isolated throwaway GitHub runner. Generate a new secret separately per run.
+      HIC_CONTROL_PLANE_PORT: '19480'
+      HIC_API_URL: http://127.0.0.1:19480
+      HIC_WEB_PORT: '19482'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate ephemeral database credential (never stored in Git)
+        shell: bash
+        run: |
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "HIC_DB_PASSWORD=$password" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/WebUI/package-lock.json
+      - name: Start brand-new disposable Postgres and Redis, initialize schema v2, then CP
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/hic-managed/compose.yaml up -d postgres redis
+          docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml run --rm schema-init
+          docker compose -f deploy/hic-managed/compose.yaml up -d --build control-plane
+          ready=0
+          for i in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:19480/health >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Fresh managed CP did not become ready after schema v2 bootstrap."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, urllib.request
+          root = "http://127.0.0.1:19480"
+          with urllib.request.urlopen(root + "/health", timeout=5) as r:
+              health = json.load(r)
+          assert health == {"status":"ok","service":"control-plane"}
+          with urllib.request.urlopen(root + "/tasks", timeout=5) as r:
+              tasks = json.load(r)
+          assert tasks == [], "New managed database unexpectedly already contains tasks"
+          print("PASS: fresh managed PostgreSQL schema v2 + Redis + Control Plane")
+          PY
+      - name: Test real Vite Command Center proxy creating a single Draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd src/WebUI
+          npm ci --no-audit --no-fund
+          npm run dev -- --port 19482 --strictPort >/tmp/hic-ci-vite.log 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:19482/ >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then echo "Vite did not become ready."; exit 1; fi
+          python3 - <<'PY'
+          import json, urllib.request
+          root = "http://127.0.0.1:19482"
+          with urllib.request.urlopen(root + "/api/tasks", timeout=5) as r:
+              assert json.load(r) == []
+          payload = {"title": "CI-only Draft", "description": "Synthetic request on an isolated GitHub CI database"}
+          req = urllib.request.Request(root + "/api/tasks",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type":"application/json",
+                       "Origin":root,
+                       "X-HIC-Request":"command-center"},
+              method="POST")
+          with urllib.request.urlopen(req, timeout=10) as r:
+              assert r.status == 201
+              created = json.load(r)
+          assert created["status"] == "Draft" and created["attemptCount"] == 0
+          assert created["description"] == payload["description"]
+          with urllib.request.urlopen(root + "/api/tasks", timeout=5) as r:
+              tasks = json.load(r)
+          assert len(tasks) == 1 and tasks[0]["id"] == created["id"]
+          print("PASS: Vite proxy created exactly one Draft without approval/dispatch")
+          PY
+          cd ../..
+          queue="$(docker compose -f deploy/hic-managed/compose.yaml exec -T redis redis-cli LLEN agentlab:task-queue | tr -d '\r')"
+          if [ "$queue" != "0" ]; then echo "Unexpected worker queue after Draft creation"; exit 1; fi
+          if docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml run --rm schema-init >/tmp/schema-init-second-attempt.log 2>&1; then
+            echo "Unsafe: schema initializer accepted a nonempty database"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:19480/tasks", timeout=5) as r:
+              tasks = json.load(r)
+          assert len(tasks) == 1 and tasks[0]["status"] == "Draft"
+          print("PASS: re-running bootstrap refused; existing task preserved; Redis queue empty")
+          PY

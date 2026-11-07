@@ -1,5 +1,7 @@
 # AI Agent Lab — Combined Master Document (EN)
 
+> Historical overview: source paths reflect the reorganized layout; technical status and proposed next steps are not current approvals. See `docs-md/continuation.md`.
+
 ## Executive Summary
 
 This master document consolidates three perspectives into one narrative:
@@ -56,12 +58,12 @@ This transition should be delivered in controlled phases, not as a single jump.
 ## Technical Appendix
 
 ## Technical anchors
-- API: `agent-lab/control-plane/Program.cs`
-- Worker: `agent-lab/agent-worker/Program.cs`
+- API: `src/ControlPlane/Program.cs`
+- Worker: `src/AgentWorker/Program.cs`
 - Compose: `docker-compose.yml`
 - Scripts: `scripts/local.ps1`, `scripts/local.sh`
 - Guided launcher: `tools/run-me/Program.cs`
-- Architecture docs: `docs/00..06`, `docs/decisions/*`
+- Architecture docs: `docs-md/00..06`, `docs-md/decisions/*`
 
 ## Suggested domain expansions
 - Project

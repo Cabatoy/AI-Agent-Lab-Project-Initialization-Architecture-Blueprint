@@ -1,5 +1,7 @@
 # AI Agent Lab — Birleşik Master Doküman (TR)
 
+> Tarihsel özet: kaynak yolları yeni yerleşimi gösterir; teknik durum ve önerilen adımlar güncel onay anlamına gelmez. Bkz. `docs-md/continuation.md`.
+
 ## Yönetici Özeti
 
 Bu master doküman, üç ayrı perspektifi tek metinde toplar:
@@ -56,12 +58,12 @@ Bu dönüşüm, tek adımda değil, kontrollü fazlarla yapılmalıdır.
 ## Teknik Ek
 
 ## Teknik referanslar
-- API: `agent-lab/control-plane/Program.cs`
-- Worker: `agent-lab/agent-worker/Program.cs`
+- API: `src/ControlPlane/Program.cs`
+- Worker: `src/AgentWorker/Program.cs`
 - Compose: `docker-compose.yml`
 - Scriptler: `scripts/local.ps1`, `scripts/local.sh`
 - Rehber: `tools/run-me/Program.cs`
-- Mimari belgeler: `docs/00..06`, `docs/decisions/*`
+- Mimari belgeler: `docs-md/00..06`, `docs-md/decisions/*`
 
 ## Önerilen temel domain genişlemeleri
 - Project

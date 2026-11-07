@@ -1,0 +1,144 @@
+name: HIC Control Plane and Web UI CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'HumanInControl.sln'
+      - 'AI-Agent-Lab.sln'
+      - 'src/ControlPlane/**'
+      - 'src/AgentWorker/**'
+      - 'src/AgentBridge/**'
+      - 'src/NativeHost/**'
+      - 'tests/AgentWorker.Tests/**'
+      - 'tests/AgentBridge.Tests/**'
+      - 'tests/Hic.NativeHost.Tests/**'
+      - 'scripts/hic-native.ps1'
+      - 'scripts/hic-preview.smoke.tests.ps1'
+      - 'run-hic-native.cmd'
+      - 'hic.cmd'
+      - 'scripts/hic.ps1'
+      - 'scripts/hic-decisions.ps1'
+      - 'scripts/hic-preview.ps1'
+      - 'scripts/hic-recovery.ps1'
+      - 'scripts/hic-managed.ps1'
+      - 'scripts/hic-managed-policy.ps1'
+      - 'scripts/hic-process.ps1'
+      - 'scripts/hic-machine.ps1'
+      - 'deploy/hic-managed/**'
+      - 'scripts/hic-ports.ps1'
+      - 'src/WebUI/vite.port.ts'
+      - 'docs/human-in-control/PORTABLE_PORTS.md'
+      - 'docker-compose.yml'
+      - 'scripts/hic-launcher.offline.tests.ps1'
+      - 'src/WebUI/**'
+      - 'tests/ControlPlane.Api.Tests/**'
+      - '.github/workflows/hic-control-plane-ui-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Validate solution projects
+        run: dotnet sln HumanInControl.sln list
+      - name: Build entire HIC solution
+        run: dotnet build HumanInControl.sln -c Release
+      - name: Run safe Control Plane tests
+        run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
+      - name: Run Native Host policy tests
+        run: dotnet test tests/Hic.NativeHost.Tests/Hic.NativeHost.Tests.csproj -c Release
+      - name: Run Agent Worker tests
+        run: dotnet test tests/AgentWorker.Tests/AgentWorker.Tests.csproj -c Release
+      - name: Run Agent Bridge tests
+        run: dotnet test tests/AgentBridge.Tests/AgentBridge.Tests.csproj -c Release
+
+  web-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/WebUI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/WebUI/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build UI
+        run: npm run build
+      - name: Run UI and proxy tests
+        run: npm test
+
+  launcher:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate offline HIC launcher contract
+        shell: pwsh
+        run: ./scripts/hic-launcher.offline.tests.ps1
+
+  managed-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate isolated managed HIC Compose topology (no containers started)
+        shell: bash
+        env:
+          HIC_DB_PASSWORD: "synthetic-test-password-not-used-in-runtime"
+          HIC_CONTROL_PLANE_PORT: "19480"
+        run: |
+          docker compose -f deploy/hic-managed/compose.yaml config --quiet
+          services="$(docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml config --services | sort)"
+          expected="$(printf 'control-plane\npostgres\nredis\nschema-init')"
+          if [ "$services" != "$expected" ]; then
+            echo "Unexpected managed services (Worker must remain absent)"
+            exit 1
+          fi
+          docker compose --profile fresh-bootstrap-only -f deploy/hic-managed/compose.yaml config --format json > /tmp/hic-managed-config.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/hic-managed-config.json', encoding='utf-8') as f:
+              cfg = json.load(f)
+          services = cfg["services"]
+          assert set(services) == {"postgres", "redis", "control-plane", "schema-init"}
+          assert services["schema-init"]["profiles"] == ["fresh-bootstrap-only"]
+          assert not services["schema-init"].get("ports")
+          assert not services["postgres"].get("ports")
+          assert not services["redis"].get("ports")
+          cp_ports = services["control-plane"]["ports"]
+          assert len(cp_ports) == 1
+          assert str(cp_ports[0]["target"]) == "8080"
+          assert str(cp_ports[0]["published"]) == "19480"
+          assert cp_ports[0]["host_ip"] == "127.0.0.1"
+          print("Managed Compose topology and loopback isolation: PASS")
+          PY
+
+  native-preview-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/WebUI/package-lock.json
+      - name: Test real Windows Native Host and Vite with Control Plane offline
+        shell: pwsh
+        run: ./scripts/hic-preview.smoke.tests.ps1

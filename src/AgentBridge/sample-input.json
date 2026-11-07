@@ -9,7 +9,7 @@
   "executionStatus": "Unknown",
   "summary": "snapshot-foundation",
   "changedFiles": [
-    { "path": "tools/agent-bridge/AgentBridge.csproj", "change": "added" },
+    { "path": "src/AgentBridge/AgentBridge.csproj", "change": "added" },
     { "path": "tests/AgentBridge.Tests/SnapshotTests.cs", "change": "added" }
   ],
   "verificationEvidence": [

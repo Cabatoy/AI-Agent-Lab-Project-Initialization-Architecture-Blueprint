@@ -1,0 +1,37 @@
+name: HIC Native Ledger Crash Durability CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/hic-ledger-crash-ci.yml'
+      - 'tests/security-contracts/native-ledger-crash*'
+      - '**/Migrations/003-native-run-approval-ledger.sql'
+      - 'deploy/hic-managed/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refactor-v3-deferred:
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711') }}
+    uses: ./.github/workflows/hic-layout-only-ci.yml
+    with:
+      base-sha: ${{ github.event.pull_request.base.sha || '' }}
+      head-sha: ${{ github.event.pull_request.head.sha || '' }}
+
+  disposable-postgres-restart-and-crash:
+    if: ${{ !((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse v3 execution for the isolated layout refactor
+        shell: bash
+        env:
+          HIC_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: bash tests/security-contracts/refuse-v3-on-layout.sh
+      - name: Verify committed claim replay safety and uncommitted crash atomicity
+        shell: bash
+        run: python3 tests/security-contracts/native-ledger-crash.py

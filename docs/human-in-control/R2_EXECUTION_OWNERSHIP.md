@@ -83,7 +83,7 @@ kendiliğinden owner atanmaz.
 ### Açık migration ve rollout kapısı
 
 Schema tanımı:
-[002-execution-ownership.sql](../../agent-lab/control-plane/Migrations/002-execution-ownership.sql).
+[002-execution-ownership.sql](../../src/ControlPlane/Migrations/002-execution-ownership.sql).
 SQL uygulama tarafından **otomatik uygulanmaz**. API startup schema version 2
 kaydını arar ve eksikse hata ile durur; schema kontrolünden önce base schema
 initializer çalışmaz. SQL mevcut R1 `tasks`/`task_status_transitions` şemasını
@@ -150,7 +150,7 @@ kontrolü atlanmaz. Legacy `start` R2'de güvenli hata verir.
   salt okunur replay; legacy bypass reddi; Review/InProgress boyunca owner'ın
   korunması; audit hatasında claim/generation ve finalization rollback.
 - Tam Release suite:
-  `dotnet test AI-Agent-Lab.sln -c Release --no-build --no-restore`:
+  `dotnet test HumanInControl.sln -c Release --no-build --no-restore`:
   **119 PASS** (Control Plane 83, Worker 36), **0 fail / 0 skip**.
   Bunun 107'si offline testtir. Worker acknowledgement eşleşmesi, unknown claim
   sonucunda sıfır model çağrısı, tek claim POST ve cancellation kontrolleri

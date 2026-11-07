@@ -45,7 +45,7 @@
       }
     },
     "control-plane": {
-      "build": { "context": "../../agent-lab/control-plane", "dockerfile": "Dockerfile" },
+      "build": { "context": "../../src/ControlPlane", "dockerfile": "Dockerfile" },
       "labels": { "org.hic.runtime-test": "v1" },
       "environment": {
         "ASPNETCORE_ENVIRONMENT": "Development",
@@ -61,7 +61,7 @@
       }
     },
     "agent-worker": {
-      "build": { "context": "../../agent-lab/agent-worker", "dockerfile": "Dockerfile" },
+      "build": { "context": "../../src/AgentWorker", "dockerfile": "Dockerfile" },
       "labels": { "org.hic.runtime-test": "v1" },
       "environment": {
         "DOTNET_ENVIRONMENT": "Development",

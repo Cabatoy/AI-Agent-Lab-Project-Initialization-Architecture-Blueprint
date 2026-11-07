@@ -4,12 +4,12 @@ Bu rehber yeni indirilen checkout'ta dosya incelemesinden Copilot handoff'una, o
 
 ## IDE'de Açma
 
-- **VS Code:** Depo kökünü **File > Open Folder** ile açın. `.github/copilot-instructions.md` repo talimatı olarak yüklenir; yeni sohbette ayrıca `docs/continuation.md` dosyasını okutun.
-- **Visual Studio:** Repo kökündeki `AI-Agent-Lab.sln` dosyasını açın. Solution Control Plane API, Agent Worker ve `run.me` projelerini içerir. Copilot talimatlarının otomatik yüklenmesine güvenmeyin; Chat'ten `.github/copilot-instructions.md` ve `docs/continuation.md` dosyalarını açıkça okumasını isteyin.
+- **VS Code:** Depo kökünü **File > Open Folder** ile açın. `.github/copilot-instructions.md` repo talimatı olarak yüklenir; yeni sohbette ayrıca `docs-md/continuation.md` dosyasını okutun.
+- **Visual Studio:** Repo kökündeki `HumanInControl.sln` dosyasını açın. Solution Control Plane API, Agent Worker, Native Host, Agent Bridge, `run.me` ve test projelerini içerir. Copilot talimatlarının otomatik yüklenmesine güvenmeyin; Chat'ten `.github/copilot-instructions.md` ve `docs-md/continuation.md` dosyalarını açıkça okumasını isteyin.
 
 ## Önkoşul ve Başlatma
 
-Rehberi çalıştırmak için .NET 8 SDK gerekir. Podman bu ilk iki adım için gerekli değildir.
+Rehberi çalıştırmak için .NET 10 SDK gerekir. Podman bu ilk iki adım için gerekli değildir.
 
 Windows PowerShell, depo kökünden:
 
@@ -63,7 +63,7 @@ Aşağıdaki kısa örnek, `run.me` içindeki seçim adımlarını ve Chat'e gö
 2. Konsolda `done` yazılır.
 3. Konsolda `handoff check` yazılır.
    - **Chat'e gönderilen komut:** `handoff check`
-   - **Beklenen cevap özeti:** `docs/continuation.md` ile mevcut dosyaların karşılaştırması, doğrulanan ve doğrulanmayan noktalar.
+   - **Beklenen cevap özeti:** `docs-md/continuation.md` ile mevcut dosyaların karşılaştırması, doğrulanan ve doğrulanmayan noktalar.
 4. Konsolda `approve-podman` yazılır.
 5. Konsolda `podman check` yazılır.
    - **Chat'e gönderilen komut:** `podman check`

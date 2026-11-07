@@ -17,7 +17,7 @@ $templatePath = Join-Path $root 'compose.json'
 $emptyEnv = Join-Path $root 'empty.env'
 $template = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json
 $services = @('postgres', 'redis', 'model-stub', 'control-plane', 'agent-worker')
-$sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\agent-lab\control-plane\Program.cs'))
+$sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\src\ControlPlane\Program.cs'))
 $migrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\002-execution-ownership.sql'
 $versionPath = Join-Path (Split-Path $sourcePath) 'ExecutionSchema.cs'
 

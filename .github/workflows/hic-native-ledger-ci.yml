@@ -1,0 +1,96 @@
+name: HIC Native Approval Ledger v3 CI (manual migration only)
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'src/ControlPlane/Migrations/003-native-run-approval-ledger.sql'
+      - 'tests/ControlPlane.Api.Tests/sql/native-run-ledger-v3-ci.sql'
+      - '.github/workflows/hic-native-ledger-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refactor-v3-deferred:
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711') }}
+    uses: ./.github/workflows/hic-layout-only-ci.yml
+    with:
+      base-sha: ${{ github.event.pull_request.base.sha || '' }}
+      head-sha: ${{ github.event.pull_request.head.sha || '' }}
+
+  ledger-isolated-postgres:
+    if: ${{ !((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/enterprise-workspace-layout-20261107-223711') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/enterprise-workspace-layout-20261107-223711')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse v3 execution for the isolated layout refactor
+        shell: bash
+        env:
+          HIC_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: bash tests/security-contracts/refuse-v3-on-layout.sh
+      - name: Create disposable PostgreSQL 16 with no published ports
+        shell: bash
+        run: |
+          set -euo pipefail
+          db_password="$(openssl rand -hex 32)"
+          echo "::add-mask::$db_password"
+          docker run -d --name hic-native-ledger-test \
+            -e POSTGRES_USER=hic -e POSTGRES_DB=hic -e POSTGRES_PASSWORD="$db_password" \
+            -v "$PWD/deploy/hic-managed/migrations:/bootstrap:ro" \
+            -v "$PWD/src/ControlPlane/Migrations:/control-plane-migrations:ro" \
+            -v "$PWD/tests/ControlPlane.Api.Tests/sql:/test-sql:ro" \
+            postgres:16-alpine
+          # pg_isready is also true for the TEMPORARY postmaster during initdb.
+          # Wait for the official image's initialization-complete marker AND the
+          # final server to accept a real SQL query, or fail closed.
+          ready=0
+          for i in $(seq 1 60); do
+            if docker logs hic-native-ledger-test 2>&1 | grep -q 'PostgreSQL init process complete' &&
+               docker exec hic-native-ledger-test psql -U hic -d hic -tAc 'select 1' 2>/dev/null | grep -qx '1'; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then echo 'Disposable PostgreSQL did not finish initialization'; exit 1; fi
+      - name: Apply v2 then explicit v3 to fresh disposable DB and test single-use run claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec hic-native-ledger-test psql -U hic -d hic \
+            -v ON_ERROR_STOP=1 --single-transaction -f /bootstrap/000-bootstrap-v2.sql
+          # Seed one historic-style task before v3 to prove this migration preserves it.
+          docker exec hic-native-ledger-test psql -U hic -d hic \
+            -v ON_ERROR_STOP=1 \
+            -c "insert into tasks(id,title,description,status,attempt_count,created_at_utc,updated_at_utc) values ('00000000-0000-4000-8000-000000000999','pre-v3 synthetic task','CI only','Completed',0,now(),now());"
+          docker exec hic-native-ledger-test psql -U hic -d hic \
+            -v ON_ERROR_STOP=1 --single-transaction \
+            -f /control-plane-migrations/003-native-run-approval-ledger.sql
+          docker exec hic-native-ledger-test psql -U hic -d hic \
+            -v ON_ERROR_STOP=1 --single-transaction -f /test-sql/native-run-ledger-v3-ci.sql
+          # Applying a schema migration twice must fail without deleting tasks, grants, claims or audit.
+          if docker exec hic-native-ledger-test psql -U hic -d hic \
+              -v ON_ERROR_STOP=1 --single-transaction \
+              -f /control-plane-migrations/003-native-run-approval-ledger.sql \
+              >/tmp/hic-v3-reapply.log 2>&1; then
+            echo 'Unsafe: ledger v3 migration re-applied to an existing DB'
+            exit 1
+          fi
+          count="$(docker exec hic-native-ledger-test psql -U hic -d hic -tAc 'select count(*) from native_run_claims;')"
+          if [ "$count" != "1" ]; then
+            echo 'Replay/migration safety failure: durable claim count changed'
+            exit 1
+          fi
+          preserved="$(docker exec hic-native-ledger-test psql -U hic -d hic -tAc "select count(*) from tasks where id='00000000-0000-4000-8000-000000000999' and title='pre-v3 synthetic task' and status='Completed' and native_run_revision=1;")"
+          if [ "$preserved" != "1" ]; then
+            echo 'Existing pre-v3 task was not preserved intact'
+            exit 1
+          fi
+          echo 'PASS: pre-v3 task preserved; manual v3 single-run claim, audit, replay/stale/expiry/revocation tested.'
+      - name: Always remove disposable CI container
+        if: always()
+        shell: bash
+        run: docker rm -f hic-native-ledger-test >/dev/null 2>&1 || true
