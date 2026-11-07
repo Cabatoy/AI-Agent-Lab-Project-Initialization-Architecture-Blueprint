@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type Health, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
+import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { Status } from './components';
 
 type Page = 'Command Center' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
@@ -134,6 +135,7 @@ export default function App() {
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
+      {page === 'Command Center' && <NativeWorkspacePanel />}
       {page === 'Command Center' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Recent tasks</h2></div>
         <button className="text-button" onClick={() => navigate('Tasks')}>View all →</button></div>
         <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>}

@@ -5,7 +5,7 @@ import { api, ApiError } from './api';
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn() } };
+  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn(), inspectNativeWorkspace: vi.fn() } };
 });
 const item = {
   id: '01234567-89ab-cdef-0123-456789abcdef', title: 'Actual task', description: 'Actual description',
@@ -105,6 +105,35 @@ describe('local diagnostics', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run local diagnostics' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Local diagnostics unavailable.');
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('native host workspace action', () => {
+  it('runs only after a click and never creates or approves a Control Plane task', async () => {
+    vi.mocked(api.inspectNativeWorkspace).mockResolvedValue({
+      action: 'workspace.inspect', runId: '01234567-89ab-cdef-0123-456789abcdef',
+      checkedAtUtc: '2026-11-07T00:00:00Z',
+      workspaceAvailable: true, gitCheckoutFound: true, solutionFound: true,
+    });
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    expect(api.inspectNativeWorkspace).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect local workspace' }));
+    expect(await screen.findByText(/Native action completed/)).toBeInTheDocument();
+    expect(api.inspectNativeWorkspace).toHaveBeenCalledTimes(1);
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
+
+  it('does not fake a successful native action when the host is unavailable', async () => {
+    vi.mocked(api.inspectNativeWorkspace).mockRejectedValue(new Error('offline'));
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect local workspace' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Native host is unavailable.');
     expect(api.createTask).not.toHaveBeenCalled();
   });
 });

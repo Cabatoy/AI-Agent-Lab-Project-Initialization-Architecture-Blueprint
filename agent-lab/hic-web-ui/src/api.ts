@@ -2,6 +2,15 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, type CreateTaskInpu
 
 export type { CreateTaskInput } from './limits';
 export interface Health { status: string; service: string }
+export interface NativeWorkspaceInspection {
+  action: 'workspace.inspect';
+  runId: string;
+  checkedAtUtc: string;
+  workspaceAvailable: boolean;
+  gitCheckoutFound: boolean;
+  solutionFound: boolean;
+}
+
 export interface LocalDiagnosticSnapshot {
   action: 'system.health';
   checkedAtUtc: string;
@@ -38,6 +47,10 @@ const str = (v: unknown): v is string => typeof v === 'string';
 const nullable = (v: unknown): v is string | null => v === null || str(v);
 const date = (v: unknown): v is string => str(v) && !Number.isNaN(Date.parse(v));
 const guid = (v: unknown): v is string => str(v) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const nativeWorkspace: Guard<NativeWorkspaceInspection> = (v): v is NativeWorkspaceInspection =>
+  object(v) && v.action === 'workspace.inspect' && guid(v.runId) && date(v.checkedAtUtc) &&
+  typeof v.workspaceAvailable === 'boolean' && typeof v.gitCheckoutFound === 'boolean' &&
+  typeof v.solutionFound === 'boolean';
 const health: Guard<Health> = (v): v is Health => object(v) && str(v.status) && str(v.service);
 const localDiagnostics: Guard<LocalDiagnosticSnapshot> = (v): v is LocalDiagnosticSnapshot =>
   object(v) && v.action === 'system.health' && date(v.checkedAtUtc) &&
@@ -157,7 +170,31 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
   }
 }
 
+async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspaceInspection> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let response: Response;
+    try {
+      response = await fetch('/api/native/actions', {
+        method: 'POST', signal: controller.signal, cache: 'no-store', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-HIC-Request': 'native-action' },
+        body: JSON.stringify({ action: 'workspace.inspect' }),
+      });
+    } catch {
+      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network', 'Native host is unavailable.');
+    }
+    if (!response.ok) throw new ApiError('http', 'Native host rejected the read-only action.', response.status);
+    let body: unknown;
+    try { body = await response.json(); }
+    catch { throw new ApiError('invalid', 'Native host response was not valid JSON.'); }
+    if (!nativeWorkspace(body)) throw new ApiError('invalid', 'Native host response did not match the expected contract.');
+    return body;
+  } finally { clearTimeout(timer); }
+}
+
 export const api = {
+  inspectNativeWorkspace,
   health: () => get('/health', health),
   localDiagnostics: () => get('/diagnostics/local', localDiagnostics),
   tasks: () => get('/tasks', list(task)),
