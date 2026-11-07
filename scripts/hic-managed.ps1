@@ -48,6 +48,10 @@ function Start-HicPinnedPodmanMachine {
         return [pscustomobject]@{ outcome='skipped'; reason='No existing managed profile to resume; Podman machine not started.' }
     }
     $manifest = Get-Content -LiteralPath $Paths.manifest -Raw | ConvertFrom-Json
+    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $Paths.credentials).Hash.ToLowerInvariant()
+    if ($manifest.credentialsSha256 -cne $digest -or $digest -cnotmatch '^[0-9a-f]{64}$') {
+        return [pscustomobject]@{ outcome='skipped'; reason='Stored managed credentials digest does not verify; Podman machine was not started.' }
+    }
     $machines = @(Get-HicPodmanMachines)
     $decision = Get-HicMachineStartDecision -Manifest $manifest -Machines $machines -CredentialsPresent $true
     if ($decision.action -eq 'skip') {
@@ -136,11 +140,11 @@ function Get-HicManagedContainerRecords {
 function Assert-HicManagedIdentity {
     param([string]$ManifestPath, [string]$CredentialsPath, [int]$ExpectedPort)
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    if ($manifest.version -ne 3 -or $manifest.project -cne 'hic-managed' -or
+    if ($manifest.version -notin @(2, 3) -or $manifest.project -cne 'hic-managed' -or
         $manifest.controlPlanePort -ne $ExpectedPort) {
         throw 'Managed manifest differs from configured runtime. No automatic migration.'
     }
-    if ($manifest.machineName -cne (Get-HicSingleRunningMachineName)) {
+    if ($manifest.version -eq 3 -and $manifest.machineName -cne (Get-HicSingleRunningMachineName)) {
         throw 'Runtime Podman machine differs from the originally pinned HIC machine.'
     }
     $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $CredentialsPath).Hash.ToLowerInvariant()
