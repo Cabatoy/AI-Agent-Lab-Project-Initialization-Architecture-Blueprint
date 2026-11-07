@@ -43,9 +43,9 @@ function Get-HicRecoveryEvidence {
 
     try {
         # Formatting returns the image ID only; never dump inspect JSON, env, volumes or credentials.
-        $imageOutput = & podman inspect --format '{{.Image}}' $containerName 2>$null
-        $imageId = ($imageOutput -join '').Trim()
-        if ($LASTEXITCODE -eq 0 -and $imageId -match '^sha256:[0-9a-fA-F]{64}$') {
+        $imageProbe = Invoke-HicBoundedPodman -Arguments @('inspect','--format','{{.Image}}',$containerName) -TimeoutMs 3500
+        $imageId = ($imageProbe.Lines -join '').Trim()
+        if ($imageProbe.Success -and $imageId -match '^sha256:[0-9a-fA-F]{64}$') {
             $evidence.currentControlPlaneImageId = $imageId
         }
     }
@@ -53,9 +53,9 @@ function Get-HicRecoveryEvidence {
 
     try {
         # Inspect only the expected container-internal port; never expose raw host addresses.
-        $ports = @(& podman port $containerName 8080/tcp 2>$null)
-        if ($LASTEXITCODE -eq 0) {
-            $evidence.controlPlanePortExposure = Get-HicPortExposure $ports
+        $portProbe = Invoke-HicBoundedPodman -Arguments @('port',$containerName,'8080/tcp') -TimeoutMs 3500
+        if ($portProbe.Success) {
+            $evidence.controlPlanePortExposure = Get-HicPortExposure $portProbe.Lines
         }
     }
     catch { }

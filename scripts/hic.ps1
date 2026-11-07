@@ -16,6 +16,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-ports.ps1')
 . (Join-Path $PSScriptRoot 'hic-decisions.ps1')
 . (Join-Path $PSScriptRoot 'hic-recovery.ps1')
+. (Join-Path $PSScriptRoot 'hic-process.ps1')
 . (Join-Path $PSScriptRoot 'hic-managed.ps1')
 $ports = Get-HicPorts
 
@@ -55,9 +56,10 @@ function Get-LoopbackPortState {
 function Get-ContainerReadOnlyState {
     param([string]$ContainerName)
     try {
-        $output = & podman inspect --format '{{.State.Status}}' $ContainerName 2>$null
-        if ($LASTEXITCODE -ne 0) { return 'not-found' }
-        $state = ($output -join '').Trim().ToLowerInvariant()
+        $probe = Invoke-HicBoundedPodman -Arguments @('inspect', '--format', '{{.State.Status}}', $ContainerName) -TimeoutMs 2500
+        if ($probe.TimedOut) { return 'unknown' }
+        if (-not $probe.Success) { return 'not-found' }
+        $state = ($probe.Lines -join '').Trim().ToLowerInvariant()
         if ($state -in @('running', 'paused', 'created', 'exited', 'stopped', 'dead')) { return $state }
     }
     catch { }
@@ -73,12 +75,16 @@ function Get-PodmanReadOnlyStatus {
         postgresContainer = 'unknown'
         redisContainer = 'unknown'
     }
-    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) { return $result }
+    if (-not (Get-Command podman.exe -ErrorAction SilentlyContinue)) { return $result }
 
     try {
-        $raw = & podman machine list --format json 2>$null
-        if ($LASTEXITCODE -ne 0) { return $result }
-        $machines = @(($raw -join [Environment]::NewLine) | ConvertFrom-Json)
+        $probe = Invoke-HicBoundedPodman -Arguments @('machine', 'list', '--format', 'json') -TimeoutMs 5000
+        if ($probe.TimedOut) {
+            $result.machine = 'unresponsive'
+            return $result
+        }
+        if (-not $probe.Success) { return $result }
+        $machines = @(($probe.Lines -join [Environment]::NewLine) | ConvertFrom-Json)
         $running = @($machines | Where-Object { $_.Running -eq $true })
         $result.machine = if ($running.Count -gt 0) { 'running' } else { 'stopped' }
         if ($running.Count -eq 0) { return $result }
@@ -205,6 +211,9 @@ function Get-DoctorFindings {
         elseif ($State.controlPlaneContainer -eq 'exited') {
             $messages.Add('Control Plane container exited: inspect logs, backup and rollback image before proposing a restart.')
         }
+    }
+    if ($State.podmanMachine -eq 'unresponsive') {
+        $messages.Add('WSL/Podman machine inventory exceeded the 5-second probe timeout; no automatic global WSL shutdown or VM reset.')
     }
     if ($State.podmanMachine -eq 'stopped') {
         $messages.Add('Podman machine is stopped. Launcher never starts the Podman machine automatically.')
