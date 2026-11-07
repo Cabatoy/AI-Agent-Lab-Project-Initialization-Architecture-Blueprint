@@ -8,10 +8,10 @@
 
 - Kanonik kaynaklar `src/ControlPlane`, `src/AgentWorker`, `src/NativeHost`, `src/WebUI` ve `src/AgentBridge` altındadır. Testler `tests/`, dağıtım tanımları `deploy/`, araçlar `tools/`, komutlar `scripts/` altındadır; çözüm dosyası kökte `HumanInControl.sln` adını taşır.
 - PR #36 refactor commit'i `759ae099742c1705c8a5c211b6d0ed6baaa9c903`, güncel `origin/develop` merge commit'i ise `92488229c813aac9c8c9ac77c452546e08362adb` içindedir.
-- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiş ve push edilmiştir. PR #38 açık olup yedi commit `origin/develop` üzerinde değildir ve review için korunmaktadır.
+- Provider dalı `feature/hic-provider-config-diagnostics`, beş özgün commit korunarak `origin/develop` üzerine rebase edilmiş ve push edilmiştir. PR #38 açıktır; güncel provider ve handoff değişiklikleri `origin/develop` üzerinde değildir ve review için korunmaktadır.
 - Ana checkout temiz `develop` dalındadır: `92488229c813aac9c8c9ac77c452546e08362adb`, `origin/develop` ile aynıdır. Yerel `main` fast-forward edilerek `eceead60fb04f41d146d02a532ae5d5d6d71e6e3` / `origin/main` ile eşitlendi.
 - Provider, AgentBridge, Command Center, Web UI, refactor ve üç detached worktree korundu. AgentBridge worktree'sindeki `handoffs/` untracked dosyaları ile diğer worktree'lerdeki ignored yerel çıktılar bulunduğundan hiçbir worktree silinmedi.
-- PR #36 ve #37 doğrulanmış merge commit'leriyle remote geçmişindedir. Provider dalı, #36'nın eski tabanını tekrarlamadan güncel `develop` için ayrı PR'a hazırlanmıştır.
+- PR #36 ve #37 doğrulanmış merge commit'leriyle remote geçmişindedir. PR #38 güncel `develop` tabanını kullanır ve #36'nın eski diff'ini tekrarlamaz.
 
 ## Provider diagnostics
 
