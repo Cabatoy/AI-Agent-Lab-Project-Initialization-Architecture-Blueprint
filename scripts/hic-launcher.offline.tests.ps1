@@ -238,3 +238,18 @@ if ((Get-HicMachineStartDecision -Manifest $pinned -Machines $single -Credential
     throw 'Old/unsupported manifest version must block cold-start.'
 }
 Write-Host 'HIC pinned Podman machine cold-start policy: PASS'
+
+
+# Regression: the user had a healthy HIC Native Host/UI, but "podman machine list"
+# hung in an unresponsive WSL VM before the launcher could reuse that session.
+# Verify the fast-path is reached before the Podman-using Get-HicStatus call.
+$launcherScript = Get-Content -Raw (Join-Path $PSScriptRoot 'hic.ps1')
+$fastPath = $launcherScript.IndexOf('$quickDecision = Get-HicStartupDecision $quickState')
+$podmanStatusCall = $launcherScript.IndexOf('$status = Get-HicStatus')
+if ($fastPath -lt 0 -or $podmanStatusCall -lt 0 -or $fastPath -ge $podmanStatusCall) {
+    throw 'Pre-existing native session fast path must run before Podman status resolution.'
+}
+if ($launcherScript -notmatch "Skipping Podman/WSL inspection") {
+    throw 'The fast path must explain when it skips WSL/Podman probing.'
+}
+Write-Host 'WSL frozen / existing HIC session fast-path ordering: PASS'

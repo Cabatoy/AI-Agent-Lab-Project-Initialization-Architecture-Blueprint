@@ -159,6 +159,38 @@ function Get-HicStatus {
     }
 }
 
+# Fast path MUST run before any Podman machine query. A frozen WSL subsystem
+# must not hide an already healthy Native Host + Web UI session.
+# This path NEVER starts or changes a service, container or Worker.
+if ($Action -eq 'up') {
+    $nativeReady = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
+    $uiReady = Test-HicWebUI $ports.WebUI
+    $legacyNativeReady = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
+    $legacyUiReady = Test-HicWebUI 5180
+    $quickState = [ordered]@{
+        nativeHost = if ($nativeReady) { 'ready' } else { 'unavailable' }
+        webUI = if ($uiReady) { 'ready' } else { 'unavailable' }
+        legacyNative = $legacyNativeReady
+        legacyWebUI = $legacyUiReady
+        nativePortState = Get-LoopbackPortState $ports.NativeHost
+        webUIPortState = Get-LoopbackPortState $ports.WebUI
+    }
+    $quickDecision = Get-HicStartupDecision $quickState
+    if ($quickDecision.action -eq 'reuse') {
+        Write-Host 'HIC native session is already running. Skipping Podman/WSL inspection.'
+        Write-Host "Open http://127.0.0.1:$($ports.WebUI)"
+        exit 0
+    }
+    if ($quickDecision.action -eq 'reuse-legacy') {
+        Write-Host 'Existing 5248/5180 HIC preview is healthy. Skipping Podman/WSL inspection.'
+        Write-Host 'Open http://127.0.0.1:5180. Control Plane health is not verified by this fast path.'
+        exit 0
+    }
+    if ($quickDecision.action -eq 'blocked') {
+        throw $quickDecision.reason
+    }
+}
+
 $status = Get-HicStatus
 $decision = Get-HicStartupDecision $status
 

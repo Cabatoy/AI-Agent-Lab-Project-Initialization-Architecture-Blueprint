@@ -31,3 +31,8 @@ Next milestone for **existing R2 environments**: explicitly approved rollback-sa
 ## Single-command managed mode
 
 For a clean Windows + Podman installation with an already running Podman machine, 'hic.cmd up' initializes an isolated database/cache/Control Plane and starts Native Host/UI. On later cold boots it may start only the uniquely pinned managed Podman machine with disabled user-mode networking; subsequent launches resume only previously registered managed containers after identity, image, volume mount and port checks. Existing legacy installations stay on native-only degraded mode if their Control Plane is down. For details see MANAGED_STACK.md.
+
+
+## Frozen WSL fast-path (existing native session)
+
+`hic.cmd up` now checks for a **verified existing Native Host + Web UI pair** on configured (19481/19482) or legacy (5248/5180) ports **before calling Podman**. If both endpoints match HIC identity, it prints the existing UI address and returns without any WSL or container query. A partial or unexpected port occupant remains a blocker. This keeps an existing read-only HIC preview accessible when `wsl -l` and `podman machine list` hang after sleep. It does not restore PostgreSQL/Redis or Control Plane, and `hic.cmd status`, `hic.cmd doctor` and `recovery-plan` still use Podman inspections that may hang on a broken WSL instance; a separate bounded diagnostics change is required. No WSL restart is authorized by this code.
