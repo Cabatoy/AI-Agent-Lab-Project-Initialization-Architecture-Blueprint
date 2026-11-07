@@ -9,8 +9,8 @@ kanıtı ve sınırları için bu bağlantıyı esas alın. Bu not yeni runtime 
 
 ## Depoyu İndirme
 
-1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `AI-Agent-Lab.sln` dosyasını açın.
-2. `AI-Agent-Lab.sln`, Control Plane API, Agent Worker, `run.me` console ve iki test projesi olmak üzere beş .NET projesini içerir. Solution Explorer'dan çalışacağınız projeyi seçin; `dotnet build AI-Agent-Lab.sln` tüm .NET projelerini derler.
+1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın.
+2. `HumanInControl.sln`, Control Plane API, Agent Worker, `run.me` console ve iki test projesi olmak üzere beş .NET projesini içerir. Solution Explorer'dan çalışacağınız projeyi seçin; `dotnet build HumanInControl.sln` tüm .NET projelerini derler.
 3. Önce `.github/copilot-instructions.md`, bu handoff dosyası, `README.md`, karar/açık-soru/yol-haritası belgeleri ve kaynak proje yapısını salt okunur kontrol edin. `bin/` ve `obj/` çıktıları kaynak incelemesine dahil değildir.
 4. Copilot talimatı VS Code'da repo ayarı olarak yüklenir. Visual Studio'da otomatik yükleme sürüme göre değişebileceği için Copilot Chat'ten talimat dosyasını açıkça okumasını isteyin.
 5. Podman Desktop/Compose veya .NET 10 SDK kurulumu gerekiyorsa önce gereksinimleri konuşun. Podman kontrolü ve başlatma adımları birbirinden ayrıdır; [local onboarding](local-onboarding.md) içindeki onay kapılarını izleyin.
@@ -26,7 +26,7 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 ## Doğrulanmış Durum
 
 - Repo, mimari belgeler ve Podman Compose ile çalışan local prototip içeriyor; AWS provisioning veya production deployment yapılmadı.
-- Repo kökündeki [AI-Agent-Lab.sln](../AI-Agent-Lab.sln) beş .NET projesini bir araya getiriyor: `ControlPlane.Api`, `AgentWorker`, `RunMe`, `ControlPlane.Api.Tests`, `AgentWorker.Tests`.
+- Repo kökündeki [HumanInControl.sln](../HumanInControl.sln) beş .NET projesini bir araya getiriyor: `ControlPlane.Api`, `AgentWorker`, `RunMe`, `ControlPlane.Api.Tests`, `AgentWorker.Tests`.
 - .NET 10 migration tamamlandı ve `feature/dotnet10-migration` dalında `699bd116bf49cbef0e8ac97d791f1b02b4c51305` (`build: migrate AI Agent Lab to .NET 10 LTS`) commit'i ile kaydedildi. Beş proje `net10.0` hedefliyor; API/Worker Dockerfile SDK/runtime image'ları 10.0 kullanıyor. Migration doğrulamasında restore, build, 23/23 test ve API/Worker/RunMe Release publish geçti; belge güncellemesinde yeniden çalıştırılmadı.
 - Local stack Control Plane API, Agent Worker, PostgreSQL ve Redis servislerinden oluşuyor.
 - `run.me` ve `run.me.ps1` önce dosya denetimini, sonra handoff'tan sohbeti sürdürmeyi yönlendiriyor; bu iki adımda Chat mesajı göstermekten öte bir şey yapmıyor. `approve-podman` onayından sonra salt okunur Podman durum kontrolünü (`podman --version`, `podman machine list`, `podman compose version`, `podman compose ps`) kendisi çalıştırıyor; sorun bulunursa ve kullanıcı `approve-setup` ile açıkça onaylarsa `scripts/local.ps1`/`scripts/local.sh new-build` komutunu kendisi başlatıyor. Chat mesajlarını `tools/run-me/prompts.tr.json` dosyasında `repo review`, `handoff check`, `podman check`, `setup repair` komutlarıyla veya doğrudan `step <n>` ile de gösterebilir.
