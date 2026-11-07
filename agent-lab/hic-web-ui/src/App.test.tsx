@@ -133,7 +133,7 @@ describe('native host workspace action', () => {
     await screen.findByText('Connected');
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     fireEvent.click(screen.getByRole('button', { name: 'Inspect local workspace' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Native host is unavailable.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Native host is unavailable or rejected the request.');
     expect(api.createTask).not.toHaveBeenCalled();
   });
 });
