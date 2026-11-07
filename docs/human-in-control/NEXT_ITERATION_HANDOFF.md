@@ -63,10 +63,10 @@ During overlapping solution and standalone AgentBridge test runs, one standalone
 - [PR #36](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/36) is still open and draft, targeting `develop` at `608eae91aa73d5782e74c72cdf8b78bbc6402c9d`. It has 12 successful checks and four intentionally skipped v3 jobs; there are no human reviews. The skipped jobs are not passing v3 tests.
 - [PR #37](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/37) is still open and draft, targeting `main` at `b767a27059a709b8a54fcadd83ee240dfdb89810`. Only GitGuardian has run; release checks and human review are absent. `develop` is 110 commits ahead of `main`.
 - Neither PR was merged. Branch-protection requirements remain unverified; the prior API lookup returned 404.
-- Deleted 22 remote branches only after confirming each tip was an ancestor of `origin/develop`, no corresponding local branch/worktree existed, no open PR used it, and the live remote SHA matched. Their commits remain reachable from `develop`.
+- The 22 candidate remote branches were temporarily deleted, then restored at their exact original SHAs after re-reading PR #37's documented post-promotion pruning gate. All tips remain ancestors of `origin/develop`, with no local/worktree binding or open PR; defer pruning until that gate is satisfied. No commits were lost.
 - Preserved active worktree branches, `pbi/newSetup`, the `copilot/` branch, local-only `feature/hic-foundation`, the unbound `feature/dotnet10-migration` local/remote ref, the v3-named branch, and both PR head branches. No local branch was deleted.
 
-Deleted remote branch names:
+Cleanup candidates retained pending PR #37 promotion:
 
 ```text
 feat/hic-asymmetric-approval-receipt-v2
@@ -103,4 +103,4 @@ test/hic-native-runtime-safety-gates
 
 ## English continuation prompt
 
-> Continue from `C:\Enterprise\.local\worktrees\hic-dx-provider-config` and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md` first. Recheck status, worktrees, PRs, and runtime rather than assuming this handoff is still current. Do not modify `C:\Enterprise2`, the active `C:\Enterprise` checkout, or unrelated worktrees. Keep the Worker stopped and task execution disabled. Never run, apply, enable, or route CI to PostgreSQL schema v3; preserve production and existing databases. PR #36 and #37 are drafts without human reviews; do not merge. The provider diagnostics commit is local-only because its base contains PR #36's refactor. Wait for human review and PR #36 integration before creating a focused PR from updated `develop`. Make no new architecture or provider decisions without explicit approval.
+> Continue from `C:\Enterprise\.local\worktrees\hic-dx-provider-config` and read `docs/human-in-control/NEXT_ITERATION_HANDOFF.md` first. Recheck status, worktrees, PRs, and runtime rather than assuming this handoff is still current. Do not modify `C:\Enterprise2`, the active `C:\Enterprise` checkout, or unrelated worktrees. Keep the Worker stopped and task execution disabled. Never run, apply, enable, or route CI to PostgreSQL schema v3; preserve production and existing databases. PR #36 and #37 are drafts without human reviews; do not merge. The provider diagnostics commit is local-only because its base contains PR #36's refactor. Wait for human review and PR #36 integration before creating a focused PR from updated `develop`. Keep the 22 verified remote branch refs until PR #37's documented post-promotion cleanup gate is met. Make no new architecture or provider decisions without explicit approval.
