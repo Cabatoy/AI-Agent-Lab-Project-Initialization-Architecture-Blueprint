@@ -17,6 +17,7 @@ on:
       - 'scripts/hic-recovery.ps1'
       - 'scripts/hic-managed.ps1'
       - 'scripts/hic-managed-policy.ps1'
+      - 'scripts/hic-machine.ps1'
       - 'deploy/hic-managed/**'
       - 'scripts/hic-ports.ps1'
       - 'agent-lab/hic-web-ui/vite.port.ts'
