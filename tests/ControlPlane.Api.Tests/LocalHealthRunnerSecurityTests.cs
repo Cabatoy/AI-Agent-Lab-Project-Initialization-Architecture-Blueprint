@@ -1,10 +1,83 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Dapper;
+using Npgsql;
 
 namespace ControlPlane.Api.Tests;
 
 public sealed class LocalHealthRunnerSecurityTests
 {
+    [PostgresFact]
+    public async Task DurableApproval_ActorIsolationSingleClaimAndReplayRejection()
+    {
+        await WithHealthDatabase(async (store, db, id) =>
+        {
+            var actor = Guid.NewGuid();
+            var intent = await store.GetIntentAsync(id, CancellationToken.None);
+            Assert.NotNull(intent);
+            var approval = await store.ApproveAsync(id, actor, intent.IntentDigestSha256, CancellationToken.None);
+            Assert.Equal("accepted", approval.Code);
+            var run = approval.Run!;
+            Assert.Equal("replay", (await store.ApproveAsync(id, actor, intent.IntentDigestSha256, CancellationToken.None)).Code);
+            Assert.Null(await store.GetAsync(run.RunId, Guid.NewGuid(), CancellationToken.None));
+            Assert.Equal("actor-mismatch", (await store.ClaimAsync(run.RunId, Guid.NewGuid(), CancellationToken.None)).Code);
+            var claims = await Task.WhenAll(
+                store.ClaimAsync(run.RunId, actor, CancellationToken.None),
+                store.ClaimAsync(run.RunId, actor, CancellationToken.None));
+            Assert.Single(claims, claim => claim.Code == "claimed");
+            Assert.Single(claims, claim => claim.Code == "not-queued");
+            var result = new LocalDiagnosticSnapshot("system.health", DateTime.UtcNow, "ok", "ok", "ok", "not-checked");
+            Assert.True(await store.CompleteAsync(run.RunId, actor, result, CancellationToken.None));
+            var snapshot = await store.GetAsync(run.RunId, actor, CancellationToken.None);
+            Assert.Equal("completed", snapshot!.Run.Status);
+            using var persisted = JsonDocument.Parse(snapshot.Run.ResultJson!);
+            Assert.Equal("ok", persisted.RootElement.GetProperty("postgres").GetString());
+            Assert.Equal("not-queued", (await store.ClaimAsync(run.RunId, actor, CancellationToken.None)).Code);
+            Assert.Equal(1, await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit where event_code='claimed'"));
+            Assert.Equal("Draft", await db.ExecuteScalarAsync<string>("select status from tasks where id=@id", new { id }));
+        });
+    }
+
+    [PostgresFact]
+    public async Task ChangedTaskInvalidatesApproval_AndAuditFailureRollsBackClaim()
+    {
+        await WithHealthDatabase(async (store, db, id) =>
+        {
+            var actor = Guid.NewGuid();
+            var intent = await store.GetIntentAsync(id, CancellationToken.None);
+            var approval = await store.ApproveAsync(id, actor, intent!.IntentDigestSha256, CancellationToken.None);
+            var run = approval.Run!;
+            await db.ExecuteAsync("alter table native_health_run_audit add constraint reject_claim check(event_code <> 'claimed')");
+            await Assert.ThrowsAsync<PostgresException>(() => store.ClaimAsync(run.RunId, actor, CancellationToken.None));
+            Assert.Equal("queued", (await store.GetAsync(run.RunId, actor, CancellationToken.None))!.Run.Status);
+            await db.ExecuteAsync("alter table native_health_run_audit drop constraint reject_claim; update tasks set description='Changed' where id=@id", new { id });
+            Assert.Equal("task-changed", (await store.ClaimAsync(run.RunId, actor, CancellationToken.None)).Code);
+            Assert.Equal("invalidated", (await store.GetAsync(run.RunId, actor, CancellationToken.None))!.Run.Status);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit where event_code='claimed'"));
+        });
+    }
+
+    private static Task WithHealthDatabase(Func<LocalHealthRunStore, NpgsqlConnection, Guid, Task> test) =>
+        TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "HumanInControl.sln"))) root = root.Parent;
+            Assert.NotNull(root);
+            await using (var setup = await db.BeginTransactionAsync())
+            {
+                await db.ExecuteAsync("alter table tasks add column title text not null default 'Health', add column description text not null default 'Fixture'; update tasks set status='Draft';", transaction: setup);
+                await db.ExecuteAsync(File.ReadAllText(Path.Combine(root.FullName, "src", "ControlPlane",
+                    "Migrations", "004-local-health-runner.sql")), transaction: setup);
+                await setup.CommitAsync();
+            }
+            try { await test(new LocalHealthRunStore(cs), db, id); }
+            finally
+            {
+                // The outer fixture guards the dedicated database and unique schema identity.
+                await db.ExecuteAsync("drop table native_health_run_audit restrict; drop table native_health_runs restrict; drop function hic_reject_native_health_audit_mutation() restrict;");
+            }
+        });
+
     [Fact]
     public void PersistedHealthResult_UsesTheWebUiJsonContract()
     {

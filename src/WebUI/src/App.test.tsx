@@ -75,6 +75,15 @@ describe('dashboard', () => {
     expect(api.createTask).not.toHaveBeenCalled();
     expect(api.localDiagnostics).not.toHaveBeenCalled();
   });
+  it('opens the human-controlled local planning workflow', async () => {
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Planning' }));
+    expect(screen.getByRole('heading', { name: 'Prepare a task plan' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discover configured repository' })).toBeInTheDocument();
+    expect(api.inspectNativeWorkspace).not.toHaveBeenCalled();
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
   it('retains the last successful refresh time when a later refresh fails', async () => {
     render(<App />);
     await screen.findByText('Connected');

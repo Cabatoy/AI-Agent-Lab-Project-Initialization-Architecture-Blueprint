@@ -230,6 +230,64 @@ public class ExecutionSafetyTests
         });
     }
 
+    [Fact]
+    public async Task ProviderFailure_IsRedactedFromTaskHistoryAndDeadLetter()
+    {
+        const string sentinel = "provider-secret-response-and-token";
+        const string safeError = "Provider request failed.";
+        var id = Guid.NewGuid();
+        WorkerExecutionIdentity? identity = null;
+        JsonDocument? finalStatusBody = null;
+
+        using var http = Client(async (request, token) =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return Json(new { id, title = "test", description = "test", status = "Approved" });
+
+            if (request.RequestUri!.AbsolutePath.EndsWith("/executions/claim"))
+            {
+                var response = await ClaimResponse(request, id, token);
+                var ack = JsonSerializer.Deserialize<ClaimAcknowledgement>(
+                    await response.Content.ReadAsStringAsync(token),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                identity = new(ack!.ExecutionId, ack.WorkerId, ack.Generation);
+                return response;
+            }
+
+            finalStatusBody?.Dispose();
+            finalStatusBody = JsonDocument.Parse(
+                await request.Content!.ReadAsStringAsync(token));
+            var status = finalStatusBody.RootElement.GetProperty("status").GetString()!;
+            return Json(new { id, status, execution = identity });
+        });
+
+        var worker = new Worker(NullLogger<Worker>.Instance, new ProviderFailureModel(sentinel));
+        try
+        {
+            var deadLetter = await worker.ProcessTaskAsync(http, id, CancellationToken.None);
+
+            Assert.NotNull(finalStatusBody);
+            Assert.Equal(safeError, finalStatusBody.RootElement.GetProperty("errorMessage").GetString());
+            Assert.Equal("Failed", finalStatusBody.RootElement.GetProperty("status").GetString());
+            Assert.NotNull(deadLetter);
+            Assert.Equal(id, deadLetter.TaskId);
+            Assert.Equal("model-permanent-failure", deadLetter.Reason);
+            Assert.Equal(safeError, deadLetter.ErrorMessage);
+            Assert.DoesNotContain(sentinel, finalStatusBody.RootElement.GetRawText());
+            Assert.DoesNotContain(sentinel, deadLetter.ErrorMessage);
+        }
+        finally
+        {
+            finalStatusBody?.Dispose();
+        }
+    }
+
+    private sealed class ProviderFailureModel(string error) : IModelClient
+    {
+        public Task<ModelResult> GenerateAsync(string prompt, CancellationToken cancellationToken) =>
+            Task.FromResult(ModelResult.Fail(error));
+    }
+
     private static HttpClient Client(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) =>
         new(new Handler(send));
 
