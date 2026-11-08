@@ -155,7 +155,11 @@ internal sealed class LocalOperatorSessions
 
 internal sealed class LocalHealthRunStore(string postgresConnectionString)
 {
+    private static readonly JsonSerializerOptions ResultJsonOptions = new(JsonSerializerDefaults.Web);
     private sealed record TaskIntentSource(Guid Id, string Title, string Description, string Status, DateTime UpdatedAtUtc);
+
+    internal static string SerializeResult(LocalDiagnosticSnapshot result) =>
+        JsonSerializer.Serialize(result, ResultJsonOptions);
 
     internal async Task<bool> IsSchemaReadyAsync(CancellationToken cancellationToken)
     {
@@ -265,7 +269,12 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             new { runId }, transaction, cancellationToken: cancellationToken));
         if (run is null) return new("not-found");
         if (run.ActorId != actorId) return new("actor-mismatch");
-        if (run.Status != "queued") return new("not-queued", run);
+        if (run.Status != "queued")
+        {
+            await InsertEventAsync(connection, transaction, runId, actorId, "rejected", cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new("not-queued", run);
+        }
 
         var task = await ReadTaskAsync(connection, transaction, run.TaskId, cancellationToken, forUpdate: true);
         var now = DateTime.UtcNow;
@@ -305,7 +314,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
     internal async Task<bool> CompleteAsync(
         Guid runId, Guid actorId, LocalDiagnosticSnapshot result, CancellationToken cancellationToken)
     {
-        var resultJson = JsonSerializer.Serialize(result);
+        var resultJson = SerializeResult(result);
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);

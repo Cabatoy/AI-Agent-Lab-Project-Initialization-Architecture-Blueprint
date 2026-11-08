@@ -1,9 +1,27 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace ControlPlane.Api.Tests;
 
 public sealed class LocalHealthRunnerSecurityTests
 {
+    [Fact]
+    public void PersistedHealthResult_UsesTheWebUiJsonContract()
+    {
+        var result = new LocalDiagnosticSnapshot(
+            "system.health", DateTime.SpecifyKind(new DateTime(2026, 11, 8, 12, 0, 0), DateTimeKind.Utc),
+            "ok", "ok", "unavailable", "not-checked");
+
+        using var document = JsonDocument.Parse(LocalHealthRunStore.SerializeResult(result));
+        var root = document.RootElement;
+        Assert.Equal("system.health", root.GetProperty("action").GetString());
+        Assert.Equal("ok", root.GetProperty("controlPlane").GetString());
+        Assert.Equal("ok", root.GetProperty("postgres").GetString());
+        Assert.Equal("unavailable", root.GetProperty("redis").GetString());
+        Assert.Equal("not-checked", root.GetProperty("worker").GetString());
+        Assert.False(root.TryGetProperty("Action", out _));
+    }
+
     [Fact]
     public void IntentDigest_IsStableAndBindsTaskVersionTextActionAndScope()
     {

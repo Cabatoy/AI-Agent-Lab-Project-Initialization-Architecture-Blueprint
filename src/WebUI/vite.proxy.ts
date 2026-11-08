@@ -147,9 +147,12 @@ async function localRunnerRequest(
   req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string,
   path: string, timeouts: Required<ProxyOptions>,
 ) {
-  if (header(req, 'origin') !== origin) return reject(res, 403, 'Requests must originate from the HIC dashboard.', true);
+  const requestOrigin = header(req, 'origin');
   const site = header(req, 'sec-fetch-site');
   if (site !== undefined && site !== 'same-origin') return reject(res, 403, 'Cross-site requests are not accepted.', true);
+  const sameOriginReadWithoutOrigin = req.method === 'GET' && requestOrigin === undefined && site === 'same-origin';
+  if (!sameOriginReadWithoutOrigin && requestOrigin !== origin)
+    return reject(res, 403, 'Requests must originate from the HIC dashboard.', true);
   if (header(req, 'proxy-authorization') !== undefined ||
       header(req, 'x-hic-request') !== 'local-runner') {
     return reject(res, 403, 'Local runner request was rejected.', true);

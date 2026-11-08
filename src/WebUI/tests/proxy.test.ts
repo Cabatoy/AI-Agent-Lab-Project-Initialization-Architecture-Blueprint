@@ -105,7 +105,7 @@ describe('local development proxy', () => {
     });
     expect(session.status).toBe(201);
     expect((await fetch(`${origin}/api/local-runner/capabilities`, {
-      headers: { origin, 'x-hic-request': 'local-runner', authorization: token, cookie: 'private=1' },
+      headers: { 'sec-fetch-site': 'same-origin', 'x-hic-request': 'local-runner', authorization: token, cookie: 'private=1' },
     })).status).toBe(200);
     const digest = 'a'.repeat(64);
     const approval = await fetch(`${origin}/api/local-runner/tasks/${created.id}/approve`, {
@@ -141,6 +141,12 @@ describe('local development proxy', () => {
       });
       expect(response.status).toBeGreaterThanOrEqual(400);
     }
+    expect(received).toHaveLength(before);
+
+    const missingOrigin = await fetch(`${origin}/api/local-runner/capabilities`, {
+      headers: { 'x-hic-request': 'local-runner', authorization: token },
+    });
+    expect(missingOrigin.status).toBe(403);
     expect(received).toHaveLength(before);
   });
 

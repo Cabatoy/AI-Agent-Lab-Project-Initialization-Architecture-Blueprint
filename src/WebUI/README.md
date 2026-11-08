@@ -90,7 +90,9 @@ byte'ın Base64 değeri olan `HIC_LOCAL_OPERATOR_TOKEN` ve sabit, boş olmayan
 GUID `HIC_LOCAL_OPERATOR_ID` ayrıca yapılandırılmalıdır. Bu token'ı repoya,
 terminal kaydına veya issue'lara yazmayın. Control Plane schema v4'ü otomatik
 uygulamaz; [004-local-health-runner.sql](../../src/ControlPlane/Migrations/004-local-health-runner.sql)
-yalnız açıkça onaylanmış disposable test veritabanında denenebilir. v4 yoksa
+yalnız açıkça onaylanmış disposable test veritabanında ve
+`psql --single-transaction --set ON_ERROR_STOP=1 --file ...` ile atomik olarak
+uygulanmalıdır. v4 yoksa
 session ve runner endpoint'leri fail-closed şekilde kullanılamaz. Çalışan
 Control Plane'i yeniden başlatmak veya herhangi bir mevcut veritabanına
 migration uygulamak için ayrı açık onay gerekir.
@@ -99,7 +101,9 @@ Run onayı task ID, `updated_at_utc` sürümü, `system.health` action'ı,
 `control-plane:health:read` scope'u ve SHA-256 intent hash'ine bağlanır. DB'de
 tek task için tek run, queued -> running claim'i ve append-only audit event'leri
 vardır; tekrar onayı aynı run'ı döndürür ve tekrar çalıştırmaz. Audit, yalnız
-actor/run ID, sabit event kodu ve zaman tutar. Sonuçta yalnız Control Plane,
+actor/run ID, sabit event kodu ve zaman tutar; tamamlanmış veya başka nedenle
+çalıştırılamayan run'ı yeniden çalıştırma girişimi `rejected` event'i ekler.
+Sonuçta yalnız Control Plane,
 PostgreSQL, Redis ve Worker için güvenli durum kategorileri saklanır; ham
 exception, connection string, prompt veya credential tutulmaz. Run sırasında
 Worker kuyruğu kullanılmaz.
