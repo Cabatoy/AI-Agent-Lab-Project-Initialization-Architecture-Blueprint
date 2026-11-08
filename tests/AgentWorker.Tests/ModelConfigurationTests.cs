@@ -185,19 +185,49 @@ public class ModelConfigurationTests
     }
 
     [Fact]
-    public async Task ProviderTransientFallback_RemainsTransientAndSanitized()
+    public async Task ProviderTransientFailure_DoesNotSendPromptToFallbackRoute()
     {
+        var requestCount = 0;
         using var httpClient = new HttpClient(new StubHandler((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
             {
                 Content = new StringContent("sensitive-provider-body")
-            })));
+            });
+        }));
         var client = new PodmanAiLabModelClient(
             new ModelOptions("ollama", "http://127.0.0.1:1234", "test-model", null, 30), httpClient);
         var result = await client.GenerateAsync("sensitive prompt", CancellationToken.None);
         Assert.False(result.Success);
         Assert.True(result.IsTransient);
         Assert.Equal("Provider request failed.", result.ErrorMessage);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task UnsupportedChatRoute_FallsBackToCompletionOnSameProvider()
+    {
+        var routes = new List<string>();
+        using var httpClient = new HttpClient(new StubHandler((request, _) =>
+        {
+            routes.Add(request.RequestUri!.AbsolutePath);
+            var response = request.RequestUri.AbsolutePath == "/v1/chat/completions"
+                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"choices\":[{\"text\":\"local result\"}]}")
+                };
+            return Task.FromResult(response);
+        }));
+        var client = new PodmanAiLabModelClient(
+            new ModelOptions("ollama", "http://127.0.0.1:1234", "test-model", null, 30), httpClient);
+
+        var result = await client.GenerateAsync("safe test prompt", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal("local result", result.Content);
+        Assert.Equal(["/v1/chat/completions", "/v1/completions"], routes);
     }
 
     [Theory]
@@ -206,14 +236,22 @@ public class ModelConfigurationTests
     [InlineData("{\"choices\":[{\"message\":{\"content\":42}}]}")]
     public async Task MalformedSuccessfulResponse_IsSanitized(string body)
     {
+        var requestCount = 0;
         using var httpClient = new HttpClient(new StubHandler((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            });
+        }));
         var client = new PodmanAiLabModelClient(
             new ModelOptions("ollama", "http://127.0.0.1:1234", "test-model", null, 30), httpClient);
         var result = await client.GenerateAsync("sensitive prompt", CancellationToken.None);
         Assert.False(result.Success);
         Assert.False(result.IsTransient);
         Assert.Equal("Provider request failed.", result.ErrorMessage);
+        Assert.Equal(1, requestCount);
     }
 
     [Fact]
@@ -228,7 +266,7 @@ public class ModelConfigurationTests
             var received = new List<string>();
             async Task Respond()
             {
-                for (var i = 0; i < 2; i++)
+                for (var i = 0; i < 1; i++)
                 {
                     using var connection = await listener.AcceptTcpClientAsync(timeout.Token);
                     await using var stream = connection.GetStream();
@@ -248,7 +286,7 @@ public class ModelConfigurationTests
             var result = await client.GenerateAsync("sensitive prompt", timeout.Token);
             await server;
             Assert.False(result.Success);
-            Assert.Equal(2, received.Count);
+            Assert.Single(received);
             Assert.All(received, request => Assert.DoesNotContain("/unapproved", request));
         }
         finally { listener.Stop(); }
