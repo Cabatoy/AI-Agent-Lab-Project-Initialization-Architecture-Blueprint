@@ -85,6 +85,18 @@ tr:last-child td { border-bottom: 0; }
 .planned-icon { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 9px; background: #233453; color: #a9c1ff; font-size: 25px; margin-bottom: 24px; }
 .planned h2 { font-size: 20px; }
 .planned ul { color: #b1c0d2; font-size: 13px; line-height: 2; padding-left: 20px; margin: 20px 0 25px; }
+.planning-workflow { max-width: 980px; }
+.capability-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; border-top: 1px solid #253246; font-size: 12px; }
+.capability-row p { margin: 5px 0 0; }
+.capability-row .status { flex-shrink: 0; }
+.plan-step { display: grid; gap: 6px; padding: 14px 0; border-top: 1px solid #253246; color: #bac8d9; font-size: 12px; }
+.plan-step span { color: #899bb1; }
+.plan-hash { overflow-wrap: anywhere; color: #adc1ee; font-family: ui-monospace, monospace; }
+.warning-badge { border-color: #8a6533; color: #f0c47e; }
+.notice.warning { color: #f0c47e; background: #342b1d; border-radius: 6px; padding: 14px; }
+.approval-block { margin-top: 22px; padding: 17px; border: 1px solid #695332; border-radius: 7px; background: #282319; }
+.approval-block > strong { color: #f0c47e; font-size: 13px; }
+.activity-list { display: grid; gap: 10px; padding-left: 18px; color: #aab9ce; font-size: 11px; }
 footer { color: #677a92; font-size: 9px; letter-spacing: .1em; margin-top: 36px; }
 footer span { margin: 0 6px; }
 .nav-command { color: #dfe8ff; border: 1px solid #2f4268; margin-bottom: 6px; }

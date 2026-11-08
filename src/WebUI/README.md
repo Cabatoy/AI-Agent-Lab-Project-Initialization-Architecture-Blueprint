@@ -5,10 +5,13 @@
 Bu yerel HIC ekranı, mevcut Control Plane'in task ve plan bilgilerini gösterir.
 **Command Center** ekranından doğal dilde iş tanımı yazılarak yalnızca **Draft**
 durumunda task oluşturulabilir; Draft task onaylanmaz, kuyruğa alınmaz, ajan
-veya model çalıştırılmaz. Control Plane tek task/execution otoritesidir; bu
-uygulama ayrı bir task deposu, scheduler veya backend eklemez. Ajan yönetimi,
-provider routing ve onay işlemleri uygulanmamıştır. R3/R4 recovery ve tam P9
-approval workflow hâlâ açıktır.
+veya model çalıştırılmaz. **Planning** ekranı Native Host'un tek yapılandırılmış
+workspace'ini salt okunur kontrol eder ve yalnız tarayıcı belleğinde sürümlü plan
+önizlemesi üretir; bu plan Control Plane'e yazılmaz ve çalıştırılamaz. Control
+Plane tek task/execution otoritesidir; bu uygulama ayrı bir task deposu,
+scheduler veya backend eklemez. Kimliği doğrulanmış plan onayı ve kalıcı audit
+altyapısı mevcut olmadığından onay/ret işlemleri kapalıdır. R3/R4 recovery ve
+tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
 
@@ -98,6 +101,13 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
 
 ### Mevcut ekranlar ve sınırlar
 
+- **Planning:** Native Host'tan yalnızca yapılandırılmış workspace için başarılı
+  read-only Git checkout kontrolü alındıktan sonra bu tek repository seçilebilir.
+  Plan, yerel deterministik bir şablondur; içerik, sürüm ve SHA-256 hash içerir.
+  Provider/Worker durumları için probe yapılmaz; provider'lar doğrulanana kadar
+  hazır sayılmaz. Plan önizleme olayları sadece sayfa belleğinde tutulur; bu
+  güvenilir veya kalıcı audit değildir. Control Plane'de authenticated actor ve
+  hash'e bağlı approval receipt olmadığından Approve devre dışıdır.
 - **Command Center:** Request (zorunlu) ve Title (isteğe bağlı) alanları.
   Title boşsa isteğin ilk dolu satırından en fazla 80 karakterlik başlık
   türetilir. Enter yeni satır ekler; Ctrl+Enter (macOS'ta ⌘+Enter) veya düğme
@@ -115,7 +125,8 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
 - **Plans:** `/plans`; gerçek plan alanları. Plan–task ilişkileri ve dependency
   graph API tarafından sunulmaz.
 - **Agents**, **Models & Providers**, **Approvals:** yalnız gelecek yetenekleri
-  açıklayan placeholder ekranlar; onay/ret düğmesi veya model çağrısı yoktur.
+  açıklayan placeholder ekranlar; plan approval/rejection veya model çağrısı
+  yoktur.
 - Draft task oluşturma dışında task mutasyonu (approve, retry, dispatch),
   LLM çağrısı, GitHub yazma işlemi, secret, token/maliyet ölçümü, otomatik
   execution veya deployment yapılmaz.
