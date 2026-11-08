@@ -5,8 +5,9 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
-  `^/api/local-runner/(?:session|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
+  `^/api/local-runner/(?:${githubPaths}|session|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 const MODEL_UPSTREAM_TIMEOUT_MS = 125000;
@@ -161,12 +162,18 @@ async function localRunnerRequest(
     return reject(res, 403, 'Local runner request was rejected.', true);
   }
   const isSession = path === '/api/local-runner/session';
+  const isGitHubRead = req.method === 'GET' && new RegExp(
+    `^/api/local-runner/github/(?:status|repository|bootstraps|publications/${guidPath})$`, 'i').test(path);
+  const isGitHubApprove = req.method === 'POST' && new RegExp(
+    `^/api/local-runner/github/publications/${guidPath}/approve$`, 'i').test(path);
+  const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
+    `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
   const isRead = req.method === 'GET' &&
-    (/^\/api\/local-runner\/(?:capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (isGitHubRead || /^\/api\/local-runner\/(?:capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
   const isApprove = req.method === 'POST' &&
-    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
+    (isGitHubApprove || /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path));
   const isConversationCreate = req.method === 'POST' && path === '/api/local-runner/conversations';
   const isConversationMessage = req.method === 'POST' &&
     /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages$/i.test(path);
@@ -174,7 +181,7 @@ async function localRunnerRequest(
     /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages\/[0-9a-f-]+\/approve$/i.test(path);
   const isConversationWrite = isConversationCreate || isConversationMessage || isConversationApprove;
   const isExecute = req.method === 'POST' &&
-    /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path);
+    (isGitHubEmptyWrite || /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path));
   if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
@@ -186,7 +193,8 @@ async function localRunnerRequest(
   if (isRead) {
     if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
       return reject(res, 400, 'Read requests must not include a body.', true);
-    forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs, undefined, authorization);
+    forward(req, res, target, 'GET', path.slice(4), isGitHubRead
+      ? timeouts.githubTimeoutMs : timeouts.upstreamTimeoutMs, undefined, authorization);
     return;
   }
 
@@ -197,7 +205,8 @@ async function localRunnerRequest(
       return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
     const received = await readBody(req, timeouts.bodyTimeoutMs);
     if (!received.ok || received.body.length !== 0) return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
-    forward(req, res, target, 'POST', path.slice(4), timeouts.executionTimeoutMs, undefined, authorization);
+    forward(req, res, target, 'POST', path.slice(4), isGitHubEmptyWrite
+      ? timeouts.githubTimeoutMs : timeouts.executionTimeoutMs, undefined, authorization);
     return;
   }
 
@@ -261,7 +270,8 @@ async function localRunnerRequest(
       typeof (parsed as Record<string, unknown>).intentDigestSha256 !== 'string' ||
       !/^[0-9a-f]{64}$/.test((parsed as Record<string, string>).intentDigestSha256))
     return reject(res, 400, 'Invalid approval intent.');
-  forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+  forward(req, res, target, 'POST', path.slice(4), isGitHubApprove
+    ? timeouts.githubTimeoutMs : timeouts.upstreamTimeoutMs,
     JSON.stringify({ intentDigestSha256: (parsed as Record<string, string>).intentDigestSha256 }), authorization);
 }
 
@@ -270,6 +280,7 @@ export interface ProxyOptions {
   bodyTimeoutMs?: number;
   modelTimeoutMs?: number;
   executionTimeoutMs?: number;
+  githubTimeoutMs?: number;
 }
 
 export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugin {
@@ -279,6 +290,7 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
     bodyTimeoutMs: options.bodyTimeoutMs ?? BODY_TIMEOUT_MS,
     modelTimeoutMs: options.modelTimeoutMs ?? MODEL_UPSTREAM_TIMEOUT_MS,
     executionTimeoutMs: options.executionTimeoutMs ?? 115000,
+    githubTimeoutMs: options.githubTimeoutMs ?? 180000,
   };
   return {
     name: 'hic-local-api',

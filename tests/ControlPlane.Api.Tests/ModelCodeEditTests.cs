@@ -88,8 +88,10 @@ public sealed class ModelCodeEditTests
         Assert.Equal("podman-ai-lab", local.Info.Provider);
     }
 
-    [Fact]
-    public async Task IsolatedWorktree_CompilesOnlyTheAuthorizedFileAndPreservesSource()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IsolatedWorktree_CompilesOnlyTheAuthorizedFileAndPreservesSource(bool existingRepository)
     {
         var root = Path.Combine(Path.GetTempPath(), "hic49-" + Guid.NewGuid().ToString("N"));
         var source = Path.Combine(root, "source");
@@ -99,10 +101,12 @@ public sealed class ModelCodeEditTests
         Directory.CreateDirectory(runs);
         try
         {
-            File.WriteAllText(Path.Combine(source, ".hic-disposable"), GitEditExecutor.Marker);
+            File.WriteAllText(Path.Combine(source, existingRepository ? "README.md" : ".hic-disposable"),
+                existingRepository ? "# Existing repository\n" : GitEditExecutor.Marker);
             File.WriteAllText(Path.Combine(source, FilePath.Replace('/', Path.DirectorySeparatorChar)), Source);
             await GitEditExecutor.GitAsync(source, CancellationToken.None, "init", "--initial-branch=main");
-            await GitEditExecutor.GitAsync(source, CancellationToken.None, "add", "--", ".hic-disposable", FilePath);
+            await GitEditExecutor.GitAsync(source, CancellationToken.None, "add", "--",
+                existingRepository ? "README.md" : ".hic-disposable", FilePath);
             await GitEditExecutor.GitAsync(source, CancellationToken.None, "-c", "user.name=HIC Test",
                 "-c", "user.email=hic-test@example.invalid", "commit", "-m", "C# fixture");
             var repo = new GitTestRepository("fixture", source,
@@ -110,7 +114,8 @@ public sealed class ModelCodeEditTests
                 [FilePath]);
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["HIC_DISPOSABLE_GIT_REPOSITORIES"] = JsonSerializer.Serialize(new[] { repo }, GitEditExecutor.JsonOptions),
+                [existingRepository ? "HIC_GITHUB_LOCAL_REPOSITORIES" : "HIC_DISPOSABLE_GIT_REPOSITORIES"] =
+                    JsonSerializer.Serialize(new[] { repo }, GitEditExecutor.JsonOptions),
                 ["HIC_GIT_RUN_ROOT"] = runs
             }).Build();
             var plan = new ModelCodeEditPlan(1, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
@@ -182,6 +187,10 @@ public sealed class ModelCodeEditTests
             Assert.Equal(1, await database.ExecuteScalarAsync<int>(
                 "select count(*)::int from native_health_run_audit where run_id=@runId and event_code='completed'",
                 new { runId = approval.Run.RunId }));
+            Assert.True(await store.ModelRunStillCurrentAsync(approval.Run.RunId, plan, CancellationToken.None));
+            await database.ExecuteAsync("update tasks set updated_at_utc=updated_at_utc+interval '1 second' where id=@taskId",
+                new { taskId });
+            Assert.False(await store.ModelRunStillCurrentAsync(approval.Run.RunId, plan, CancellationToken.None));
             await Assert.ThrowsAsync<PostgresException>(() =>
                 database.ExecuteAsync("update native_health_run_audit set event_code='queued'"));
         });

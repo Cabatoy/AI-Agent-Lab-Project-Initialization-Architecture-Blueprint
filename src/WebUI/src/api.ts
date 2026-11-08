@@ -1,4 +1,5 @@
 import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, type CreateTaskInput, validateCreateTask } from './limits';
+import { publication, type GitHubPublication } from './githubApi';
 
 export type { CreateTaskInput } from './limits';
 export interface Health { status: string; service: string }
@@ -144,6 +145,7 @@ export interface ModelConversation {
   updatedAtUtc: string;
   messages: ModelConversationMessage[];
   runs: ModelConversationRun[];
+  publications?: GitHubPublication[];
 }
 export interface ModelConversationSummary {
   conversationId: string;
@@ -266,7 +268,8 @@ const modelConversation: Guard<ModelConversation> = (v): v is ModelConversation 
   object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
   str(v.repositoryId) && str(v.repositoryPath) && str(v.baseCommit) &&
   str(v.file) && date(v.createdAtUtc) && date(v.updatedAtUtc) &&
-  list(modelConversationMessage)(v.messages) && list(modelConversationRun)(v.runs);
+  list(modelConversationMessage)(v.messages) && list(modelConversationRun)(v.runs) &&
+  (v.publications === undefined || list(publication)(v.publications));
 const modelConversationSummary: Guard<ModelConversationSummary> = (v): v is ModelConversationSummary =>
   object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
   str(v.repositoryId) && str(v.baseCommit) && str(v.file) && date(v.updatedAtUtc);

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { GitHubPublisherPanel } from './GitHubPublisherPanel';
 import {
   api,
   type LocalCodeModelInfo,
@@ -72,7 +73,8 @@ export function ModelConversationWorkspace() {
       <p className="eyebrow">CONVERSATION · LOCAL MODEL · HUMAN-APPROVED EDIT</p>
       <h2>Project conversation</h2>
       <p className="muted">Real local model calls, durable conversation history and one explicitly approved C# file replacement
-        in an isolated worktree. No shell, commit, push, merge, deployment or paid-provider fallback.</p>
+        in an isolated worktree. GitHub publication needs a separate repository-scoped approval.
+        No shell, merge, deployment or paid-provider fallback.</p>
       {!token ? <div className="command-form">
         <label htmlFor="conversation-bootstrap">Local operator bootstrap token</label>
         <input id="conversation-bootstrap" className="command-title" type="password" autoComplete="off"
@@ -100,6 +102,7 @@ export function ModelConversationWorkspace() {
       </p>}
       {error && <p className="notice error" role="alert">{error} For an interrupted write, refresh this conversation before sending again.</p>}
       {busy && <p role="status">Working with the local Control Plane…</p>}
+      {token && <GitHubPublisherPanel token={token} />}
     </section>
 
     {token && <div className="overview-grid">
@@ -107,7 +110,7 @@ export function ModelConversationWorkspace() {
         <div className="panel-heading"><div><p className="eyebrow">NEW CONVERSATION / IMPORT AUTHORIZED CHECKOUT</p>
           <h2>Start a conversation</h2></div></div>
         <p className="muted small">Start a project discussion against a server-authorized local checkout and configured C# file.
-          Repository creation, arbitrary URLs and GitHub publishing are not enabled in Issue #49.</p>
+          Arbitrary URLs are not permitted. An empty GitHub destination requires separate bootstrap approval.</p>
         <label htmlFor="conversation-title">Conversation title</label>
         <input id="conversation-title" className="command-title" maxLength={120} value={title}
           disabled={busy} onChange={event => setTitle(event.target.value)} placeholder="Project or change request" />
@@ -224,6 +227,10 @@ export function ModelConversationWorkspace() {
         <p className="mono">File: {run.result.file}<br />Worktree: {run.result.worktreePath}<br />Branch: {run.result.branch}</p>
         <h3>Actual worktree diff</h3><pre className="preserve">{run.result.diff || 'No diff was released.'}</pre>
       </div>}
+      {run.status === 'completed' && run.result?.sourceUnchanged &&
+        run.result.testCode === 'passed:isolated-csharp-compile-and-scope' &&
+        <GitHubPublisherPanel token={token} runId={run.runId}
+          saved={conversation.publications} onChanged={() => refreshConversation()} />}
       <h3>Durable audit</h3><ol>{run.events.map((event, index) =>
         <li key={`${event.eventCode}-${index}`}>{event.eventCode} · {stamp(event.recordedAtUtc)}</li>)}</ol>
     </section>)}

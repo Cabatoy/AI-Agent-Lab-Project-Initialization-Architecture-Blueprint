@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api, type ModelConversation } from './api';
 import { ModelConversationWorkspace } from './ModelConversationWorkspace';
+import { githubApi } from './githubApi';
+
+vi.mock('./githubApi', () => ({ githubApi: { status: vi.fn() } }));
 
 vi.mock('./api', () => ({ api: {
   createLocalRunnerSession: vi.fn(), localCodeModel: vi.fn(), modelRepositories: vi.fn(),
@@ -38,6 +41,7 @@ const generated: ModelConversation = {
 };
 
 beforeEach(() => {
+  vi.mocked(githubApi.status).mockResolvedValue({ configured: false, repository: '', missing: ['HIC_GITHUB_APP_ID'] });
   vi.stubGlobal('crypto', { randomUUID: () => '41234567-89ab-cdef-0123-456789abcdef' });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 's'.repeat(44), expiresInSeconds: 900 });
   vi.mocked(api.localCodeModel).mockResolvedValue({

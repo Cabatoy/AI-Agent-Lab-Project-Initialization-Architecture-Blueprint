@@ -11,6 +11,8 @@ internal sealed record GitEditRequest(string RepositoryId, string BaseCommit, st
 internal sealed record GitTestRepository(string Id, string Path, string BaseCommit, string[]? AllowedFiles = null)
 {
     internal IReadOnlyList<string> Files => AllowedFiles ?? ["message.txt"];
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal bool PublisherSource { get; init; }
 }
 internal interface ILocalRunPlan
 {
@@ -97,8 +99,17 @@ internal static class GitEditExecutor
     internal static GitTestRepository[] Configuration(IConfiguration configuration)
     {
         var json = configuration["HIC_DISPOSABLE_GIT_REPOSITORIES"];
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        var repositories = JsonSerializer.Deserialize<GitTestRepository[]>(json, JsonOptions);
+        var publisherJson = configuration["HIC_GITHUB_LOCAL_REPOSITORIES"];
+        if (string.IsNullOrWhiteSpace(json) && string.IsNullOrWhiteSpace(publisherJson)) return [];
+        static GitTestRepository[] Read(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return [];
+            var parsed = JsonSerializer.Deserialize<GitTestRepository[]>(value, JsonOptions);
+            Require(parsed is { Length: > 0 and <= 4 } && parsed.All(repo => repo is not null));
+            return parsed;
+        }
+        var repositories = Read(json).Concat(Read(publisherJson)
+            .Select(repo => repo with { PublisherSource = true })).ToArray();
         Require(repositories is { Length: > 0 and <= 4 });
         Require(repositories!.Select(r => r.Id).Distinct(StringComparer.Ordinal).Count() == repositories.Length);
         foreach (var repo in repositories)
@@ -123,6 +134,8 @@ internal static class GitEditExecutor
         var start = new ProcessStartInfo("git") { WorkingDirectory = directory, UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("HIC_GITHUB_", StringComparison.OrdinalIgnoreCase)).ToArray())
             start.Environment.Remove(key);
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         start.Environment["GIT_CONFIG_GLOBAL"] = disabledGlobal;
@@ -199,12 +212,13 @@ internal static class GitEditExecutor
         Require((await GitAsync(repo.Path, cancellationToken, "rev-parse", "HEAD")).Trim() == repo.BaseCommit);
         var tree = (await GitAsync(repo.Path, cancellationToken, "ls-tree", "-r", "--full-tree", repo.BaseCommit))
             .Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        Require(tree.Length == repo.Files.Count + 1 &&
+        Require(tree.Length <= 200 && (repo.PublisherSource || tree.Length == repo.Files.Count + 1) &&
             tree.All(entry => entry.StartsWith("100644 blob ", StringComparison.Ordinal)));
         var paths = tree.Select(entry => entry[(entry.IndexOf('\t') + 1)..]).ToHashSet(StringComparer.Ordinal);
-        Require(paths.SetEquals(repo.Files.Append(".hic-disposable")));
+        Require(repo.PublisherSource ? repo.Files.All(paths.Contains) :
+            paths.SetEquals(repo.Files.Append(".hic-disposable")));
         Require((await GitAsync(repo.Path, cancellationToken, "status", "--porcelain", "--untracked-files=all")).Length == 0);
-        foreach (var file in repo.Files.Append(".hic-disposable"))
+        foreach (var file in repo.PublisherSource ? repo.Files : repo.Files.Append(".hic-disposable"))
         {
             var path = System.IO.Path.Combine(repo.Path, file.Replace('/', System.IO.Path.DirectorySeparatorChar));
             CheckPath(path);
@@ -213,7 +227,7 @@ internal static class GitEditExecutor
             Require(bytes.Length <= 64 * 1024 && !bytes.Contains((byte)0));
             _ = new UTF8Encoding(false, true).GetString(bytes);
         }
-        Require(File.ReadAllText(System.IO.Path.Combine(repo.Path, ".hic-disposable"))
+        Require(repo.PublisherSource || File.ReadAllText(System.IO.Path.Combine(repo.Path, ".hic-disposable"))
             .Replace("\r\n", "\n", StringComparison.Ordinal) == Marker);
         foreach (var file in repo.Files)
         {

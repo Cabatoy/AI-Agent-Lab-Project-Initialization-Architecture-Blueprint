@@ -197,6 +197,23 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         return reserved ? null : ToIntent(task);
     }
 
+    internal async Task<bool> ModelRunStillCurrentAsync(
+        Guid runId, ModelCodeEditPlan plan, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(postgresConnectionString);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            select exists(
+                select 1 from native_health_runs r
+                join tasks t on t.id=r.task_id
+                join hic_project_conversations c on c.conversation_id=r.conversation_id
+                where r.run_id=@runId and r.task_id=@TaskId and r.actor_id=@ActorId
+                    and r.task_updated_at_utc=t.updated_at_utc and t.status='Draft'
+                    and c.actor_id=@ActorId and c.task_id=@TaskId and c.conversation_id=@ConversationId
+                    and c.repository_id=@RepositoryId and c.base_commit=@BaseCommit and c.file_path=@File);
+            """, new { runId, plan.TaskId, plan.ActorId, plan.ConversationId,
+            plan.RepositoryId, plan.BaseCommit, plan.File }, cancellationToken: cancellationToken));
+    }
+
     internal async Task<(string Code, LocalHealthRun? Run)> ApproveAsync(
         Guid taskId, Guid actorId, string expectedDigest, CancellationToken cancellationToken,
         ILocalRunPlan? plan = null)

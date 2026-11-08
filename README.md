@@ -20,6 +20,7 @@ Depo, mimari belgelerin yanında Podman ile çalıştırılabilen bir local prot
 - [Devam noktası ve yeni sohbet rehberi](docs-md/continuation.md)
 - [Local Copilot akış rehberi](docs-md/local-onboarding.md)
 - [Mimari karar kayıtları](docs-md/decisions/README.md)
+- [HIC GitHub Publisher: App kurulumu, ayrı onay ve recovery](docs/human-in-control/HIC_GITHUB_PUBLISHER.md)
 
 Gelecekteki AI coding oturumlarının proje bağlamı için [.github/copilot-instructions.md](.github/copilot-instructions.md) dosyasına bakın.
 
@@ -160,7 +161,7 @@ PowerShell'de `openai-compatible` seçilip endpoint/model parametreleri verilmez
 
 `bootstrap-dev` smoke test sonunda script, doğrulama için hem `.env` içindeki model ayarını hem de `agentlab-worker` container'ındaki runtime model ayarını (provider/endpoint/model) çıktı olarak gösterir.
 
-`new-build` ve `rebuild-all` komutları, Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias'ı ile bağlamayı dener. Böylece rastgele container adlarına bağımlılık azaltılır. Worker model çağrısında önce `chat/completions`, ardından `completions` fallback'i dener; geçici hatalarda kısa retry uygular.
+`new-build` ve `rebuild-all` komutları, Podman AI Lab container'ını bulabilirse compose ağına `ai-lab` alias'ı ile bağlamayı dener. Böylece rastgele container adlarına bağımlılık azaltılır. Worker yalnız `chat/completions` rotasının açıkça desteklenmediği 404/405/501 yanıtlarında `completions` fallback'i dener; timeout, redirect veya belirsiz yanıt sonrası ikinci prompt göndermez.
 
 Worker yalnızca `disabled`, `podman-ai-lab`, `ollama` ve `openai-compatible` provider değerlerini kabul eder. Desteklenmeyen provider, eksik endpoint/model, mutlak HTTP(S) olmayan veya URL içine gömülü kimlik bilgisi, query ya da fragment taşıyan endpoint model istemcisini kapalı tutar. Uzak endpoint'ler HTTPS kullanmalıdır; HTTP yalnız loopback, `ai-lab` ve `host.containers.internal` hedefleri için kabul edilir. Kimlik doğrulama için `MODEL_API_KEY` kullanın. Provider hata yanıt gövdeleri ve exception metinleri loglara, task hata alanına veya dead-letter kaydına aktarılmaz; güvenli, sabit hata mesajları kullanılır. Başarılı provider üretimi task sonucu olarak saklanabilir ve prompt içeriğini yansıtabilir; yetkilendirilmemiş gizli verileri modele göndermeyin.
 
