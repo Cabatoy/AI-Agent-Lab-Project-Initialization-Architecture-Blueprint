@@ -64,7 +64,9 @@ describe('local development proxy', () => {
       });
     });
     const port = await listen(upstream);
-    ({ vite, origin, port: proxyPort } = await startProxy(`http://127.0.0.1:${port}`, { upstreamTimeoutMs: 300, bodyTimeoutMs: 300 }));
+    ({ vite, origin, port: proxyPort } = await startProxy(`http://127.0.0.1:${port}`, {
+      upstreamTimeoutMs: 300, bodyTimeoutMs: 300, modelTimeoutMs: 300, executionTimeoutMs: 300,
+    }));
   });
   beforeEach(() => { received.length = 0; mode = 'ok'; });
   afterAll(async () => {
@@ -148,6 +150,52 @@ describe('local development proxy', () => {
     });
     expect(missingOrigin.status).toBe(403);
     expect(received).toHaveLength(before);
+  });
+
+  it('proxies bounded conversation, local-model and exact plan-approval endpoints only', async () => {
+    const token = 'Bearer ' + 'S'.repeat(44);
+    const headers = {
+      origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner',
+      authorization: token, cookie: 'private=1',
+    };
+    const conversation = '11234567-89ab-cdef-0123-456789abcdef';
+    const message = '21234567-89ab-cdef-0123-456789abcdef';
+    expect((await fetch(`${origin}/api/local-runner/model`, {
+      headers: { 'sec-fetch-site': 'same-origin', 'x-hic-request': 'local-runner', authorization: token },
+    })).status).toBe(200);
+    expect((await fetch(`${origin}/api/local-runner/conversations`, {
+      headers: { 'sec-fetch-site': 'same-origin', 'x-hic-request': 'local-runner', authorization: token },
+    })).status).toBe(200);
+    const createdConversation = await fetch(`${origin}/api/local-runner/conversations`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ title: 'Test project', repositoryId: 'fixture', file: 'src/Value.cs' }),
+    });
+    expect(createdConversation.status).toBe(201);
+    const userMessage = await fetch(`${origin}/api/local-runner/conversations/${conversation}/messages`, {
+      method: 'POST', headers, body: JSON.stringify({ clientMessageId: message, content: 'Make a bounded change.' }),
+    });
+    expect(userMessage.status).toBe(201);
+    const approved = await fetch(`${origin}/api/local-runner/conversations/${conversation}/messages/${message}/approve`, {
+      method: 'POST', headers, body: JSON.stringify({ intentDigestSha256: 'a'.repeat(64) }),
+    });
+    expect(approved.status).toBe(201);
+    const invalid = await fetch(`${origin}/api/local-runner/conversations`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ title: 'Traversal', repositoryId: 'fixture', file: '../outside.cs' }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const forwarded = received.slice(-5);
+    expect(forwarded.map(item => `${item.method} ${item.url}`)).toEqual([
+      'GET /local-runner/model',
+      'GET /local-runner/conversations',
+      'POST /local-runner/conversations',
+      `POST /local-runner/conversations/${conversation}/messages`,
+      `POST /local-runner/conversations/${conversation}/messages/${message}/approve`,
+    ]);
+    expect(forwarded[3].headers.authorization).toBe(token);
+    for (const request of forwarded) expect(request.headers.cookie).toBeUndefined();
+    expect(received).toHaveLength(5);
   });
 
   it('forwards one validated POST with a re-serialized body and no client credentials', async () => {

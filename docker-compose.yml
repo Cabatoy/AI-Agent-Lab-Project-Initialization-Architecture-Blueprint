@@ -30,6 +30,10 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab
       ConnectionStrings__Redis: redis:6379
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-disabled}
+      MODEL_ENDPOINT: ${MODEL_ENDPOINT:-}
+      MODEL_NAME: ${MODEL_NAME:-}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
     ports:
       - "127.0.0.1:${HIC_CONTROL_PLANE_PORT:-19480}:8080"
     depends_on:

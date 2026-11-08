@@ -76,6 +76,12 @@ tr:last-child td { border-bottom: 0; }
 .detail-grid > div { display: flex; flex-direction: column; align-items: start; gap: 9px; font-size: 12px; overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, monospace; }
 .detail-block { border-top: 1px solid #253246; margin-top: 20px; padding-top: 16px; }
+.conversation-messages { display: grid; gap: 12px; max-height: 65vh; overflow-y: auto; }
+.conversation-messages > .detail-block { margin: 0; padding: 16px; border: 1px solid #253246; border-radius: 7px; background: #0e1724; }
+.proposal { margin-top: 16px; padding: 16px; border: 1px solid #695332; border-radius: 7px; background: #282319; }
+.proposal pre { max-height: 360px; overflow: auto; padding: 12px; border-radius: 6px; background: #0b121c; }
+.command-form .task-link { display: block; width: 100%; padding: 11px 8px; border-top: 1px solid #253246; }
+.command-form .task-link.selected { background: #1a2841; }
 .detail-block p, .plan p { color: #b4c1d3; font-size: 12px; }
 .preserve { white-space: pre-wrap; overflow-wrap: anywhere; }
 .plan { padding: 19px 0; border-top: 1px solid #253246; }

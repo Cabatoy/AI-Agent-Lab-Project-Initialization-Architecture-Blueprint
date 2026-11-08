@@ -200,7 +200,7 @@ public sealed class GitEditRunnerTests
         return (root, repo, configuration);
     }
 
-    private static async Task Database(Func<string, NpgsqlConnection, Guid, Task> test)
+    internal static async Task Database(Func<string, NpgsqlConnection, Guid, Task> test)
     {
         var cs = PostgresFixtureSafety.Configuration(Environment.GetEnvironmentVariable("HIC_R1_TEST_POSTGRES"));
         var schema = "hic42_" + Guid.NewGuid().ToString("N");
@@ -225,7 +225,12 @@ public sealed class GitEditRunnerTests
             Assert.NotNull(root);
             await using (var transaction = await db.BeginTransactionAsync())
             {
-                foreach (var migration in new[] { "004-local-health-runner.sql", "005-isolated-git-runner.sql" })
+                foreach (var migration in new[]
+                         {
+                             "004-local-health-runner.sql",
+                             "005-isolated-git-runner.sql",
+                             "006-project-conversation-code-edit.sql"
+                         })
                     await db.ExecuteAsync(File.ReadAllText(System.IO.Path.Combine(root.FullName,
                         "src", "ControlPlane", "Migrations", migration)), transaction: transaction);
                 await transaction.CommitAsync();

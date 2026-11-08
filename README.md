@@ -130,7 +130,9 @@ Durdurma:
 
 ## Local model provider (opsiyonel)
 
-Worker, model çağrısı için opsiyonel provider iskeleti içerir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz.
+Worker, model çağrısı için opsiyonel provider iskeleti içerir. Konuşma workspace'i aynı `.env` model ayarlarını Control Plane'e de iletir. Varsayılan davranış `MODEL_PROVIDER=disabled` olduğu için model çağrısı yapılmaz.
+
+Konuşma workspace'i yalnızca yerel `podman-ai-lab` ve `ollama` provider'larını kullanır; endpoint yerel/izinli bir hedef olmalıdır. `openai-compatible` Worker için kullanılabilir, ancak sohbet modelini etkinleştirmez. Sohbet için ücretli sağlayıcıya fallback yapılmaz ve Worker'ın `MODEL_API_KEY` değeri Control Plane'e aktarılmaz.
 
 `bootstrap-dev` komutunda LLM seçimini parametreyle yapabilirsiniz:
 
