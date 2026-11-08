@@ -2,7 +2,7 @@ name: HIC Runtime Execution Safety Boundary CI
 
 on:
   pull_request:
-    branches: [develop, feature/hic-local-runner-phase1]
+    branches: [develop, main]
     paths:
       - 'src/**'
       - 'agent-lab/**'
