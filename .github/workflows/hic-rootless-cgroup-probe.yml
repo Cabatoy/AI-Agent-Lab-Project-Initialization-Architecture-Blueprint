@@ -1,0 +1,93 @@
+name: HIC Disposable Rootless Podman Cgroup Probe
+
+on:
+  push:
+    branches:
+      - experiment/hic-rootless-cgroup-ci
+    paths:
+      - .github/workflows/hic-rootless-cgroup-probe.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    name: Synthetic resource isolation (not production certification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Inspect non-secret runner environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner: $(uname -s -r -m)"
+          echo "UID: $(id -u)"
+          echo "Cgroup v2 root: $(test -f /sys/fs/cgroup/cgroup.controllers && echo yes || echo no)"
+          echo "Root controllers: $(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null || echo unavailable)"
+          echo "Parent delegated controllers: $(cat /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || echo unavailable)"
+          echo "Podman command: $(command -v podman || echo missing)"
+          df -h .
+      - name: Install rootless Podman if absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v podman >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq podman uidmap slirp4netns fuse-overlayfs
+          fi
+          podman version
+          podman info --debug 2>&1 | grep -Ei 'rootless:|cgroup(manager|version|controllers):|graphDriverName:' || true
+      - name: Verify enforced limits and unprivileged isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Synthetic image only; no repo checkout, no credentials or secrets.
+          image=docker.io/library/alpine:3.20
+          podman pull "$image"
+          podman run --rm --pull=never \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --memory 268435456 \
+            --cpus 0.5 \
+            --pids-limit 64 \
+            "$image" sh -ec '
+              test "$(id -u)" -ne 0 || {
+                echo "Container default image user is root; rejecting"; exit 2;
+              }
+            ' && exit 90 || rc=$?
+          # Alpine defaults to UID 0. Re-run with explicit unprivileged user.
+          if [ "$rc" -ne 2 ]; then
+            echo "Unexpected first-run outcome: $rc"; exit 1
+          fi
+          podman run --rm --pull=never \
+            --user 10001:10001 \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --memory 268435456 \
+            --cpus 0.5 \
+            --pids-limit 64 \
+            "$image" sh -ec '
+              test "$(id -u)" = 10001
+              test -r /sys/fs/cgroup/memory.max
+              test -r /sys/fs/cgroup/pids.max
+              test -r /sys/fs/cgroup/cpu.max
+              memory=$(cat /sys/fs/cgroup/memory.max)
+              pids=$(cat /sys/fs/cgroup/pids.max)
+              cpu=$(cat /sys/fs/cgroup/cpu.max)
+              echo "memory.max=$memory pids.max=$pids cpu.max=$cpu"
+              test "$memory" = 268435456
+              test "$pids" = 64
+              set -- $cpu
+              test "$1" -ne 0
+              test "$1" -lt "$2"
+              test ! -e /run/podman/podman.sock
+              test ! -e /var/run/docker.sock
+              test ! -e /host
+              ! touch /etc/hic-probe-should-not-exist
+              echo "PASS: synthetic rootless cgroup configuration and read-only mount enforcement"
+            '
+          echo "PASS: preliminary GitHub-hosted runner probe. This is NOT a hostile-host race, secret-discovery or release security certification."
