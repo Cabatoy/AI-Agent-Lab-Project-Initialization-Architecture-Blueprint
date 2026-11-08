@@ -453,6 +453,8 @@ internal sealed class DisabledModelClient : IModelClient
 
 internal sealed class PodmanAiLabModelClient : IModelClient
 {
+    private sealed record EndpointResult(ModelResult Result, bool RouteUnsupported);
+
     private readonly HttpClient _httpClient;
     private readonly string _model;
 
@@ -493,9 +495,13 @@ internal sealed class PodmanAiLabModelClient : IModelClient
         });
 
         var chatResult = await SendAndParseAsync("/v1/chat/completions", chatPayload, cancellationToken);
-        if (chatResult.Success)
+        if (chatResult.Result.Success)
         {
-            return chatResult;
+            return chatResult.Result;
+        }
+        if (!chatResult.RouteUnsupported)
+        {
+            return ModelResult.Fail("Provider request failed.", chatResult.Result.IsTransient);
         }
 
         var completionPayload = JsonSerializer.Serialize(new
@@ -508,15 +514,15 @@ internal sealed class PodmanAiLabModelClient : IModelClient
         });
 
         var completionResult = await SendAndParseAsync("/v1/completions", completionPayload, cancellationToken);
-        if (completionResult.Success)
-        {
-            return completionResult;
-        }
 
-        return ModelResult.Fail("Provider request failed.", chatResult.IsTransient || completionResult.IsTransient);
+        return completionResult.Result.Success
+            ? completionResult.Result
+            : ModelResult.Fail("Provider request failed.",
+                chatResult.Result.IsTransient || completionResult.Result.IsTransient);
     }
 
-    private async Task<ModelResult> SendAndParseAsync(string route, string jsonPayload, CancellationToken cancellationToken)
+    private async Task<EndpointResult> SendAndParseAsync(
+        string route, string jsonPayload, CancellationToken cancellationToken)
     {
         try
         {
@@ -527,27 +533,30 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             if (!response.IsSuccessStatusCode)
             {
                 var transient = IsTransientStatusCodeLocal(response.StatusCode);
-                return ModelResult.Fail($"Provider returned HTTP {(int)response.StatusCode}.", transient);
+                var routeUnsupported = response.StatusCode is HttpStatusCode.NotFound
+                    or HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented;
+                return new(ModelResult.Fail($"Provider returned HTTP {(int)response.StatusCode}.", transient),
+                    routeUnsupported);
             }
 
             using var document = JsonDocument.Parse(responseBody);
             if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
             {
-                return ModelResult.Fail($"{route} returned no choices.");
+                return new(ModelResult.Fail($"{route} returned no choices."), false);
             }
 
             var content = ExtractContent(choices[0]);
             return string.IsNullOrWhiteSpace(content)
-                ? ModelResult.Fail($"{route} returned empty content.")
-                : ModelResult.Ok(content.Trim());
+                ? new(ModelResult.Fail($"{route} returned empty content."), false)
+                : new(ModelResult.Ok(content.Trim()), false);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
         {
-            return ModelResult.Fail("Provider request failed.", true);
+            return new(ModelResult.Fail("Provider request failed.", true), false);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return ModelResult.Fail("Provider returned an invalid response.");
+            return new(ModelResult.Fail("Provider returned an invalid response."), false);
         }
     }
 
