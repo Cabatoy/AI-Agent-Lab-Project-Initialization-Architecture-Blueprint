@@ -10,7 +10,12 @@ oturumu ve manuel schema v4 kurulumu mevcutsa, Draft task için yalnızca sabit
 gösterir. Task Worker kuyruğuna girmez; Worker, model, shell veya repository
 değişikliği kullanılmaz. Control Plane tek task ve run otoritesidir; bu UI
 ayrı bir task deposu ya da scheduler eklemez. Bu dar akış tam P9 approval
-workflow veya production readiness değildir.
+workflow veya production readiness değildir. **Planning** ekranı Native Host'un tek yapılandırılmış
+workspace'ini salt okunur kontrol eder ve yalnız tarayıcı belleğinde sürümlü plan
+önizlemesi üretir; bu plan Control Plane'e yazılmaz ve çalıştırılamaz. Genel
+plan için kimliği doğrulanmış onay ve kalıcı audit uygulanmamıştır; yalnız
+sabit `system.health` için dar local runner otoritesi vardır. R3/R4 recovery ve
+tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
 
@@ -182,6 +187,14 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
 
 ### Mevcut ekranlar ve sınırlar
 
+- **Planning:** Native Host'tan yalnızca yapılandırılmış workspace için başarılı
+  read-only Git checkout kontrolü alındıktan sonra bu tek repository seçilebilir.
+  Plan, yerel deterministik bir şablondur; içerik, sürüm ve SHA-256 hash içerir.
+  Provider/Worker durumları için probe yapılmaz; provider'lar doğrulanana kadar
+  hazır sayılmaz. Plan önizleme olayları sadece sayfa belleğinde tutulur; bu
+  güvenilir veya kalıcı audit değildir. Genel plan için authenticated actor ve
+  hash'e bağlı approval receipt olmadığından Approve devre dışıdır. Local
+  Runner onayı bu Planning önizlemesini yetkilendirmez.
 - **Command Center:** Request (zorunlu) ve Title (isteğe bağlı) alanları.
   Title boşsa isteğin ilk dolu satırından en fazla 80 karakterlik başlık
   türetilir. Enter yeni satır ekler; Ctrl+Enter (macOS'ta ⌘+Enter) veya düğme

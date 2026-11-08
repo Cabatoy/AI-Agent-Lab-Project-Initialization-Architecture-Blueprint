@@ -4,7 +4,7 @@
 
 ## Yönetici Özeti
 
-Bu belge, `C:\Enterprise` deposundaki mevcut implementasyonu temel alarak sistemin bugün ne yaptığı, hangi parçaların gerçekten çalıştığı ve hedef vizyona göre hangi alanların eksik kaldığını özetler.
+Bu belge, değerlendirme anında depoda bulunan implementasyonu temel alarak sistemin o dönemde ne yaptığı, hangi parçaların çalıştığı ve hedef vizyona göre hangi alanların eksik kaldığını özetler.
 
 **Mevcut durum (özet):**
 - .NET 8 tabanlı çalışan bir local prototip vardır.

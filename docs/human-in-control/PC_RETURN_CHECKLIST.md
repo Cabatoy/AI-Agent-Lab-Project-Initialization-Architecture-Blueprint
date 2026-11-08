@@ -1,11 +1,13 @@
-# HIC — PC Return Checklist (2026-11-07)
+# HIC — PC Return Checklist (Archived 2026-11-07)
 
-Goal: reach the **new Command Center input field** on Windows, retain an unsent local draft even with Control Plane offline, and only then recover the existing R2 Control Plane without data loss. This handoff is source-controlled; it does NOT mean a local agent is connected or a recovery was performed.
+> Archived device report. All checkout paths, Git instructions, runtime observations, and preauthorizations below are historical and do not describe the current workspace or grant current runtime permission. Re-inspect the current worktree and obtain explicit approval before any runtime action.
+
+Goal at the time: reach the **new Command Center input field** on Windows, retain an unsent local draft even with Control Plane offline, and only then recover the existing R2 Control Plane without data loss. This report is source-controlled; it does NOT mean a local agent is connected or a recovery was performed.
 
 ## Known last on-device evidence (from local VS Code Fusion report — not current verified state)
 
-- The active feature checkout is `C:\Enterprise` on `feature/hic-reliability-r2` (clean at last report). **Do not reset, switch or merge into it.**
-- An isolated old develop worktree was originally prepared at `C:\Enterprise-HicDevelop`; its last confirmed commit then was `f6eb861` (PR #20). The path and commit are historical: discover its current location with `git worktree list --porcelain` before checking or updating it.
+- The active feature checkout was on `feature/hic-reliability-r2` (clean at last report). This is historical and does not constrain current Git synchronization.
+- An isolated old develop worktree was also prepared; its last confirmed commit then was `f6eb861` (PR #20). The location and commit are historical; inspect the current `git worktree list --porcelain` before relying on either.
 - Prior native host `127.0.0.1:5248` and UI `127.0.0.1:5180` returned HTTP 200; UI 5173/5174 also had listeners. This may have changed.
 - Control Plane `127.0.0.1:8080` disappeared after `wslrelay` stopped listening; `podman machine list` was hung because WSL `wsl -l --quiet --running` did not return.
 - Historical R2 schema/task state (four tasks at last report) must be re-verified. Never assume old counts/images/backups are current.
@@ -21,14 +23,14 @@ Goal: reach the **new Command Center input field** on Windows, retain an unsent 
 ## Phase A — verify new Native input without repairing WSL (minimal scope)
 
 1. On the actual PC, first verify whether old 5248/5180 listeners still exist and resolve the isolated worktree's current path with `git worktree list --porcelain`. Identify live processes by executable path and start time, **not stale PID alone**. Never kill an unrelated listener.
-2. Verify the selected worktree's git status is clean and detached/isolated as expected. Update **only that worktree** to the approved `origin/develop` head, without touching `C:\Enterprise` and without force-resetting local changes. Record the real commit.
+2. Verify the selected worktree's Git status and branch before using it. Preserve all local work and use only supported, non-destructive Git operations.
 3. Run `hic.cmd preview` from that isolated worktree (new ports default 19481/19482). This does **not** call Podman and does not replace the old session. If ports are occupied/unknown, stop and diagnose instead of killing services.
 4. Open `http://127.0.0.1:19482` and navigate to Command Center. Confirm the new *Unsent input stored locally* text. Enter a non-sensitive **test description** and refresh; verify it remains. Do NOT click `Create Draft task` yet, and do NOT run Worker. The expected Control Plane status can still be unavailable.
 5. Verify the read-only `Inspect local workspace` action works via the new native proxy. Do not grant arbitrary shell or file action permission.
 
 ## Phase B — scoped recovery of legacy R2 Control Plane (only an actual local agent can execute)
 
-6. Run bounded, read-only WSL/Podman checks. If still frozen, identify the exact user-owned Podman VM/distro first. The operator pre-authorized **targeted, non-destructive** recovery in this chat; do not require repeated approval for those checks, but never make blind assumptions about process/distribution identity.
+6. Run bounded, read-only WSL/Podman checks only with current, explicit approval. If still frozen, identify the exact user-owned Podman VM/distro first; never make blind assumptions about process/distribution identity.
 7. Attempt graceful targeted Podman stop, then targeted `wsl --terminate` of the **verified Podman distro only** if needed. Never `wsl --unregister`, `podman machine reset`, generic Docker/Compose `down`, volume cleanup or forced DB restore. Global `wsl --shutdown`, system-wide WSL service termination or Windows restart **are not implicitly approved**; they require a fresh impact assessment if necessary.
 8. Verify the existing Podman machine identity before starting it. Verify old PostgreSQL/Redis containers/volumes and R2 schema, task IDs/statuses/counts, active attempts, Redis queue, current CP image and backup/rollback evidence. Do not migrate or recreate historic resources.
 9. Only after consistent data and a stopped Worker are verified, restore **the existing unchanged containers**, starting stopped PostgreSQL/Redis only as necessary and the existing Control Plane only when safe. No rebuild/migration; no Worker start.
@@ -42,7 +44,7 @@ Goal: reach the **new Command Center input field** on Windows, retain an unsent 
 
 ## What CI can and cannot prove
 
-GitHub CI can compile and unit-test launcher/Host/UI and start a fresh isolated Windows runner to verify the preview's HTTP behavior. It **cannot** confirm the user's old `C:\Enterprise` checkout, frozen WSL, existing R2 database/Redis, or 8080 port mapping. Green CI never means that a local recovery or deployment occurred.
+GitHub CI can compile and unit-test launcher/Host/UI and start a fresh isolated Windows runner to verify the preview's HTTP behavior. It **cannot** confirm a historical local checkout, frozen WSL, existing R2 database/Redis, or 8080 port mapping. Green CI never means that a local recovery or deployment occurred.
 
 Further product work after this milestone: secure task-backed native execution and human approval/audit (Issue #10). Current native host still only permits `workspace.inspect`.
 
