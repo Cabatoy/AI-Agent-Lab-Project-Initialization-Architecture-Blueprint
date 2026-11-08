@@ -65,6 +65,7 @@ app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>
     .Produces<LocalDiagnosticSnapshot>(StatusCodes.Status200OK);
 
 LocalHealthRunnerEndpoints.Map(app, postgresConnectionString, redisDb, localOperatorSessions);
+GitEditEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 
 app.MapGet("/tasks", async () =>
 {

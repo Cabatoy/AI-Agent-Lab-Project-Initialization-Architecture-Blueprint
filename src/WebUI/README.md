@@ -108,6 +108,58 @@ PostgreSQL, Redis ve Worker için güvenli durum kategorileri saklanır; ham
 exception, connection string, prompt veya credential tutulmaz. Run sırasında
 Worker kuyruğu kullanılmaz.
 
+### Isolated Git — Issue #42
+
+**Yönetici özeti:** `Isolated Git` ekranı yalnız önceden açıkça yetkilendirilmiş,
+atılabilir test reposunda `message.txt` dosyasını deterministik olarak değiştirir.
+Draft task → repo/base commit seçimi → SHA-256 bağlı plan önizlemesi → kimliği
+doğrulanmış açık onay → ayrı Git worktree → gerçek diff ve exact-content/scope
+test sonucu aynı ekrandadır. Model, shell, Worker ve otomatik task commit/push/
+PR/merge/deploy yoktur. Kaynak checkout dosyaları ve HEAD değişmez; Git worktree
+kaydı ve task branch'i Git metadata'sına eklenir.
+
+**Teknik ek:** Control Plane için `HIC_DISPOSABLE_GIT_REPOSITORIES`, en fazla dört
+`{ "id": "...", "path": "...", "baseCommit": "40-haneli-kucuk-harf-SHA" }`
+kaydından oluşan JSON array'dir. `path` mutlak ve kanonik olmalı; ağ deposu,
+normal müşteri reposu veya kaynak geliştirme checkout'u burada yetkilendirilmez.
+`HIC_GIT_RUN_ROOT` önceden oluşturulmuş, kaynak repo dışında ayrı bir yerel
+dizindir. Bu alanlar varsayılan olarak boş/kapalıdır; yanlış yapılandırma
+fail-closed olur. Bu ayarlar runtime izni değildir.
+
+Test reposunun commit ağacı yalnız iki plain `100644` dosya içerir:
+`.hic-disposable` (tam içerik: `HIC disposable test repository v1` ve newline)
+ve `message.txt`. Checkout temiz olmalı, HEAD yapılandırılmış SHA ile eşleşmelidir.
+LF ve CRLF kabul edilir. İçerik en fazla 512 karakter, printable ASCII ve newline
+olabilir; sır yazmayın. Başka dosya, path traversal, symlink/junction, attributes,
+submodule, alternates veya yürütülebilir Git config reddedilir. Git global/system
+config, hooks, external diff/textconv ve protokoller devre dışıdır; subprocess
+zamanı ve çıktısı sınırlandırılır. Bu doğrulama hostile yerel kullanıcıya karşı
+OS sandbox yerine geçmez.
+
+Manuel [005-isolated-git-runner.sql](../ControlPlane/Migrations/005-isolated-git-runner.sql)
+v4 run/audit otoritesini genişletir; yeni bir task state machine yaratmaz.
+v2 → v4 → v5 yalnız ayrı, açıkça yetkilendirilmiş disposable veritabanında
+`psql --single-transaction --set ON_ERROR_STOP=1` ile denenir. Startup migration
+uygulamaz. Mevcut HIC veritabanına migration veya canlı runtime'a deployment
+için ayrı insan onayı gerekir.
+
+Plan hash'i domain/action/scope, revision, task sürümü, actor, kanonik repo ID/path,
+immutable SHA, tek dosya, tam payload ve en fazla beş dakikalık expiry'yi kapsar.
+Önizleme değişince UI onayı siler; onaylandıktan sonra plan immutable'dır.
+Bir task yalnız bir local-run kararına ayrılır; başka plan yeni Draft task ister.
+Task `Draft` kalır; run `completed`/`failed` sonucu ayrı gösterilir. Denied
+execution başarı gibi raporlanmaz. Audit yalnız sabit event kodları, ID ve zaman
+tutar; plan/diff/test artefaktı ayrı run kaydındadır. Ham exception veya token
+saklanmaz.
+
+Run ID ile restart sonrası kimlik doğrulayıp durum/diff/audit okunabilir.
+Commit edilmiş claim'den sonra process ölürse run `running`/unknown kalır;
+otomatik retry, recovery, yeniden execution veya cleanup yapılmaz. Tamamlanmış
+ve in-flight run replay'i reddedilir. Worktree'ler manuel inceleme için korunur.
+Genel regression/chaos backfill, hostile eşzamanlı filesystem saldırıları,
+platform matrisi ve production izolasyonu bu ilk dilimde tamamlanmış sayılmaz;
+execution runtime'ını merge/deploy etmeden önce ikinci iterasyonda incelenmelidir.
+
 **Güvenlik sınırı:** Bu yerel geliştirme aracı production için değildir.
 Kullanılan Control Plane portunun ayrıca yalnız loopback'e bağlı ve yetkisiz
 ağ erişiminden korunmuş olması gerekir. Depodaki genel Compose port mapping'i

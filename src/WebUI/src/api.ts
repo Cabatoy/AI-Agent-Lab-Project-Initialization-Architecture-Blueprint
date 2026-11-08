@@ -243,7 +243,7 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
   }
 }
 
-async function localRunnerRequest<T>(
+export async function localRunnerRequest<T>(
   path: string, guard: Guard<T>, token: string, method: 'GET' | 'POST',
   body?: unknown, expectedStatus = 200, timeoutMs = 15000,
 ): Promise<T> {

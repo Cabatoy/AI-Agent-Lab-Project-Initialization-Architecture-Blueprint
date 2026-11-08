@@ -4,7 +4,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
-const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
+const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|repositories|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve|git-preview|git-approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 
@@ -159,12 +159,14 @@ async function localRunnerRequest(
   }
   const isSession = path === '/api/local-runner/session';
   const isRead = req.method === 'GET' &&
-    (/^\/api\/local-runner\/(?:capabilities|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (/^\/api\/local-runner\/(?:capabilities|repositories|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+  const isGitPlan = req.method === 'POST' &&
+    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
   const isApprove = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
   const isExecute = req.method === 'POST' &&
     /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path);
-  if (!isSession && !isRead && !isApprove && !isExecute)
+  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
   const authorization = header(req, 'authorization');
@@ -208,6 +210,13 @@ async function localRunnerRequest(
       return reject(res, 400, 'Invalid local session request.');
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
       JSON.stringify({ bootstrapToken: (parsed as Record<string, string>).bootstrapToken }));
+    return;
+  }
+
+  if (isGitPlan) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || received.body.length > 4096)
+      return reject(res, 400, 'Invalid bounded Git plan.');
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs, JSON.stringify(parsed), authorization);
     return;
   }
 

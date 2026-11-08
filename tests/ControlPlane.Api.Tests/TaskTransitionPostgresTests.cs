@@ -139,7 +139,7 @@ public class TaskTransitionPostgresTests
         }
     }
 
-    private static async Task VerifyTarget(NpgsqlConnection connection)
+    internal static async Task VerifyTarget(NpgsqlConnection connection)
     {
         var identity = await connection.QuerySingleAsync<TargetIdentity>(@"
             select d.datname as DatabaseName, pg_get_userbyid(d.datdba) as Owner,
