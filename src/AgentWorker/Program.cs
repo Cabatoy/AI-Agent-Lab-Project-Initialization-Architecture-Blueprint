@@ -207,7 +207,7 @@ internal sealed class Worker : BackgroundService
         throw new InvalidOperationException("Worker could not connect to Redis after retries.", lastError);
     }
 
-    private async Task<ModelExecutionResult> GenerateWithRetryAsync(string prompt, CancellationToken cancellationToken)
+    internal async Task<ModelExecutionResult> GenerateWithRetryAsync(string prompt, CancellationToken cancellationToken)
     {
         const int maxAttempts = 3;
         ModelResult? lastFailure = null;
@@ -222,7 +222,7 @@ internal sealed class Worker : BackgroundService
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 var transient = IsTransientException(ex);
-                result = ModelResult.Fail($"Model client exception: {ex.Message}", transient);
+                result = ModelResult.Fail("Provider request failed.", transient);
             }
 
             if (result.Success)
@@ -230,8 +230,11 @@ internal sealed class Worker : BackgroundService
                 return new ModelExecutionResult(result, attempt);
             }
 
+            if (_modelClient is not DisabledModelClient)
+                result = ModelResult.Fail("Provider request failed.", result.IsTransient);
+
             lastFailure = result;
-            _logger.LogWarning("Model attempt {Attempt}/{MaxAttempts} failed. Transient={Transient}. Error={Error}", attempt, maxAttempts, result.IsTransient, result.ErrorMessage);
+            _logger.LogWarning("Model attempt {Attempt}/{MaxAttempts} failed. Transient={Transient}.", attempt, maxAttempts, result.IsTransient);
 
             if (!result.IsTransient)
             {
@@ -401,10 +404,18 @@ Task description: {description}
 
             if (!Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint) ||
                 endpoint.Scheme is not ("http" or "https") ||
-                !string.IsNullOrEmpty(endpoint.UserInfo))
+                !string.IsNullOrEmpty(endpoint.UserInfo) ||
+                !string.IsNullOrEmpty(endpoint.Query) ||
+                !string.IsNullOrEmpty(endpoint.Fragment))
             {
-                logger.LogWarning("MODEL_ENDPOINT must be an absolute HTTP or HTTPS URL without embedded credentials. Model calls are disabled.");
-                return new DisabledModelClient("MODEL_ENDPOINT must be an absolute HTTP or HTTPS URL; provide credentials through MODEL_API_KEY.");
+                logger.LogWarning("MODEL_ENDPOINT must be an absolute HTTP(S) URL without embedded credentials, query, or fragment. Model calls are disabled.");
+                return new DisabledModelClient("MODEL_ENDPOINT must be an absolute HTTP(S) URL without embedded credentials, query, or fragment.");
+            }
+
+            if (endpoint.Scheme == "http" && !IsTrustedLocalEndpoint(endpoint))
+            {
+                logger.LogWarning("Remote model providers must use HTTPS. Model calls are disabled.");
+                return new DisabledModelClient("Remote model providers must use HTTPS.");
             }
 
             return new PodmanAiLabModelClient(options);
@@ -413,6 +424,11 @@ Task description: {description}
         logger.LogWarning("Unsupported MODEL_PROVIDER. Model calls are disabled.");
         return new DisabledModelClient("Unsupported MODEL_PROVIDER. Supported values are disabled, podman-ai-lab, ollama, and openai-compatible.");
     }
+
+    private static bool IsTrustedLocalEndpoint(Uri endpoint) =>
+        endpoint.IsLoopback ||
+        string.Equals(endpoint.Host, "ai-lab", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(endpoint.Host, "host.containers.internal", StringComparison.OrdinalIgnoreCase);
 }
 
 internal interface IModelClient
@@ -441,13 +457,20 @@ internal sealed class PodmanAiLabModelClient : IModelClient
     private readonly string _model;
 
     public PodmanAiLabModelClient(ModelOptions options)
-    {
-        _model = options.Model;
-        _httpClient = new HttpClient
+        : this(options, new HttpClient
         {
             BaseAddress = new Uri(options.Endpoint!, UriKind.Absolute),
             Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds)
-        };
+        })
+    {
+    }
+
+    internal PodmanAiLabModelClient(ModelOptions options, HttpClient httpClient)
+    {
+        _model = options.Model;
+        _httpClient = httpClient;
+        _httpClient.BaseAddress ??= new Uri(options.Endpoint!, UriKind.Absolute);
+        _httpClient.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 
         if (!string.IsNullOrWhiteSpace(options.ApiKey))
         {
@@ -504,7 +527,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             if (!response.IsSuccessStatusCode)
             {
                 var transient = IsTransientStatusCodeLocal(response.StatusCode);
-                return ModelResult.Fail($"{route} returned {(int)response.StatusCode}: {responseBody}", transient);
+                return ModelResult.Fail($"Provider returned HTTP {(int)response.StatusCode}.", transient);
             }
 
             using var document = JsonDocument.Parse(responseBody);
@@ -520,7 +543,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
         {
-            return ModelResult.Fail($"{route} request failed: {ex.Message}", true);
+            return ModelResult.Fail("Provider request failed.", true);
         }
     }
 
