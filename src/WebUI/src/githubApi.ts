@@ -13,7 +13,10 @@ export interface GitHubPublication {
   prNumber: number | null; prUrl: string | null; errorCode: string | null; updatedAtUtc: string;
   events: { eventCode: string; recordedAtUtc: string }[];
 }
-export interface GitHubAppStatus { configured: boolean; repository: string; missing: string[] }
+export interface GitHubAppStatus {
+  configured: boolean; repository: string; missing: string[];
+  appId?: string; installationId?: string; runtimeRevision?: string;
+}
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === 'string';
 const nullable = (v: unknown): v is string | null => v === null || str(v);
@@ -43,7 +46,9 @@ export const publication = (v: unknown): v is GitHubPublication => object(v) && 
   nullable(v.errorCode) && date(v.updatedAtUtc) && Array.isArray(v.events) &&
   v.events.every(e => object(e) && str(e.eventCode) && date(e.recordedAtUtc));
 const status = (v: unknown): v is GitHubAppStatus => object(v) && typeof v.configured === 'boolean' &&
-  str(v.repository) && Array.isArray(v.missing) && v.missing.every(str);
+  str(v.repository) && Array.isArray(v.missing) && v.missing.every(str) &&
+  (v.appId === undefined || str(v.appId)) && (v.installationId === undefined || str(v.installationId)) &&
+  (v.runtimeRevision === undefined || str(v.runtimeRevision));
 const base = '/github';
 export const githubApi = {
   status: (token: string) => localRunnerRequest(`${base}/status`, status, token, 'GET'),
@@ -58,6 +63,9 @@ export const githubApi = {
   approve: (value: GitHubPublication, token: string) =>
     localRunnerRequest(`${base}/publications/${value.publicationId}/approve`, publication, token, 'POST',
       { intentDigestSha256: value.intentDigestSha256 }, 200, 180000),
+  reject: (value: GitHubPublication, token: string) =>
+    localRunnerRequest(`${base}/publications/${value.publicationId}/reject`, publication, token, 'POST',
+      { intentDigestSha256: value.intentDigestSha256 }),
   execute: (id: string, token: string) =>
     localRunnerRequest(`${base}/publications/${id}/execute`, publication, token, 'POST', undefined, 200, 180000),
   reconcile: (id: string, token: string) =>

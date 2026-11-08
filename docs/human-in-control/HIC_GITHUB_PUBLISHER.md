@@ -63,7 +63,11 @@ Control Plane'e iletilmesini gerektirir; mevcut Compose stack'i değiştirmeyin.
 
 Broker RS256 App JWT'yi bellekte üretir (en fazla 9 dakikalık ileri expiry);
 tek sayısal repository ID ve üç minimal permission ile kısa ömürlü installation
-token ister. Installation/repository kimliği ve URL yeniden doğrulanır.
+token ister. Önce repository ID ile daraltılmamış, aynı minimal izinli token'ın
+installation envanteri okunur; tam installation yalnız hedef repoyu içermelidir.
+Ardından yayın için ayrı, tek repository ID'ye daraltılmış token alınır.
+Daraltılmış token'ın tek repo göstermesi tek başına installation izolasyonu
+kanıtı sayılmaz. Installation/repository kimliği ve URL yeniden doğrulanır.
 Tokenlar yalnız HTTP Authorization header'ında, backend belleğinde bulunur.
 Redirect, proxy, HTTP, özel API host'u ve geniş token fallback'i kullanılmaz.
 
@@ -89,17 +93,23 @@ $env:ConnectionStrings__Redis = "127.0.0.1:$redisPort"
 
 Trust auth yalnız loopback'e bağlanan, sır içermeyen geçici test DB'si içindir;
 paylaşılan/canlı DB'de kullanmayın. Image eksikse onaysız kurulum/pull yapmayın.
-Control Plane'in v2 temel şemasını bu yeni DB'de oluşturmasından sonra process'i
-durdurun; **aynı yeni DB'ye** 004, 005, 006 ve
+Control Plane startup sırasında schema v2'yi **InitializeSchemaAsync'ten önce**
+doğrular. Bu nedenle ilk API startından önce temel tablo SQL'ini ve 002, 004, 005, 006 ve
 [007](../../src/ControlPlane/Migrations/007-github-publisher.sql) migration'larını
-tek transaction içinde uygulayın. v3 uygulanmaz. Örnek, repo kökünde:
+**yalnız aynı yeni DB'ye**, tek transaction içinde uygulayın. v3 uygulanmaz.
+Örnek, repo kökünde; SQL bulunamazsa işlem açıkça durur:
 
 ```powershell
+$program = Get-Content 'src\ControlPlane\Program.cs' -Raw
+$baseSchema = [regex]::Match($program,
+  '(?s)static async Task InitializeSchemaAsync.*?connection.ExecuteAsync\(@"(.*?)"\);')
+if (!$baseSchema.Success) { throw 'Base schema SQL not found; do not start API.' }
 $migrations = @(
+  '002-execution-ownership.sql',
   '004-local-health-runner.sql', '005-isolated-git-runner.sql',
   '006-project-conversation-code-edit.sql', '007-github-publisher.sql'
 )
-$sql = "BEGIN;`n" + (($migrations | ForEach-Object {
+$sql = "BEGIN;`n" + $baseSchema.Groups[1].Value + "`n" + (($migrations | ForEach-Object {
   Get-Content (Join-Path 'src\ControlPlane\Migrations' $_) -Raw
 }) -join "`n") + "`nCOMMIT;"
 $sql | podman exec --interactive hic52-local-postgres psql -U postgres `
@@ -125,7 +135,7 @@ Bu yalnız yerel HIC bootstrap session token'ıdır, GitHub token'ı değildir.
 UI'de operator giriş alanına yapıştırıp clipboard'ı temizleyin. Model ayarları
 mevcut local `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_NAME` ve timeout
 sözleşmesidir. Worker başlatılmaz. Ayrı WebUI process'inde
-`HIC_API_URL=http://127.0.0.1:19552` kullanıp `npm run dev -- --port 19553`
+`HIC_API_URL=http://127.0.0.1:19552` ve `HIC_WEB_PORT=19553` kullanıp `npm run dev`
 çalıştırın. Mevcut UI/API portlarına bağlanmayın.
 
 ### 3. Boş repo veya mevcut repo
@@ -133,6 +143,10 @@ sözleşmesidir. Worker başlatılmaz. Ayrı WebUI process'inde
 **Boş repo:** Conversation workspace'inin GitHub App bölümünde bootstrap preview
 hazırlayın. Tam repository ID/URL, base branch, `src/Value.cs` içeriği, digest ve
 expiry'yi inceleyip **Approve exact bootstrap write**, ardından execute seçin.
+Ekran immutable repository ID, public App/installation kimliği, runtime revision
+ve tam yeni-dosya diff'ini gösterir. **Reject exact GitHub write** yalnız kalıcı
+ret kaydı oluşturur; onay veya uzak yazma yapmaz. Süresi dolan preview aynı
+ekrandan yenilenebilir; digest değiştiğinde yeni exact insan kararı gerekir.
 Bu tek dosya için Contents API ile ilk commit oluşturulur. İlk commit'in parent
 listesi boş ve tree'si yalnız onaylı source blob olmalıdır. Bootstrap ayrı
 kalıcı operation'dır; task push/PR izni değildir. Sayfayı yeniden açınca kayıt yüklenir.
@@ -227,3 +241,16 @@ JWT/permission/repo, intent-before-write, base mismatch, revoked auth, replay,
 bootstrap, tree/path/mode ve ambiguous ref/PR senaryolarını kapsar.
 Gerçek HIC browser → Mistral → sandbox commit/ref/draft PR acceptance **credentials
 olmadan doğrulanmış değildir**. Geliştirme draft PR'si bu kabulün yerine geçmez.
+
+### Standart launcher ile development UI farkı
+
+Launcher kendi checkout'undaki UI'yi başlatır; readiness yalnız page title/health
+ile ölçülür. Bu kontroller source revision, conversation/publisher capability veya
+v6/v7 schema uyumunu kanıtlamaz. Böylece eski sağlıklı UI yeniden kullanılabilir.
+Review edilmemiş PR #54'ün kodunu stable launcher kendiliğinden seçmemelidir.
+
+Küçük sonraki adım önerisi: onaylanmış runtime manifestinde revision, UI/API
+capability ve schema sürümünü pinlemek; `hic status` içinde farkı açık göstermek
+ve tek launcher girişinden desteklenen UI'yi açmak. Uyumsuzlukta mevcut runtime'ı
+değiştirmek yerine ayrı izole profile yönlendirmek. Bu görev geniş launcher
+refactor'ı, branch merge'i veya canlı DB cutover'ı yapmaz.

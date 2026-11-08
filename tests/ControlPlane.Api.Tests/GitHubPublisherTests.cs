@@ -54,7 +54,7 @@ public sealed class GitHubPublisherTests
             using var client = new HttpClient { BaseAddress = new Uri(address) };
             var id = Guid.NewGuid();
             foreach (var route in new[]
-                     { "bootstrap-preview", $"runs/{id}/preview", $"publications/{id}/approve",
+                     { "bootstrap-preview", $"runs/{id}/preview", $"publications/{id}/approve", $"publications/{id}/reject",
                          $"publications/{id}/execute", $"publications/{id}/reconcile", $"publications/{id}/complete-draft" })
                 Assert.Equal(HttpStatusCode.Unauthorized,
                     (await client.PostAsync("/local-runner/github/" + route, null)).StatusCode);
@@ -110,8 +110,10 @@ public sealed class GitHubPublisherTests
         Assert.Throws<GitHubPublishException>(() => GitHubAppBroker.CheckPermissions(value.RootElement));
     }
 
-    [Fact]
-    public async Task Broker_SignsAppJwtAndRequestsOnlyThePinnedRepositoryAndMinimalPermissions()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Broker_VerifiesFullInstallationBeforeRequestingPinnedToken(bool extraInstallationRepository)
     {
         var key = Path.Combine(Path.GetTempPath(), "hic52-key-" + Guid.NewGuid().ToString("N") + ".pem");
         using var rsa = RSA.Create(2048);
@@ -140,20 +142,34 @@ public sealed class GitHubPublisherTests
                     if (path == "/app/installations/34") return Json(new
                     { app_id = 12, repository_selection = "selected", suspended_at = (string?)null, permissions });
                     using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
-                    Assert.Equal(123, body.RootElement.GetProperty("repository_ids")[0].GetInt32());
+                    if (body.RootElement.TryGetProperty("repository_ids", out var repositoryIds))
+                        Assert.Equal(123, repositoryIds[0].GetInt32());
+                    else
+                        Assert.Equal(3, appRequests);
                     GitHubAppBroker.CheckPermissions(body.RootElement.GetProperty("permissions"));
                     return Json(new { token = "synthetic-installation-token", permissions,
                         expires_at = DateTimeOffset.UtcNow.AddMinutes(60).ToString("O") });
                 }
                 Assert.Equal("synthetic-installation-token", request.Headers.Authorization!.Parameter);
+                if (path == "/installation/repositories" && extraInstallationRepository)
+                    return Json(new { total_count = 2, repositories = new[] { Repository(), Repository(999) } });
                 if (path == "/installation/repositories")
                     return Json(new { total_count = 1, repositories = new[] { Repository() } });
                 return Json(Repository());
             });
             var broker = new GitHubAppBroker(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
                 (token, destination) => new GitHubApi(token, destination, fake));
-            using var api = await broker.OpenAsync(CancellationToken.None);
-            Assert.Equal(3, appRequests);
+            if (extraInstallationRepository)
+            {
+                var rejected = await Assert.ThrowsAsync<GitHubPublishException>(() => broker.OpenAsync(CancellationToken.None));
+                Assert.Equal("github-installation-repository-scope-mismatch", rejected.Code);
+                Assert.Equal(3, appRequests);
+            }
+            else
+            {
+                using var api = await broker.OpenAsync(CancellationToken.None);
+                Assert.Equal(4, appRequests);
+            }
             Assert.DoesNotContain("synthetic-installation-token", JsonSerializer.Serialize(broker.Status));
             Assert.DoesNotContain("PRIVATE KEY", JsonSerializer.Serialize(broker.Status));
         }
@@ -334,6 +350,14 @@ public sealed class GitHubPublisherTests
             var competing = row.Plan with { PublicationId = Guid.NewGuid() };
             await store.CreateAsync(competing, CancellationToken.None);
             Assert.False(await store.ApproveAsync(competing.PublicationId, row.ActorId, competing.Digest(), CancellationToken.None));
+            Assert.False(await store.RejectAsync(competing.PublicationId, Guid.NewGuid(), competing.Digest(), CancellationToken.None));
+            Assert.False(await store.RejectAsync(competing.PublicationId, row.ActorId, new string('a', 64), CancellationToken.None));
+            Assert.True(await store.RejectAsync(competing.PublicationId, row.ActorId, competing.Digest(), CancellationToken.None));
+            var rejected = await store.ReadAsync(competing.PublicationId, row.ActorId, CancellationToken.None);
+            Assert.Equal("human-rejected", rejected!.ErrorCode);
+            Assert.Null(rejected.ApprovedAtUtc);
+            Assert.False(await store.ApproveAsync(competing.PublicationId, row.ActorId, competing.Digest(), CancellationToken.None));
+            Assert.False(await store.RejectAsync(row.PublicationId, row.ActorId, row.Digest, CancellationToken.None));
             var saved = await store.ReadAsync(row.PublicationId, row.ActorId, CancellationToken.None);
             Assert.Equal("pending", saved!.State);
             await using var first = await store.LockAsync(row.PublicationId, CancellationToken.None);

@@ -102,6 +102,19 @@ internal static class GitHubPublisherEndpoints
                 "github-approval-already-decided");
             return Results.Ok(await store.ViewAsync((await store.ReadAsync(id, Actor(context), ct))!, ct));
         });
+        group.MapPost("/publications/{id:guid}/reject", async (Guid id, HttpContext context, CancellationToken ct) =>
+        {
+            await RequireReady(ct);
+            var rejection = await ReadApprovalAsync(context.Request, ct);
+            var row = await store.ReadAsync(id, Actor(context), ct);
+            if (row is null) return Results.NotFound();
+            GitHubAppBroker.Check(rejection is not null &&
+                LocalHealthRunIntent.Matches(rejection.IntentDigestSha256, row.Digest),
+                "github-rejection-invalid");
+            GitHubAppBroker.Check(await store.RejectAsync(id, Actor(context), row.Digest, ct),
+                "github-publication-already-decided");
+            return Results.Ok(await store.ViewAsync((await store.ReadAsync(id, Actor(context), ct))!, ct));
+        });
         foreach (var action in new[] { "execute", "reconcile", "complete-draft" })
         {
             group.MapPost("/publications/{id:guid}/" + action, async (

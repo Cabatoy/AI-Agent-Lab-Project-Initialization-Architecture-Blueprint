@@ -10,7 +10,8 @@ internal sealed class GitHubPublishException(string code) : Exception(code)
     internal string Code { get; } = code;
 }
 
-internal sealed record GitHubAppStatus(bool Configured, string Repository, string[] Missing);
+internal sealed record GitHubAppStatus(bool Configured, string Repository, string[] Missing,
+    string AppId, string InstallationId, string RuntimeRevision);
 internal sealed record GitHubDestination(long Id, string Owner, string Name, string BaseBranch)
 {
     internal string FullName => Owner + "/" + Name;
@@ -28,7 +29,9 @@ internal sealed class GitHubAppBroker(IConfiguration configuration,
                 "HIC_GITHUB_PRIVATE_KEY_PATH", "HIC_GITHUB_REPOSITORY_ID",
                 "HIC_GITHUB_REPOSITORY", "HIC_GITHUB_BASE_BRANCH" };
             var missing = names.Where(name => string.IsNullOrWhiteSpace(configuration[name])).ToArray();
-            return new(missing.Length == 0, configuration["HIC_GITHUB_REPOSITORY"] ?? "", missing);
+            return new(missing.Length == 0, configuration["HIC_GITHUB_REPOSITORY"] ?? "", missing,
+                configuration["HIC_GITHUB_APP_ID"] ?? "", configuration["HIC_GITHUB_INSTALLATION_ID"] ?? "",
+                configuration["HIC_RUNTIME_REVISION"] ?? "");
         }
     }
 
@@ -88,6 +91,21 @@ internal sealed class GitHubAppBroker(IConfiguration configuration,
                 installation.GetProperty("suspended_at").ValueKind == JsonValueKind.Null,
                 "github-installation-not-authorized");
             CheckPermissions(installation.GetProperty("permissions"));
+            var inventoryTokenResponse = await appApi.PostAsync("/app/installations/" + installationId + "/access_tokens",
+                new { permissions = new { contents = "write", pull_requests = "write", metadata = "read" } },
+                cancellationToken);
+            CheckPermissions(inventoryTokenResponse.GetProperty("permissions"));
+            var inventoryToken = inventoryTokenResponse.GetProperty("token").GetString();
+            Check(!string.IsNullOrWhiteSpace(inventoryToken), "github-token-invalid");
+            using (var inventoryApi = testApiFactory?.Invoke(inventoryToken!, destination) ??
+                new GitHubApi(inventoryToken!, destination))
+            {
+                var inventory = await inventoryApi.GetAsync("/installation/repositories?per_page=100", cancellationToken);
+                Check(inventory.GetProperty("total_count").GetInt32() == 1 &&
+                    inventory.GetProperty("repositories").GetArrayLength() == 1,
+                    "github-installation-repository-scope-mismatch");
+                VerifyRepository(inventory.GetProperty("repositories")[0], destination);
+            }
             var tokenResponse = await appApi.PostAsync("/app/installations/" + installationId + "/access_tokens",
                 new { repository_ids = new[] { destination.Id },
                     permissions = new { contents = "write", pull_requests = "write", metadata = "read" } },

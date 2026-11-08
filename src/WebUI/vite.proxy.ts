@@ -5,7 +5,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|execute|reconcile|complete-draft))?)`;
+const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
   `^/api/local-runner/(?:${githubPaths}|session|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -165,7 +165,7 @@ async function localRunnerRequest(
   const isGitHubRead = req.method === 'GET' && new RegExp(
     `^/api/local-runner/github/(?:status|repository|bootstraps|publications/${guidPath})$`, 'i').test(path);
   const isGitHubApprove = req.method === 'POST' && new RegExp(
-    `^/api/local-runner/github/publications/${guidPath}/approve$`, 'i').test(path);
+    `^/api/local-runner/github/publications/${guidPath}/(?:approve|reject)$`, 'i').test(path);
   const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
     `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
   const isRead = req.method === 'GET' &&

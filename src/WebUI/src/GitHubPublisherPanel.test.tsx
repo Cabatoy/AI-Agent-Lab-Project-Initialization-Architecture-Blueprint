@@ -5,7 +5,7 @@ import { githubApi, type GitHubPublication } from './githubApi';
 
 vi.mock('./githubApi', () => ({ githubApi: {
   status: vi.fn(), bootstraps: vi.fn(), preview: vi.fn(), bootstrapPreview: vi.fn(),
-  approve: vi.fn(), execute: vi.fn(), reconcile: vi.fn(), completeDraft: vi.fn(),
+  approve: vi.fn(), reject: vi.fn(), execute: vi.fn(), reconcile: vi.fn(), completeDraft: vi.fn(),
 } }));
 const id = '11234567-89ab-cdef-0123-456789abcdef';
 const now = new Date().toISOString();
@@ -25,7 +25,8 @@ const succeeded: GitHubPublication = { ...preview, state: 'succeeded', commitSha
   remoteSha: 'f'.repeat(40), prNumber: 52, prUrl: 'https://github.com/Cabatoy/hic-agent-sandbox/pull/52',
   events: [{ eventCode: 'succeeded', recordedAtUtc: now }] };
 beforeEach(() => {
-  vi.mocked(githubApi.status).mockResolvedValue({ configured: true, repository: 'Cabatoy/hic-agent-sandbox', missing: [] });
+  vi.mocked(githubApi.status).mockResolvedValue({ configured: true, repository: 'Cabatoy/hic-agent-sandbox', missing: [],
+    appId: '1234', installationId: '5678', runtimeRevision: 'a'.repeat(40) });
   vi.mocked(githubApi.preview).mockResolvedValue(preview);
   vi.mocked(githubApi.approve).mockResolvedValue({ ...preview, state: 'pending' });
   vi.mocked(githubApi.execute).mockResolvedValue(succeeded);
@@ -77,4 +78,29 @@ it('reports missing backend configuration without accepting private keys in chat
   expect(await screen.findByText(/HIC_GITHUB_APP_ID, HIC_GITHUB_PRIVATE_KEY_PATH/)).toBeInTheDocument();
   expect(screen.queryByText('Preview GitHub task publication')).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+});
+
+it('shows the immutable repository, credential identity and exact bootstrap diff before a human decision', async () => {
+  const bootstrap = { ...preview, runId: null, plan: { ...preview.plan, kind: 'bootstrap' as const,
+    runId: null, taskId: null, baseCommit: null, baseTree: null, taskBranch: 'SaasMain' } };
+  vi.mocked(githubApi.bootstraps).mockResolvedValue([bootstrap]);
+  render(<GitHubPublisherPanel token="session-only" />);
+  await screen.findByText('Exact initial file diff');
+  expect(screen.getByText(/Immutable repository ID:/)).toHaveTextContent('123');
+  expect(screen.getByText(/GitHub App:/)).toHaveTextContent('1234');
+  expect(screen.getByText(/GitHub App:/)).toHaveTextContent('5678');
+  expect(screen.getByText(/--- \/dev\/null/)).toHaveTextContent('+++ b/src/Value.cs');
+  expect(githubApi.approve).not.toHaveBeenCalled();
+  expect(githubApi.execute).not.toHaveBeenCalled();
+});
+
+it('records rejection without approval, execution or reconciliation', async () => {
+  vi.mocked(githubApi.reject).mockResolvedValue({ ...preview, state: 'blocked', errorCode: 'human-rejected' });
+  render(<GitHubPublisherPanel token="session-only" runId={id} saved={[preview]} />);
+  fireEvent.click(await screen.findByText('Reject exact GitHub write'));
+  expect(await screen.findByText(/Human rejected this write/)).toBeInTheDocument();
+  expect(githubApi.reject).toHaveBeenCalledWith(preview, 'session-only');
+  expect(githubApi.approve).not.toHaveBeenCalled();
+  expect(githubApi.execute).not.toHaveBeenCalled();
+  expect(screen.queryByText('Read-only remote reconciliation')).not.toBeInTheDocument();
 });
