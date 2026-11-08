@@ -190,11 +190,16 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
     {
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         var task = await ReadTaskAsync(connection, null, taskId, cancellationToken);
-        return task is null || task.Status != TaskStatuses.Draft ? null : ToIntent(task);
+        if (task is null || task.Status != TaskStatuses.Draft) return null;
+        var reserved = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists(select 1 from native_health_runs where task_id = @taskId);",
+            new { taskId }, cancellationToken: cancellationToken));
+        return reserved ? null : ToIntent(task);
     }
 
     internal async Task<(string Code, LocalHealthRun? Run)> ApproveAsync(
-        Guid taskId, Guid actorId, string expectedDigest, CancellationToken cancellationToken)
+        Guid taskId, Guid actorId, string expectedDigest, CancellationToken cancellationToken,
+        GitEditPlan? plan = null)
     {
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
@@ -203,12 +208,24 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         if (task is null) return ("not-found", null);
         if (task.Status != TaskStatuses.Draft) return ("task-not-draft", null);
         var intent = ToIntent(task);
+        if (plan is not null)
+        {
+            if (plan.TaskId != taskId || plan.ActorId != actorId || plan.ExpiresAtUtc <= DateTime.UtcNow ||
+                plan.ExpiresAtUtc > DateTime.UtcNow.AddMinutes(5) ||
+                !LocalHealthRunIntent.Matches(plan.TaskDigest, intent.IntentDigestSha256))
+                return ("intent-changed", null);
+            intent = intent with
+            {
+                Action = GitEditPlan.Action, Scope = GitEditPlan.Scope,
+                IntentDigestSha256 = plan.Digest()
+            };
+        }
         if (!LocalHealthRunIntent.Matches(expectedDigest, intent.IntentDigestSha256))
             return ("intent-changed", null);
 
         var now = DateTime.UtcNow;
         var runId = Guid.NewGuid();
-        var expiresAt = now.AddMinutes(5);
+        var expiresAt = plan?.ExpiresAtUtc ?? now.AddMinutes(5);
         var inserted = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(@"
             insert into native_health_runs
                 (run_id, task_id, actor_id, action, scope, intent_digest_sha256, task_updated_at_utc,
@@ -220,8 +237,8 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             returning run_id;",
             new
             {
-                RunId = runId, TaskId = task.Id, ActorId = actorId, Action = intent.Action,
-                Scope = intent.Scope, Digest = intent.IntentDigestSha256, TaskUpdatedAtUtc = task.UpdatedAtUtc,
+                RunId = runId, TaskId = task.Id, ActorId = actorId, Action = LocalHealthRunIntent.Action,
+                Scope = LocalHealthRunIntent.Scope, Digest = intent.IntentDigestSha256, TaskUpdatedAtUtc = task.UpdatedAtUtc,
                 Now = now, ExpiresAtUtc = expiresAt
             }, transaction, cancellationToken: cancellationToken));
         if (inserted is null)
@@ -244,6 +261,12 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             return ("already-approved", null);
         }
 
+        if (plan is not null)
+            await connection.ExecuteAsync(new CommandDefinition(
+                "update native_health_runs set action = @Action, scope = @Scope, plan_json = @Json::jsonb where run_id = @runId;",
+                new { runId, Action = GitEditPlan.Action, Scope = GitEditPlan.Scope,
+                    Json = JsonSerializer.Serialize(plan, ResultJsonOptions) },
+                transaction, cancellationToken: cancellationToken));
         await InsertEventAsync(connection, transaction, runId, actorId, "approved", cancellationToken);
         await InsertEventAsync(connection, transaction, runId, actorId, "queued", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -277,6 +300,8 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         }
 
         var task = await ReadTaskAsync(connection, transaction, run.TaskId, cancellationToken, forUpdate: true);
+        var plan = run.Action == GitEditPlan.Action
+            ? await ReadPlanAsync(connection, transaction, runId, cancellationToken) : null;
         var now = DateTime.UtcNow;
         if (now >= run.ExpiresAtUtc)
         {
@@ -290,7 +315,12 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         }
         if (task is null || task.Status != TaskStatuses.Draft ||
             task.UpdatedAtUtc != await ReadRunTaskVersionAsync(connection, transaction, runId, cancellationToken) ||
-            !LocalHealthRunIntent.Matches(run.IntentDigestSha256, ToIntent(task).IntentDigestSha256))
+            !(plan is null && run.Action == LocalHealthRunIntent.Action
+                ? LocalHealthRunIntent.Matches(run.IntentDigestSha256, ToIntent(task).IntentDigestSha256)
+                : plan is not null && plan.ActorId == actorId && plan.TaskId == run.TaskId &&
+                  plan.ExpiresAtUtc == run.ExpiresAtUtc &&
+                  LocalHealthRunIntent.Matches(plan.TaskDigest, ToIntent(task).IntentDigestSha256) &&
+                  LocalHealthRunIntent.Matches(run.IntentDigestSha256, plan.Digest())))
         {
             await connection.ExecuteAsync(new CommandDefinition(@"
                 update native_health_runs set status = 'invalidated', completed_at_utc = @Now
@@ -313,19 +343,27 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
 
     internal async Task<bool> CompleteAsync(
         Guid runId, Guid actorId, LocalDiagnosticSnapshot result, CancellationToken cancellationToken)
+        => await CompleteResultAsync(runId, actorId, SerializeResult(result), cancellationToken);
+
+    internal Task<bool> CompleteGitAsync(
+        Guid runId, Guid actorId, GitEditResult result, CancellationToken cancellationToken) =>
+        CompleteResultAsync(runId, actorId, JsonSerializer.Serialize(result, ResultJsonOptions), cancellationToken,
+            result.TestCode == "passed:exact-content-and-scope" && result.SourceUnchanged ? "completed" : "failed");
+
+    private async Task<bool> CompleteResultAsync(
+        Guid runId, Guid actorId, string resultJson, CancellationToken cancellationToken, string status = "completed")
     {
-        var resultJson = SerializeResult(result);
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var changed = await connection.ExecuteAsync(new CommandDefinition(@"
             update native_health_runs
-            set status = 'completed', result_json = @ResultJson::jsonb, completed_at_utc = @Now
+            set status = @Status, result_json = @ResultJson::jsonb, completed_at_utc = @Now
             where run_id = @RunId and actor_id = @ActorId and status = 'running';",
-            new { runId, actorId, ResultJson = resultJson, Now = DateTime.UtcNow },
+            new { runId, actorId, ResultJson = resultJson, Now = DateTime.UtcNow, Status = status },
             transaction, cancellationToken: cancellationToken));
         if (changed != 1) return false;
-        await InsertEventAsync(connection, transaction, runId, actorId, "completed", cancellationToken);
+        await InsertEventAsync(connection, transaction, runId, actorId, status, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
@@ -351,6 +389,21 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             order by recorded_at_utc, id;",
             new { runId }, cancellationToken: cancellationToken));
         return new LocalHealthRunSnapshot(run, events.AsList());
+    }
+
+    internal async Task<GitEditPlan?> GetPlanAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(postgresConnectionString);
+        return await ReadPlanAsync(connection, null, runId, cancellationToken);
+    }
+
+    private static async Task<GitEditPlan?> ReadPlanAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid runId, CancellationToken cancellationToken)
+    {
+        var json = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+            "select plan_json::text from native_health_runs where run_id = @runId;",
+            new { runId }, transaction, cancellationToken: cancellationToken));
+        return json is null ? null : JsonSerializer.Deserialize<GitEditPlan>(json, ResultJsonOptions);
     }
 
     private static LocalHealthIntent ToIntent(TaskIntentSource task) => new(
@@ -477,6 +530,16 @@ internal static class LocalHealthRunnerEndpoints
             if (claim.Code != "claimed")
                 return Results.Conflict(new { error = $"Local run not eligible: {claim.Code}." });
 
+            if (claim.Run!.Action == GitEditPlan.Action)
+            {
+                var plan = await store.GetPlanAsync(runId, CancellationToken.None);
+                var gitResult = await GitEditExecutor.ExecuteAsync(
+                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
+                if (!await store.CompleteGitAsync(runId, actorId.Value, gitResult, CancellationToken.None))
+                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
+                return Results.Ok(new { runId, status = gitResult.SourceUnchanged &&
+                    gitResult.TestCode == "passed:exact-content-and-scope" ? "completed" : "failed" });
+            }
             var result = await LocalDiagnostics.InspectAsync(postgresConnectionString, redisDb,
                 CancellationToken.None);
             if (!await store.CompleteAsync(runId, actorId.Value, result, CancellationToken.None))
@@ -511,6 +574,8 @@ internal static class LocalHealthRunnerEndpoints
                 expiresAtUtc = snapshot.Run.ExpiresAtUtc,
                 startedAtUtc = snapshot.Run.StartedAtUtc,
                 completedAtUtc = snapshot.Run.CompletedAtUtc,
+                plan = snapshot.Run.Action == GitEditPlan.Action
+                    ? await store.GetPlanAsync(runId, cancellationToken) : null,
                 result,
                 events = snapshot.Events
             });

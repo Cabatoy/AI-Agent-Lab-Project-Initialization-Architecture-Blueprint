@@ -2,17 +2,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type Health, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
+import { GitRunnerWorkflow } from './GitRunnerWorkflow';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { PlanningWorkflow } from './PlanningWorkflow';
 import { Status } from './components';
 
-type Page = 'Command Center' | 'Planning' | 'Local Runner' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
+type Page = 'Command Center' | 'Planning' | 'Local Runner' | 'Isolated Git' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
 type Resource<T> = { data: T | null; error: string | null };
 const pages: { name: Page; icon: string }[] = [
   { name: 'Command Center', icon: '⌘' },
   { name: 'Planning', icon: '◇' },
   { name: 'Local Runner', icon: '▶' },
+  { name: 'Isolated Git', icon: '◇' },
   { name: 'Overview', icon: '◫' }, { name: 'Tasks', icon: '▤' },
   { name: 'Plans', icon: '◇' }, { name: 'Agents', icon: '⬡' },
   { name: 'Models & Providers', icon: '◈' }, { name: 'Approvals', icon: '✓' },
@@ -20,6 +22,7 @@ const pages: { name: Page; icon: string }[] = [
 const subtitles: Partial<Record<Page, string>> = {
   'Command Center': 'Describe work in natural language and save it as a Draft task.',
   'Local Runner': 'Approve one exact, read-only local system health action and review its durable result.',
+  'Isolated Git': 'Approve one bounded disposable-repository edit and inspect its actual diff and test result.',
   Planning: 'Select the configured repository and review a local, versioned plan preview.',
   Overview: 'Your local software factory, in view.',
   Tasks: 'Inspect task state from the Control Plane.',
@@ -132,7 +135,7 @@ export default function App() {
     </aside>
     <main id="main" className="main" tabIndex={-1}>
       <header className="topbar"><div><span className="breadcrumb">HIC / WORKSPACE /</span> <span>{page.toUpperCase()}</span></div>
-        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : page === 'Local Runner' ? 'HUMAN-APPROVED LOCAL RUN' : 'READ ONLY'}</span>
+        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : page === 'Local Runner' || page === 'Isolated Git' ? 'HUMAN-APPROVED LOCAL RUN' : 'READ ONLY'}</span>
           {page !== 'Command Center' && <button className="secondary" onClick={() => navigate('Command Center')}>＋ New task</button>}
           <button className="refresh" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : '↻  Refresh'}</button></div></header>
       <div className="content"><div className="page-heading"><div><p className="eyebrow">HUMAN IN CONTROL</p>
@@ -141,6 +144,7 @@ export default function App() {
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
       {page === 'Local Runner' && <LocalRunnerWorkflow />}
+      {page === 'Isolated Git' && <GitRunnerWorkflow />}
       {page === 'Planning' && <PlanningWorkflow />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
@@ -157,7 +161,7 @@ export default function App() {
             : !Object.keys(counts).length ? <div className="notice">No task statuses to display.</div>
               : <div className="status-list">{Object.entries(counts).map(([status, count]) => <div key={status}><Status value={status} /><strong>{count}</strong></div>)}</div>}</section>
           <section className="panel"><p className="eyebrow">SYSTEM BOUNDARY</p><h2>Operational state</h2>
-            <p className="muted">This dashboard reads existing Control Plane data and can create Draft tasks from the Command Center. Outside the fixed Local Runner health action, it cannot approve, dispatch or execute tasks.</p>
+            <p className="muted">This dashboard creates Draft tasks and supports the fixed health check and explicitly authorized disposable-repository edit. General task dispatch, Worker execution and deployment remain disabled.</p>
             <div className="boundary"><span>API health</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Responding' : 'Unexpected response') : 'Checking'}</strong></div>
             <div className="boundary"><span>Task creation</span><strong>Draft only</strong></div>
             <div className="boundary"><span>Recovery (R3 / R4)</span><strong>Pending</strong></div>
