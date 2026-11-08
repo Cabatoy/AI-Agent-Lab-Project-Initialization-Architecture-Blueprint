@@ -2,6 +2,7 @@ name: HIC Control Plane and Web UI CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [develop, main]
     paths:
       - 'HumanInControl.sln'

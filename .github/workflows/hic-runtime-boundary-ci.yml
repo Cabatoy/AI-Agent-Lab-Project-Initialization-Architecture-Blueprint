@@ -2,6 +2,7 @@ name: HIC Runtime Execution Safety Boundary CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [develop, main]
     paths:
       - 'src/**'
