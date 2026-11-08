@@ -65,6 +65,16 @@ describe('dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Agents/ }));
     expect(screen.getByText('No persisted agent definitions are available.')).toBeInTheDocument();
   });
+  it('opens the local runner without authenticating or starting an action', async () => {
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Local Runner' }));
+    expect(screen.getByRole('heading', { name: 'Run a read-only local task' })).toBeInTheDocument();
+    expect(screen.getByText('HUMAN-APPROVED LOCAL RUN')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Authenticate local operator' })).toBeDisabled();
+    expect(api.createTask).not.toHaveBeenCalled();
+    expect(api.localDiagnostics).not.toHaveBeenCalled();
+  });
   it('opens the human-controlled local planning workflow', async () => {
     render(<App />);
     await screen.findByText('Connected');

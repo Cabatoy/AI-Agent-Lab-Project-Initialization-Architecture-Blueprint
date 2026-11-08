@@ -4,13 +4,17 @@
 
 Bu yerel HIC ekranı, mevcut Control Plane'in task ve plan bilgilerini gösterir.
 **Command Center** ekranından doğal dilde iş tanımı yazılarak yalnızca **Draft**
-durumunda task oluşturulabilir; Draft task onaylanmaz, kuyruğa alınmaz, ajan
-veya model çalıştırılmaz. **Planning** ekranı Native Host'un tek yapılandırılmış
+durumunda task oluşturulur. **Local Runner**, yapılandırılmış yerel operatör
+oturumu ve manuel schema v4 kurulumu mevcutsa, Draft task için yalnızca sabit
+`system.health` eylemini gösterir, açık onay alır ve güvenli sonucu aynı ekranda
+gösterir. Task Worker kuyruğuna girmez; Worker, model, shell veya repository
+değişikliği kullanılmaz. Control Plane tek task ve run otoritesidir; bu UI
+ayrı bir task deposu ya da scheduler eklemez. Bu dar akış tam P9 approval
+workflow veya production readiness değildir. **Planning** ekranı Native Host'un tek yapılandırılmış
 workspace'ini salt okunur kontrol eder ve yalnız tarayıcı belleğinde sürümlü plan
-önizlemesi üretir; bu plan Control Plane'e yazılmaz ve çalıştırılamaz. Control
-Plane tek task/execution otoritesidir; bu uygulama ayrı bir task deposu,
-scheduler veya backend eklemez. Kimliği doğrulanmış plan onayı ve kalıcı audit
-altyapısı mevcut olmadığından onay/ret işlemleri kapalıdır. R3/R4 recovery ve
+önizlemesi üretir; bu plan Control Plane'e yazılmaz ve çalıştırılamaz. Genel
+plan için kimliği doğrulanmış onay ve kalıcı audit uygulanmamıştır; yalnız
+sabit `system.health` için dar local runner otoritesi vardır. R3/R4 recovery ve
 tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
@@ -54,11 +58,13 @@ machine IP'si veya uzak bir API bu sürümde desteklenmez; güvenli bir loopback
 erişimi ayrıca mevcut değilse altyapıyı değiştirmeden API erişimi kullanılamaz.
 
 Geliştirme proxy'si yalnız şu GET isteklerini iletir: `/health`, `/tasks`,
-`/tasks/{guid}` ve `/plans`. Tek yazma isteği `POST /api/tasks`'tır (Draft
-oluşturma). Diğer yöntemler, yollar (ör. `/approve`, `/retry`) ve query
-string'ler reddedilir; browser cookie/credential/header'ları upstream'e
-aktarılmaz. Tüm `/api` isteklerinde `Host` başlığı `127.0.0.1:<port>` olmalıdır
-(DNS rebinding koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
+`/tasks/{guid}` ve `/plans`. `POST /api/tasks` yalnız Draft oluşturur. Local
+Runner için yalnız session açma, capability/intent/run okuma, exact intent
+onayı ve allowlist edilmiş run başlatma yolları eklenmiştir. Diğer yöntemler,
+yollar (ör. Worker `/approve` ve `/retry`) ve query string'ler reddedilir;
+cookie ve istenmeyen istemci başlıkları upstream'e aktarılmaz. Tüm `/api`
+isteklerinde `Host` başlığı `127.0.0.1:<port>` olmalıdır (DNS rebinding
+koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
 
 `POST /api/tasks` yalnız şu koşullarda iletilir:
 
@@ -75,9 +81,37 @@ aktarılmaz. Tüm `/api` isteklerinde `Host` başlığı `127.0.0.1:<port>` olma
 
 Upstream ve gövde okuma zaman aşımı 8 saniyedir; bağlantı kurulamazsa 502
 (`unreachable`), bağlantı yarıda kesilirse 502 (`interrupted`), zaman aşımında
-504 döner. Bu proxy bir authentication veya authorization mekanizması
-değildir; Control Plane'i doğrudan erişime karşı korumaz. **Control Plane'de
-kimlik doğrulama yoktur**; bu nedenle API ve UI loopback dışına açılmamalıdır.
+504 döner. Bu proxy genel bir authentication veya authorization mekanizması
+değildir; Control Plane'i doğrudan erişime karşı korumaz. Genel Control Plane
+API'si kimlik doğrulamasızdır; API ve UI loopback dışına açılmamalıdır. Local
+Runner'a özel API ayrıca `HIC_LOCAL_OPERATOR_TOKEN` ile açılan 15 dakikalık
+operator session'ı ister ve actor kimliğini `HIC_LOCAL_OPERATOR_ID` üzerinden
+bağlar. Bootstrap token yalnız yerel proxy üzerinden gönderilir, browser
+storage'a veya task/audit kayıtlarına yazılmaz. Session token yalnız sayfa
+belleğinde tutulur.
+
+Local Runner için Control Plane ortamında en az 32 kriptografik rastgele
+byte'ın Base64 değeri olan `HIC_LOCAL_OPERATOR_TOKEN` ve sabit, boş olmayan
+GUID `HIC_LOCAL_OPERATOR_ID` ayrıca yapılandırılmalıdır. Bu token'ı repoya,
+terminal kaydına veya issue'lara yazmayın. Control Plane schema v4'ü otomatik
+uygulamaz; [004-local-health-runner.sql](../../src/ControlPlane/Migrations/004-local-health-runner.sql)
+yalnız açıkça onaylanmış disposable test veritabanında ve
+`psql --single-transaction --set ON_ERROR_STOP=1 --file ...` ile atomik olarak
+uygulanmalıdır. v4 yoksa
+session ve runner endpoint'leri fail-closed şekilde kullanılamaz. Çalışan
+Control Plane'i yeniden başlatmak veya herhangi bir mevcut veritabanına
+migration uygulamak için ayrı açık onay gerekir.
+
+Run onayı task ID, `updated_at_utc` sürümü, `system.health` action'ı,
+`control-plane:health:read` scope'u ve SHA-256 intent hash'ine bağlanır. DB'de
+tek task için tek run, queued -> running claim'i ve append-only audit event'leri
+vardır; tekrar onayı aynı run'ı döndürür ve tekrar çalıştırmaz. Audit, yalnız
+actor/run ID, sabit event kodu ve zaman tutar; tamamlanmış veya başka nedenle
+çalıştırılamayan run'ı yeniden çalıştırma girişimi `rejected` event'i ekler.
+Sonuçta yalnız Control Plane,
+PostgreSQL, Redis ve Worker için güvenli durum kategorileri saklanır; ham
+exception, connection string, prompt veya credential tutulmaz. Run sırasında
+Worker kuyruğu kullanılmaz.
 
 **Güvenlik sınırı:** Bu yerel geliştirme aracı production için değildir.
 Kullanılan Control Plane portunun ayrıca yalnız loopback'e bağlı ve yetkisiz
@@ -106,8 +140,9 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
   Plan, yerel deterministik bir şablondur; içerik, sürüm ve SHA-256 hash içerir.
   Provider/Worker durumları için probe yapılmaz; provider'lar doğrulanana kadar
   hazır sayılmaz. Plan önizleme olayları sadece sayfa belleğinde tutulur; bu
-  güvenilir veya kalıcı audit değildir. Control Plane'de authenticated actor ve
-  hash'e bağlı approval receipt olmadığından Approve devre dışıdır.
+  güvenilir veya kalıcı audit değildir. Genel plan için authenticated actor ve
+  hash'e bağlı approval receipt olmadığından Approve devre dışıdır. Local
+  Runner onayı bu Planning önizlemesini yetkilendirmez.
 - **Command Center:** Request (zorunlu) ve Title (isteğe bağlı) alanları.
   Title boşsa isteğin ilk dolu satırından en fazla 80 karakterlik başlık
   türetilir. Enter yeni satır ekler; Ctrl+Enter (macOS'ta ⌘+Enter) veya düğme
@@ -117,6 +152,13 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
   korunur. Sonucu belirsiz durumlarda (zaman aşımı, bağlantı kesilmesi,
   Control Plane 5xx, beklenmeyen yanıt) task oluşmuş olabilir: yeni gönderim,
   Tasks listesi başarıyla yenilenene kadar kilitlenir.
+- **Local Runner:** önce yerel operator bootstrap token ile kısa ömürlü session
+  açılır, sonra Draft task seçilip server'ın sunduğu sabit action, scope,
+  task-version ve hash incelenir. Açık `Approve and run system.health`
+  onayından sonra bir defalık run kaydı oluşturulur; aynı ekran queued/running
+  durumunu, kalıcı audit event'lerini ve kategorize edilmiş sonucu gösterir.
+  Task status Draft kalır; Agent Worker, provider, model, shell ve arbitrary
+  action çağrısı yoktur. Runner schema v4 yoksa endpoint'ler çalışmaz.
 - **Overview:** `/health`, `/tasks`, `/plans`; durum sayıları, son task'lar ve
   üç isteğin tümünün son başarılı refresh zamanı. Health yalnız API'nin health
   yanıtıdır, PostgreSQL/Redis/Worker sağlık garantisi değildir.
@@ -125,10 +167,10 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
 - **Plans:** `/plans`; gerçek plan alanları. Plan–task ilişkileri ve dependency
   graph API tarafından sunulmaz.
 - **Agents**, **Models & Providers**, **Approvals:** yalnız gelecek yetenekleri
-  açıklayan placeholder ekranlar; plan approval/rejection veya model çağrısı
-  yoktur.
-- Draft task oluşturma dışında task mutasyonu (approve, retry, dispatch),
-  LLM çağrısı, GitHub yazma işlemi, secret, token/maliyet ölçümü, otomatik
+  açıklayan placeholder ekranlar; onay/ret düğmesi veya model çağrısı yoktur.
+- Local Runner'daki sabit, insan-onaylı `system.health` run'ı dışında task
+  mutasyonu (Worker approve, retry, dispatch), LLM çağrısı, GitHub yazma
+  işlemi, secret/token/maliyet ölçümü, repository editing, genel komut
   execution veya deployment yapılmaz.
 
 

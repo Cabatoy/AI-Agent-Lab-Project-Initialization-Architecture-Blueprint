@@ -76,7 +76,7 @@ function makePlanBody(
     ] satisfies PreviewStep[],
     risks: [
       'No configured LLM provider has completed a successful availability check.',
-      'Authenticated approval and durable audit are unavailable in the current Control Plane.',
+      'This general plan preview has no authenticated approval or durable audit. Local Runner approval covers only its fixed action.',
       'Repository inspection is limited to the single Native Host configured workspace.',
     ],
     acceptanceCriteria: [
@@ -226,7 +226,7 @@ export function PlanningWorkflow() {
       <div className="detail-block"><span className="label">Risks and blockers</span><ul>{preview.risks.map(item => <li key={item}>{item}</li>)}</ul></div>
       <div className="approval-block" role="note">
         <strong>Approval unavailable</strong>
-        <p className="muted small">The Control Plane has no authenticated actor or plan-hash-bound approval receipt. This preview is not approved and cannot be executed.</p>
+        <p className="muted small">This preview has no authenticated, plan-hash-bound approval receipt and cannot be executed. Local Runner approval does not authorize this general plan.</p>
         <button className="secondary" type="button" disabled>Approve plan</button>
       </div>
     </section>}

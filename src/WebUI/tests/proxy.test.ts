@@ -96,6 +96,60 @@ describe('local development proxy', () => {
     expect(received).toEqual([]);
   });
 
+  it('proxies only the authenticated local runner allowlist and never forwards unrelated headers', async () => {
+    const token = 'Bearer ' + 'S'.repeat(44);
+    const session = await fetch(`${origin}/api/local-runner/session`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner' },
+      body: JSON.stringify({ bootstrapToken: 'R'.repeat(43) + '=' }),
+    });
+    expect(session.status).toBe(201);
+    expect((await fetch(`${origin}/api/local-runner/capabilities`, {
+      headers: { 'sec-fetch-site': 'same-origin', 'x-hic-request': 'local-runner', authorization: token, cookie: 'private=1' },
+    })).status).toBe(200);
+    const digest = 'a'.repeat(64);
+    const approval = await fetch(`${origin}/api/local-runner/tasks/${created.id}/approve`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner',
+        authorization: token, cookie: 'private=1' },
+      body: JSON.stringify({ intentDigestSha256: digest }),
+    });
+    expect(approval.status).toBe(201);
+
+    const forwarded = received.slice(-3);
+    expect(forwarded.map(item => `${item.method} ${item.url}`)).toEqual([
+      'POST /local-runner/session',
+      'GET /local-runner/capabilities',
+      `POST /local-runner/tasks/${created.id}/approve`,
+    ]);
+    expect(JSON.parse(forwarded[0].body)).toEqual({ bootstrapToken: 'R'.repeat(43) + '=' });
+    expect(forwarded[0].headers.authorization).toBeUndefined();
+    expect(forwarded[1].headers.authorization).toBe(token);
+    expect(forwarded[2].headers.authorization).toBe(token);
+    for (const request of forwarded) expect(request.headers.cookie).toBeUndefined();
+
+    const before = received.length;
+    for (const [method, path, headers, body] of [
+      ['POST', `/api/local-runner/tasks/${created.id}/approve`, { authorization: token }, JSON.stringify({ intentDigestSha256: digest, action: 'shell.run' })],
+      ['POST', `/api/local-runner/runs/${created.id}/execute`, { authorization: token, 'content-type': 'application/json' }, JSON.stringify({ command: 'whoami' })],
+      ['GET', `/api/local-runner/runs/${created.id}`, {}, undefined],
+      ['POST', '/api/local-runner/tasks/../approve', { authorization: token }, '{}'],
+    ] as [string, string, Record<string, string>, string | undefined][]) {
+      const response = await fetch(`${origin}${path}`, {
+        method, headers: { origin, 'x-hic-request': 'local-runner', ...headers },
+        body: method === 'GET' ? undefined : body ?? '',
+      });
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    }
+    expect(received).toHaveLength(before);
+
+    const missingOrigin = await fetch(`${origin}/api/local-runner/capabilities`, {
+      headers: { 'x-hic-request': 'local-runner', authorization: token },
+    });
+    expect(missingOrigin.status).toBe(403);
+    expect(received).toHaveLength(before);
+  });
+
   it('forwards one validated POST with a re-serialized body and no client credentials', async () => {
     const response = await post(JSON.stringify({ description: 'Exact\n  request text  ', title: 'Title' }),
       { cookie: 'session=private', 'x-forwarded-for': '10.0.0.1', 'content-type': 'application/json; charset=utf-8' });

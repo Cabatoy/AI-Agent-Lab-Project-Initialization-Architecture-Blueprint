@@ -19,6 +19,52 @@ export interface LocalDiagnosticSnapshot {
   redis: 'ok' | 'unavailable';
   worker: 'not-checked';
 }
+export interface LocalRunnerSession {
+  accessToken: string;
+  expiresInSeconds: number;
+}
+export interface LocalRunnerCapability {
+  actorId: string;
+  action: 'system.health';
+  scope: 'control-plane:health:read';
+  worker: 'not-used';
+  provider: 'not-used';
+}
+export interface LocalHealthIntent {
+  taskId: string;
+  taskTitle: string;
+  action: 'system.health';
+  scope: 'control-plane:health:read';
+  taskUpdatedAtUtc: string;
+  intentDigestSha256: string;
+}
+export interface LocalHealthRunEvent {
+  eventCode: string;
+  recordedAtUtc: string;
+}
+export interface LocalHealthRunApproval {
+  runId: string;
+  taskId: string;
+  action: 'system.health';
+  scope: 'control-plane:health:read';
+  intentDigestSha256: string;
+  status: 'queued' | 'running' | 'completed' | 'expired' | 'invalidated';
+}
+export interface LocalHealthRunSnapshot {
+  runId: string;
+  taskId: string;
+  action: 'system.health';
+  scope: 'control-plane:health:read';
+  intentDigestSha256: string;
+  status: 'queued' | 'running' | 'completed' | 'expired' | 'invalidated';
+  createdAtUtc: string;
+  approvedAtUtc: string;
+  expiresAtUtc: string;
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  result: LocalDiagnosticSnapshot | null;
+  events: LocalHealthRunEvent[];
+}
 export interface Task {
   id: string;
   title: string;
@@ -56,6 +102,33 @@ const localDiagnostics: Guard<LocalDiagnosticSnapshot> = (v): v is LocalDiagnost
   object(v) && v.action === 'system.health' && date(v.checkedAtUtc) &&
   v.controlPlane === 'ok' && (v.postgres === 'ok' || v.postgres === 'unavailable') &&
   (v.redis === 'ok' || v.redis === 'unavailable') && v.worker === 'not-checked';
+const localRunnerSession: Guard<LocalRunnerSession> = (v): v is LocalRunnerSession =>
+  object(v) && str(v.accessToken) && v.accessToken.length >= 40 && v.accessToken.length <= 64 &&
+  Number.isSafeInteger(v.expiresInSeconds) && Number(v.expiresInSeconds) > 0;
+const localRunnerCapability: Guard<LocalRunnerCapability> = (v): v is LocalRunnerCapability =>
+  object(v) && guid(v.actorId) && v.action === 'system.health' &&
+  v.scope === 'control-plane:health:read' && v.worker === 'not-used' && v.provider === 'not-used';
+const localHealthIntent: Guard<LocalHealthIntent> = (v): v is LocalHealthIntent =>
+  object(v) && guid(v.taskId) && str(v.taskTitle) && v.action === 'system.health' &&
+  v.scope === 'control-plane:health:read' && date(v.taskUpdatedAtUtc) &&
+  str(v.intentDigestSha256) && /^[0-9a-f]{64}$/.test(v.intentDigestSha256);
+const localHealthEvent: Guard<LocalHealthRunEvent> = (v): v is LocalHealthRunEvent =>
+  object(v) && str(v.eventCode) && date(v.recordedAtUtc);
+const localHealthRunApproval: Guard<LocalHealthRunApproval> = (v): v is LocalHealthRunApproval =>
+  object(v) && guid(v.runId) && guid(v.taskId) && v.action === 'system.health' &&
+  v.scope === 'control-plane:health:read' && str(v.intentDigestSha256) &&
+  /^[0-9a-f]{64}$/.test(v.intentDigestSha256) &&
+  ['queued', 'running', 'completed', 'expired', 'invalidated'].includes(String(v.status));
+const localHealthRun: Guard<LocalHealthRunSnapshot> = (v): v is LocalHealthRunSnapshot =>
+  object(v) && guid(v.runId) && guid(v.taskId) && v.action === 'system.health' &&
+  v.scope === 'control-plane:health:read' && str(v.intentDigestSha256) &&
+  /^[0-9a-f]{64}$/.test(v.intentDigestSha256) &&
+  ['queued', 'running', 'completed', 'expired', 'invalidated'].includes(String(v.status)) &&
+  date(v.createdAtUtc) && date(v.approvedAtUtc) && date(v.expiresAtUtc) &&
+  (v.startedAtUtc === null || date(v.startedAtUtc)) &&
+  (v.completedAtUtc === null || date(v.completedAtUtc)) &&
+  (v.result === null || localDiagnostics(v.result)) &&
+  list(localHealthEvent)(v.events);
 const task: Guard<Task> = (v): v is Task => object(v) && guid(v.id) && str(v.title) &&
   str(v.description) && str(v.status) && Number.isSafeInteger(v.attemptCount) && Number(v.attemptCount) >= 0 &&
   nullable(v.result) && nullable(v.errorMessage) && date(v.createdAtUtc) && date(v.updatedAtUtc);
@@ -170,6 +243,69 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
   }
 }
 
+async function localRunnerRequest<T>(
+  path: string, guard: Guard<T>, token: string, method: 'GET' | 'POST',
+  body?: unknown, expectedStatus = 200, timeoutMs = 15000,
+): Promise<T> {
+  if (!token || token.length > 128) throw new ApiError('invalid', 'Local runner session is unavailable.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(`/api/local-runner${path}`, {
+        method, signal: controller.signal, cache: 'no-store', credentials: 'omit',
+        headers: {
+          Accept: 'application/json',
+          'X-HIC-Request': 'local-runner',
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch {
+      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network',
+        'The local runner did not confirm the request.', undefined, method === 'POST');
+    }
+    if (response.status !== expectedStatus) {
+      const message = response.status === 401 ? 'The local runner session is invalid or expired.'
+        : response.status === 503 ? 'The local runner is not registered or its approved schema is unavailable.'
+          : response.status === 409 ? 'The task or approved run is no longer eligible.'
+            : `The local runner returned HTTP ${response.status}.`;
+      throw new ApiError('http', message, response.status, method === 'POST' && response.status >= 500);
+    }
+    let data: unknown;
+    try { data = await response.json(); }
+    catch { throw new ApiError('invalid', 'The local runner response was not valid JSON.', response.status, method === 'POST'); }
+    if (!guard(data)) throw new ApiError('invalid', 'The local runner response did not match its contract.', response.status, method === 'POST');
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function createLocalRunnerSession(bootstrapToken: string): Promise<LocalRunnerSession> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch('/api/local-runner/session', {
+      method: 'POST', signal: controller.signal, cache: 'no-store', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-HIC-Request': 'local-runner' },
+      body: JSON.stringify({ bootstrapToken }),
+    }).catch(() => { throw new ApiError(controller.signal.aborted ? 'timeout' : 'network', 'Local runner registration is unavailable.'); });
+    if (response.status !== 200) {
+      throw new ApiError(response.status === 401 ? 'http' : 'network',
+        response.status === 503 ? 'Local runner registration or schema is unavailable.' : 'Local runner registration was rejected.',
+        response.status);
+    }
+    const data: unknown = await response.json().catch(() => null);
+    if (!localRunnerSession(data)) throw new ApiError('invalid', 'Local runner session response did not match its contract.');
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspaceInspection> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -195,6 +331,27 @@ async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspace
 
 export const api = {
   inspectNativeWorkspace,
+  createLocalRunnerSession,
+  localRunnerCapabilities: (token: string) =>
+    localRunnerRequest('/capabilities', localRunnerCapability, token, 'GET'),
+  localHealthIntent: (taskId: string, token: string) => {
+    if (!guid(taskId)) return Promise.reject(new ApiError('invalid', 'Invalid task identifier.'));
+    return localRunnerRequest(`/tasks/${taskId}/intent`, localHealthIntent, token, 'GET');
+  },
+  approveLocalHealthRun: (taskId: string, intentDigestSha256: string, token: string) => {
+    if (!guid(taskId) || !/^[0-9a-f]{64}$/.test(intentDigestSha256))
+      return Promise.reject(new ApiError('invalid', 'Invalid local run approval intent.'));
+    return localRunnerRequest(`/tasks/${taskId}/approve`, localHealthRunApproval, token, 'POST',
+      { intentDigestSha256 }, 202);
+  },
+  executeLocalHealthRun: (runId: string, token: string) => {
+    if (!guid(runId)) return Promise.reject(new ApiError('invalid', 'Invalid local run identifier.'));
+    return localRunnerRequest(`/runs/${runId}/execute`, object, token, 'POST');
+  },
+  localHealthRun: (runId: string, token: string) => {
+    if (!guid(runId)) return Promise.reject(new ApiError('invalid', 'Invalid local run identifier.'));
+    return localRunnerRequest(`/runs/${runId}`, localHealthRun, token, 'GET');
+  },
   health: () => get('/health', health),
   localDiagnostics: () => get('/diagnostics/local', localDiagnostics),
   tasks: () => get('/tasks', list(task)),
