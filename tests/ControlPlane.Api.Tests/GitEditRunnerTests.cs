@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Configuration;
@@ -5,6 +6,14 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace ControlPlane.Api.Tests;
+
+public sealed class WindowsJunctionFactAttribute : FactAttribute
+{
+    public WindowsJunctionFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows()) Skip = "Requires a Windows directory junction.";
+    }
+}
 
 public sealed class GitEditRunnerTests
 {
@@ -103,6 +112,46 @@ public sealed class GitEditRunnerTests
             }
         }
         finally { Cleanup(root); }
+    }
+
+    [WindowsJunctionFact]
+    public async Task WindowsJunction_RepositoryAndDescendantAreRejected()
+    {
+        var (root, repo, _) = await Fixture();
+        var link = System.IO.Path.Combine(root, "junction");
+        try
+        {
+            var start = new ProcessStartInfo("powershell.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            start.Environment["HIC_TEST_JUNCTION"] = link;
+            start.Environment["HIC_TEST_JUNCTION_TARGET"] = repo.Path;
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-NonInteractive");
+            start.ArgumentList.Add("-Command");
+            start.ArgumentList.Add("$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:HIC_TEST_JUNCTION -Target $env:HIC_TEST_JUNCTION_TARGET | Out-Null");
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start junction fixture.");
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, $"Junction creation failed: {await output} {await error}");
+            Assert.True((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0);
+            Assert.Throws<GitEditDeniedException>(() => GitEditExecutor.CheckPath(link));
+            Assert.Throws<GitEditDeniedException>(() => GitEditExecutor.CheckPath(
+                System.IO.Path.Combine(link, "message.txt")));
+            await Assert.ThrowsAsync<GitEditDeniedException>(() =>
+                GitEditExecutor.InspectAsync(repo with { Path = link }, CancellationToken.None));
+            Assert.Equal("before\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "message.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link);
+            Cleanup(root);
+        }
     }
 
     [PostgresFact]
