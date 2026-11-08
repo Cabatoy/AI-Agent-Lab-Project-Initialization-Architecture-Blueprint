@@ -54,7 +54,7 @@ public sealed class GitHubPublisherTests
             using var client = new HttpClient { BaseAddress = new Uri(address) };
             var id = Guid.NewGuid();
             foreach (var route in new[]
-                     { "bootstrap-preview", $"runs/{id}/preview", $"publications/{id}/approve", $"publications/{id}/reject",
+                     { "bootstrap-preview", $"runs/{id}/preview", $"publications/{id}/approve", $"publications/{id}/reject", $"publications/{id}/renew",
                          $"publications/{id}/execute", $"publications/{id}/reconcile", $"publications/{id}/complete-draft" })
                 Assert.Equal(HttpStatusCode.Unauthorized,
                     (await client.PostAsync("/local-runner/github/" + route, null)).StatusCode);
@@ -342,6 +342,21 @@ public sealed class GitHubPublisherTests
                 "src", "ControlPlane", "Migrations", "007-github-publisher.sql")));
             var store = new GitHubPublicationStore(cs);
             var row = Row("bootstrap");
+            var expired = row.Plan with { PublicationId = Guid.NewGuid(), ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1) };
+            await store.CreateAsync(expired, CancellationToken.None);
+            Assert.False(await store.RenewAsync(expired with { ActorId = Guid.NewGuid() }, CancellationToken.None));
+            Assert.True(await store.RenewAsync(expired, CancellationToken.None));
+            Assert.False(await store.RenewAsync(expired, CancellationToken.None));
+            var renewed = (await store.ReadAsync(expired.PublicationId, expired.ActorId, CancellationToken.None))!;
+            Assert.Equal(expired.PublicationId, renewed.PublicationId);
+            Assert.Equal("preview", renewed.State);
+            Assert.Null(renewed.ApprovedAtUtc);
+            Assert.NotEqual(expired.Digest(), renewed.Digest);
+            Assert.Equal(expired.Content, renewed.Plan.Content);
+            Assert.True(renewed.Plan.ExpiresAtUtc > DateTime.UtcNow);
+            Assert.False(await store.ApproveAsync(expired.PublicationId, expired.ActorId, expired.Digest(), CancellationToken.None));
+            Assert.True(await store.RejectAsync(renewed.PublicationId, renewed.ActorId, renewed.Digest, CancellationToken.None));
+            Assert.False(await store.RenewAsync(renewed.Plan, CancellationToken.None));
             await store.CreateAsync(row.Plan, CancellationToken.None);
             Assert.Null(await store.ReadAsync(row.PublicationId, Guid.NewGuid(), CancellationToken.None));
             Assert.False(await store.ApproveAsync(row.PublicationId, row.ActorId, new string('f', 64), CancellationToken.None));

@@ -71,7 +71,7 @@ try {
                 $identity = $context.User.Identity
                 if ($null -eq $identity -or !$identity.IsAuthenticated) {
                     $response.StatusCode = 401
-                    $response.Headers['WWW-Authenticate'] = 'Negotiate'
+                    $response.AddHeader('WWW-Authenticate', 'Negotiate')
                 } elseif ($identity -isnot [Security.Principal.WindowsIdentity] -or
                     $identity.User.Value -ne $operatorSid) {
                     $response.StatusCode = 403
@@ -91,6 +91,9 @@ try {
                         }
                         $body = @{ accessToken = $session.accessToken; expiresInSeconds = 900 } | ConvertTo-Json -Compress
                         $response.StatusCode = 200
+                        if ($request.UserAgent -match 'Chrome/|Firefox/|Edg/') {
+                            Write-Output 'Windows-authenticated browser session delivered; GitHub approval remains separate.'
+                        }
                     } finally {
                         [Array]::Clear($bytes, 0, $bytes.Length)
                         $payload = $null
