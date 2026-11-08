@@ -29,6 +29,9 @@ internal static class TaskTransitionStore
             "select status, execution_generation as Generation from tasks where id = @Id for update;",
             new { Id = id }, transaction, cancellationToken: cancellationToken));
         var current = task?.Status;
+        if (task is not null && target == TaskStatuses.Approved &&
+            await LocalHealthRunStore.IsReservedTaskAsync(connection, transaction, id, cancellationToken))
+            return new(TransitionOutcome.Conflict, "A locally authorized health task cannot enter the Agent Worker queue.");
         var validation = Validate(current, target, update?.ExpectedStatus);
         if (validation.Outcome != TransitionOutcome.Accepted)
             return validation;

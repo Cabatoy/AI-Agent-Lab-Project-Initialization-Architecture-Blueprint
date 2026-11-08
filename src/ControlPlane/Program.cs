@@ -11,6 +11,9 @@ builder.Services.AddSwaggerGen(options =>
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? "Host=localhost;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab";
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+var localOperatorSessions = LocalOperatorSessions.Create(
+    builder.Configuration["HIC_LOCAL_OPERATOR_TOKEN"],
+    builder.Configuration["HIC_LOCAL_OPERATOR_ID"]);
 
 var app = builder.Build();
 
@@ -19,6 +22,27 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v1/swagger.json", "Control Plane API v1"));
 }
+
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/local-runner"))
+    {
+        await next();
+        return;
+    }
+
+    try
+    {
+        await next();
+    }
+    catch (Exception) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+    {
+        app.Logger.LogError("Local runner request failed; exception details withheld.");
+        context.Response.Clear();
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new { error = "Local runner is unavailable." }, CancellationToken.None);
+    }
+});
 
 var redis = await ConnectRedisWithRetryAsync(redisConnectionString, app.Logger);
 var redisDb = redis.GetDatabase();
@@ -39,6 +63,8 @@ app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>
     .WithSummary("Check Control Plane, PostgreSQL and Redis without running an agent")
     .WithDescription("Local development diagnostics only. Does not inspect Worker status or change state.")
     .Produces<LocalDiagnosticSnapshot>(StatusCodes.Status200OK);
+
+LocalHealthRunnerEndpoints.Map(app, postgresConnectionString, redisDb, localOperatorSessions);
 
 app.MapGet("/tasks", async () =>
 {

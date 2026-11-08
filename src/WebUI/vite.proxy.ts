@@ -4,6 +4,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
+const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 
@@ -37,10 +38,11 @@ const header = (req: http.IncomingMessage, name: string) => {
   return Array.isArray(value) ? value.join(',') : value;
 };
 
-function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string) {
+function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string) {
   let timedOut = false;
   let connected = false;
   const headers: http.OutgoingHttpHeaders = { accept: 'application/json' };
+  if (authorization) headers.authorization = authorization;
   if (body !== undefined) {
     headers['content-type'] = 'application/json; charset=utf-8';
     headers['content-length'] = Buffer.byteLength(body);
@@ -137,6 +139,87 @@ async function createTask(req: http.IncomingMessage, res: http.ServerResponse, t
   forward(req, res, target, 'POST', '/tasks', timeouts.upstreamTimeoutMs, JSON.stringify(validation.value));
 }
 
+function validRunnerAuthorization(value: string | undefined): value is string {
+  return value !== undefined && /^Bearer [A-Za-z0-9+/_=-]{40,128}$/.test(value);
+}
+
+async function localRunnerRequest(
+  req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string,
+  path: string, timeouts: Required<ProxyOptions>,
+) {
+  const requestOrigin = header(req, 'origin');
+  const site = header(req, 'sec-fetch-site');
+  if (site !== undefined && site !== 'same-origin') return reject(res, 403, 'Cross-site requests are not accepted.', true);
+  const sameOriginReadWithoutOrigin = req.method === 'GET' && requestOrigin === undefined && site === 'same-origin';
+  if (!sameOriginReadWithoutOrigin && requestOrigin !== origin)
+    return reject(res, 403, 'Requests must originate from the HIC dashboard.', true);
+  if (header(req, 'proxy-authorization') !== undefined ||
+      header(req, 'x-hic-request') !== 'local-runner') {
+    return reject(res, 403, 'Local runner request was rejected.', true);
+  }
+  const isSession = path === '/api/local-runner/session';
+  const isRead = req.method === 'GET' &&
+    (/^\/api\/local-runner\/(?:capabilities|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+  const isApprove = req.method === 'POST' &&
+    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
+  const isExecute = req.method === 'POST' &&
+    /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path);
+  if (!isSession && !isRead && !isApprove && !isExecute)
+    return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
+
+  const authorization = header(req, 'authorization');
+  if ((isSession && authorization !== undefined) ||
+      (!isSession && !validRunnerAuthorization(authorization))) {
+    return reject(res, 403, 'Local runner credentials were rejected.', true);
+  }
+  if (isRead) {
+    if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
+      return reject(res, 400, 'Read requests must not include a body.', true);
+    forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs, undefined, authorization);
+    return;
+  }
+
+  if (isExecute) {
+    if ((Number(header(req, 'content-length') ?? '0') || 0) > 0 ||
+        header(req, 'transfer-encoding') !== undefined ||
+        header(req, 'content-type') !== undefined)
+      return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
+    const received = await readBody(req, timeouts.bodyTimeoutMs);
+    if (!received.ok || received.body.length !== 0) return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs, undefined, authorization);
+    return;
+  }
+
+  const [mediaType, ...parameters] = (header(req, 'content-type') ?? '').split(';').map(part => part.trim().toLowerCase());
+  if (mediaType !== 'application/json' || parameters.some(part => part !== '' && part !== 'charset=utf-8') ||
+      (header(req, 'content-encoding') !== undefined && header(req, 'content-encoding')?.toLowerCase() !== 'identity'))
+    return reject(res, 415, 'Content-Type must be application/json.', true);
+  const received = await readBody(req, timeouts.bodyTimeoutMs);
+  if (!received.ok) return reject(res, received.status, received.message, true);
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(received.body)); }
+  catch { return reject(res, 400, 'Request body must be valid UTF-8 JSON.'); }
+
+  if (isSession) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+        Object.keys(parsed).length !== 1 ||
+        typeof (parsed as Record<string, unknown>).bootstrapToken !== 'string' ||
+        !/^[A-Za-z0-9+/]{43}=$/.test((parsed as Record<string, string>).bootstrapToken))
+      return reject(res, 400, 'Invalid local session request.');
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+      JSON.stringify({ bootstrapToken: (parsed as Record<string, string>).bootstrapToken }));
+    return;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 1 ||
+      typeof (parsed as Record<string, unknown>).intentDigestSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test((parsed as Record<string, string>).intentDigestSha256))
+    return reject(res, 400, 'Invalid approval intent.');
+  forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+    JSON.stringify({ intentDigestSha256: (parsed as Record<string, string>).intentDigestSha256 }), authorization);
+}
+
 export interface ProxyOptions { upstreamTimeoutMs?: number; bodyTimeoutMs?: number }
 
 export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugin {
@@ -155,6 +238,10 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
         if (req.method === 'GET' && readPath.test(path)) {
           if (requestOrigin !== undefined && requestOrigin !== origin) return reject(res, 403, 'Cross-origin requests are not accepted.');
           forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs);
+          return;
+        }
+        if (localRunnerPath.test(path)) {
+          void localRunnerRequest(req, res, target, origin, path, timeouts);
           return;
         }
         if (req.method === 'POST' && path === createPath) {

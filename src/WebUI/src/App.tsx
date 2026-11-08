@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Health, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
+import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
+import { PlanningWorkflow } from './PlanningWorkflow';
 import { Status } from './components';
 
-type Page = 'Command Center' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
+type Page = 'Command Center' | 'Planning' | 'Local Runner' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
 type Resource<T> = { data: T | null; error: string | null };
 const pages: { name: Page; icon: string }[] = [
   { name: 'Command Center', icon: '⌘' },
+  { name: 'Planning', icon: '◇' },
+  { name: 'Local Runner', icon: '▶' },
   { name: 'Overview', icon: '◫' }, { name: 'Tasks', icon: '▤' },
   { name: 'Plans', icon: '◇' }, { name: 'Agents', icon: '⬡' },
   { name: 'Models & Providers', icon: '◈' }, { name: 'Approvals', icon: '✓' },
 ];
 const subtitles: Partial<Record<Page, string>> = {
   'Command Center': 'Describe work in natural language and save it as a Draft task.',
+  'Local Runner': 'Approve one exact, read-only local system health action and review its durable result.',
+  Planning: 'Select the configured repository and review a local, versioned plan preview.',
   Overview: 'Your local software factory, in view.',
   Tasks: 'Inspect task state from the Control Plane.',
   Plans: 'Review available execution plans.',
@@ -122,11 +128,11 @@ export default function App() {
         <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.name}
         {['Agents', 'Models & Providers', 'Approvals'].includes(item.name) && <span className="nav-soon">SOON</span>}
       </button>)}</nav>
-      <div className="sidebar-bottom"><span className="side-dot" /> LOCAL WORKSPACE <p>Read data · create Draft tasks only</p></div>
+      <div className="sidebar-bottom"><span className="side-dot" /> LOCAL WORKSPACE <p>Read data · Draft tasks · fixed local health</p></div>
     </aside>
     <main id="main" className="main" tabIndex={-1}>
       <header className="topbar"><div><span className="breadcrumb">HIC / WORKSPACE /</span> <span>{page.toUpperCase()}</span></div>
-        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : 'READ ONLY'}</span>
+        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : page === 'Local Runner' ? 'HUMAN-APPROVED LOCAL RUN' : 'READ ONLY'}</span>
           {page !== 'Command Center' && <button className="secondary" onClick={() => navigate('Command Center')}>＋ New task</button>}
           <button className="refresh" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : '↻  Refresh'}</button></div></header>
       <div className="content"><div className="page-heading"><div><p className="eyebrow">HUMAN IN CONTROL</p>
@@ -134,6 +140,8 @@ export default function App() {
         <div className="last-refresh"><span>LAST SUCCESSFUL REFRESH</span><strong>{lastRefresh ? displayDate(lastRefresh.toISOString()) : 'Not yet available'}</strong></div></div>
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
+      {page === 'Local Runner' && <LocalRunnerWorkflow />}
+      {page === 'Planning' && <PlanningWorkflow />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
       {page === 'Command Center' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Recent tasks</h2></div>
@@ -149,11 +157,11 @@ export default function App() {
             : !Object.keys(counts).length ? <div className="notice">No task statuses to display.</div>
               : <div className="status-list">{Object.entries(counts).map(([status, count]) => <div key={status}><Status value={status} /><strong>{count}</strong></div>)}</div>}</section>
           <section className="panel"><p className="eyebrow">SYSTEM BOUNDARY</p><h2>Operational state</h2>
-            <p className="muted">This dashboard reads existing Control Plane data and can create Draft tasks from the Command Center. It does not approve, dispatch or execute tasks.</p>
+            <p className="muted">This dashboard reads existing Control Plane data and can create Draft tasks from the Command Center. Outside the fixed Local Runner health action, it cannot approve, dispatch or execute tasks.</p>
             <div className="boundary"><span>API health</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Responding' : 'Unexpected response') : 'Checking'}</strong></div>
             <div className="boundary"><span>Task creation</span><strong>Draft only</strong></div>
             <div className="boundary"><span>Recovery (R3 / R4)</span><strong>Pending</strong></div>
-            <div className="boundary"><span>Approval workflow</span><strong>Not implemented</strong></div></section></div>
+            <div className="boundary"><span>General task approval</span><strong>Not implemented</strong></div></section></div>
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">LATEST ACTIVITY</p><h2>Recent tasks</h2></div><button className="text-button" onClick={() => setPage('Tasks')}>View all →</button></div>
           <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>
       </>}

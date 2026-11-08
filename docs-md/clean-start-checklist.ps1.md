@@ -3,7 +3,7 @@
 Yeni önerilen tek komut akışı:
 
 ```powershell
-cd C:\Enterprise
+# Depo kökünde çalıştırın.
 ./scripts/local.ps1 bootstrap-dev -Reset
 ```
 
@@ -12,8 +12,7 @@ Bu komut local stack'i sıfırlar, yeniden kurar, AI Lab bulunursa `ai-lab` alia
 Manuel adım adım akış gerekiyorsa aşağıdaki komut setini kullanın:
 
 ```powershell
-# 0) Repo köküne geç
-cd C:\Enterprise
+# Depo kökünde çalıştırın.
 
 # 1) Tam temizle (veri silinir)
 ./scripts/local.ps1 delete-all -ConfirmDataRemoval
