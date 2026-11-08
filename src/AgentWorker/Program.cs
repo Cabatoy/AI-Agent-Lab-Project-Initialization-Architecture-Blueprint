@@ -457,7 +457,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
     private readonly string _model;
 
     public PodmanAiLabModelClient(ModelOptions options)
-        : this(options, new HttpClient
+        : this(options, new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
         {
             BaseAddress = new Uri(options.Endpoint!, UriKind.Absolute),
             Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds)
@@ -513,7 +513,7 @@ internal sealed class PodmanAiLabModelClient : IModelClient
             return completionResult;
         }
 
-        return ModelResult.Fail($"Chat fallback failed: {chatResult.ErrorMessage} | Completion fallback failed: {completionResult.ErrorMessage}");
+        return ModelResult.Fail("Provider request failed.", chatResult.IsTransient || completionResult.IsTransient);
     }
 
     private async Task<ModelResult> SendAndParseAsync(string route, string jsonPayload, CancellationToken cancellationToken)
@@ -544,6 +544,10 @@ internal sealed class PodmanAiLabModelClient : IModelClient
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
         {
             return ModelResult.Fail("Provider request failed.", true);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return ModelResult.Fail("Provider returned an invalid response.");
         }
     }
 

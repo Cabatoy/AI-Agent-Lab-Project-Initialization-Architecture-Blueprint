@@ -185,6 +185,76 @@ public class ModelConfigurationTests
     }
 
     [Fact]
+    public async Task ProviderTransientFallback_RemainsTransientAndSanitized()
+    {
+        using var httpClient = new HttpClient(new StubHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("sensitive-provider-body")
+            })));
+        var client = new PodmanAiLabModelClient(
+            new ModelOptions("ollama", "http://127.0.0.1:1234", "test-model", null, 30), httpClient);
+        var result = await client.GenerateAsync("sensitive prompt", CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.True(result.IsTransient);
+        Assert.Equal("Provider request failed.", result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("invalid sensitive-provider-body")]
+    [InlineData("{\"choices\":\"sensitive-provider-body\"}")]
+    [InlineData("{\"choices\":[{\"message\":{\"content\":42}}]}")]
+    public async Task MalformedSuccessfulResponse_IsSanitized(string body)
+    {
+        using var httpClient = new HttpClient(new StubHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        var client = new PodmanAiLabModelClient(
+            new ModelOptions("ollama", "http://127.0.0.1:1234", "test-model", null, 30), httpClient);
+        var result = await client.GenerateAsync("sensitive prompt", CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.False(result.IsTransient);
+        Assert.Equal("Provider request failed.", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RealProviderRedirect_DoesNotForwardPromptToAnotherDestination()
+    {
+        var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var received = new List<string>();
+            async Task Respond()
+            {
+                for (var i = 0; i < 2; i++)
+                {
+                    using var connection = await listener.AcceptTcpClientAsync(timeout.Token);
+                    await using var stream = connection.GetStream();
+                    using var reader = new StreamReader(stream, leaveOpen: true);
+                    var firstLine = await reader.ReadLineAsync(timeout.Token);
+                    received.Add(firstLine!);
+                    string? line;
+                    while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync(timeout.Token))) { }
+                    var response = System.Text.Encoding.ASCII.GetBytes(
+                        $"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{port}/unapproved\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    await stream.WriteAsync(response, timeout.Token);
+                }
+            }
+            var server = Respond();
+            var client = new PodmanAiLabModelClient(
+                new ModelOptions("ollama", $"http://127.0.0.1:{port}", "test-model", null, 5));
+            var result = await client.GenerateAsync("sensitive prompt", timeout.Token);
+            await server;
+            Assert.False(result.Success);
+            Assert.Equal(2, received.Count);
+            Assert.All(received, request => Assert.DoesNotContain("/unapproved", request));
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Fact]
     public async Task WorkerFailure_RedactsUntrustedProviderMessageBeforePersistence()
     {
         const string sentinel = "provider-token-and-prompt";
