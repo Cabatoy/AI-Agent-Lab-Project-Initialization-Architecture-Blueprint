@@ -102,7 +102,7 @@ function Planned({ page }: { page: Page }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('Overview');
+  const [page, setPage] = useState<Page>(() => window.location.hash === '#operator-access' ? 'Conversations' : 'Overview');
   const [health, setHealth] = useState<Resource<Health>>(initial);
   const [tasks, setTasks] = useState<Resource<Task[]>>(initial);
   const [plans, setPlans] = useState<Resource<Plan[]>>(initial);

@@ -146,7 +146,9 @@ expiry'yi inceleyip **Approve exact bootstrap write**, ardından execute seçin.
 Ekran immutable repository ID, public App/installation kimliği, runtime revision
 ve tam yeni-dosya diff'ini gösterir. **Reject exact GitHub write** yalnız kalıcı
 ret kaydı oluşturur; onay veya uzak yazma yapmaz. Süresi dolan preview aynı
-ekrandan yenilenebilir; digest değiştiğinde yeni exact insan kararı gerekir.
+publication ID üzerinde, scope ve remote base tekrar doğrulanarak yenilenir;
+`preview-renewed` audit kaydı oluşur, yeni task/publication/onay kaydı oluşmaz.
+Digest değiştiğinde yeni exact insan kararı gerekir.
 Bu tek dosya için Contents API ile ilk commit oluşturulur. İlk commit'in parent
 listesi boş ve tree'si yalnız onaylı source blob olmalıdır. Bootstrap ayrı
 kalıcı operation'dır; task push/PR izni değildir. Sayfayı yeniden açınca kayıt yüklenir.
@@ -243,6 +245,23 @@ Gerçek HIC browser → Mistral → sandbox commit/ref/draft PR acceptance **cre
 olmadan doğrulanmış değildir**. Geliştirme draft PR'si bu kabulün yerine geçmez.
 
 ### Standart launcher ile development UI farkı
+
+Windows'ta token taşımadan browser erişimi için
+[`hic-operator-browser.ps1`](../../scripts/hic-operator-browser.ps1) açıkça
+başlatılan geçici bir localhost Negotiate köprüsüdür. Köprü yalnız process'i
+başlatan Windows SID'yi, exact UI Origin'i, custom preflight header'ını ve
+pinlenmiş Control Plane revision/repository'yi kabul eder. DPAPI korumalı mevcut
+operator bootstrap token'ı backend session endpoint'inde kullanır; yalnız mevcut
+15 dakikalık session token'ını no-store HTTP yanıtıyla UI belleğine verir.
+GitHub App token veya PEM hiçbir zaman bu köprüye/frontend'e verilmez.
+
+UI'nin Git dışında tutulan `public/operator-browser-access.json` dosyası yalnız
+credential içermeyen localhost endpoint'i ve expiry taşır. `/#operator-access`
+URL'si açık browser giriş niyetidir; URL'de sır yoktur. Köprü/config olmadan
+mevcut manuel login korunur; bu kalıcı auto-login veya genel bir auth fallback'i
+değildir. Windows browser'ın Negotiate'ı desteklemesi gerekir. Page refresh veya
+session expiry durumunda aynı süreli Windows login kullanılabilir. Köprü ömrü
+en fazla 120 dakikadır; UI/API/DB ömrünü veya insan onayını değiştirmez.
 
 Launcher kendi checkout'undaki UI'yi başlatır; readiness yalnız page title/health
 ile ölçülür. Bu kontroller source revision, conversation/publisher capability veya

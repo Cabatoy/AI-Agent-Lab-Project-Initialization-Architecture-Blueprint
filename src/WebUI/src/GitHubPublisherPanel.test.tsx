@@ -5,7 +5,7 @@ import { githubApi, type GitHubPublication } from './githubApi';
 
 vi.mock('./githubApi', () => ({ githubApi: {
   status: vi.fn(), bootstraps: vi.fn(), preview: vi.fn(), bootstrapPreview: vi.fn(),
-  approve: vi.fn(), reject: vi.fn(), execute: vi.fn(), reconcile: vi.fn(), completeDraft: vi.fn(),
+  approve: vi.fn(), reject: vi.fn(), renew: vi.fn(), execute: vi.fn(), reconcile: vi.fn(), completeDraft: vi.fn(),
 } }));
 const id = '11234567-89ab-cdef-0123-456789abcdef';
 const now = new Date().toISOString();
@@ -34,6 +34,20 @@ beforeEach(() => {
   vi.mocked(githubApi.bootstraps).mockResolvedValue([]);
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+
+it('renews the same expired bootstrap without creating or approving another publication', async () => {
+  const expired = { ...preview, runId: null, plan: { ...preview.plan, kind: 'bootstrap' as const,
+    expiresAtUtc: new Date(0).toISOString() } };
+  const renewed = { ...expired, plan: { ...expired.plan, expiresAtUtc: new Date(Date.now() + 240000).toISOString() } };
+  vi.mocked(githubApi.bootstraps).mockResolvedValue([expired]);
+  vi.mocked(githubApi.renew).mockResolvedValue(renewed);
+  render(<GitHubPublisherPanel token="session-only" />);
+  expect(await screen.findByText('Approve exact bootstrap write')).toBeEnabled();
+  expect(githubApi.renew).toHaveBeenCalledWith(expired, 'session-only');
+  expect(githubApi.bootstrapPreview).not.toHaveBeenCalled();
+  expect(githubApi.approve).not.toHaveBeenCalled();
+  expect(githubApi.execute).not.toHaveBeenCalled();
+});
 
 it('requires separate exact publication approval and displays actual commit/ref/draft after reload', async () => {
   const mounted = render(<GitHubPublisherPanel token="session-only" runId={id} />);

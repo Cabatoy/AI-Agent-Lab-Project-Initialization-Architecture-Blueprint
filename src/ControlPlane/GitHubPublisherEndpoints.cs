@@ -102,6 +102,26 @@ internal static class GitHubPublisherEndpoints
                 "github-approval-already-decided");
             return Results.Ok(await store.ViewAsync((await store.ReadAsync(id, Actor(context), ct))!, ct));
         });
+        group.MapPost("/publications/{id:guid}/renew", async (Guid id, HttpContext context, CancellationToken ct) =>
+        {
+            await RequireReady(ct);
+            var request = await ReadApprovalAsync(context.Request, ct);
+            var row = await store.ReadAsync(id, Actor(context), ct);
+            if (row is null) return Results.NotFound();
+            GitHubAppBroker.Check(request is not null && row.State == "preview" &&
+                LocalHealthRunIntent.Matches(request.IntentDigestSha256, row.Digest),
+                "github-preview-renewal-invalid");
+            GitHubAppBroker.Check(broker.ScopeDigest() == row.Plan.CredentialScopeDigest, "github-app-scope-changed");
+            if (row.RunId is { } runId)
+            {
+                var code = await EligibleCodeAsync(app.Configuration, runs, runId, Actor(context), ct);
+                GitHubAppBroker.Check(code.Digest() == row.Plan.CodePlanDigest, "github-code-plan-changed");
+            }
+            using var api = await broker.OpenAsync(ct);
+            await GitHubPublisher.ValidateBaseAsync(api, row.Plan, ct);
+            GitHubAppBroker.Check(await store.RenewAsync(row.Plan, ct), "github-preview-not-expired-or-already-decided");
+            return Results.Ok(await store.ViewAsync((await store.ReadAsync(id, Actor(context), ct))!, ct));
+        });
         group.MapPost("/publications/{id:guid}/reject", async (Guid id, HttpContext context, CancellationToken ct) =>
         {
             await RequireReady(ct);

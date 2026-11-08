@@ -6,3 +6,4 @@
 .env
 task.json
 /.local/
+/src/WebUI/public/operator-browser-access.json

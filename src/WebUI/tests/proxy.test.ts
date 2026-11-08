@@ -93,7 +93,7 @@ describe('local development proxy', () => {
       ...['execute', 'reconcile', 'complete-draft'].map(action => `publications/${created.id}/${action}`)]) {
       expect((await fetch(`${origin}/api/local-runner/github/${path}`, { method: 'POST', headers })).status).toBe(201);
     }
-    for (const action of ['approve', 'reject']) {
+    for (const action of ['approve', 'reject', 'renew']) {
       expect((await fetch(`${origin}/api/local-runner/github/publications/${created.id}/${action}`, {
         method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ intentDigestSha256: 'a'.repeat(64) }),

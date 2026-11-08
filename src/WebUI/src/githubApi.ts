@@ -66,6 +66,9 @@ export const githubApi = {
   reject: (value: GitHubPublication, token: string) =>
     localRunnerRequest(`${base}/publications/${value.publicationId}/reject`, publication, token, 'POST',
       { intentDigestSha256: value.intentDigestSha256 }),
+  renew: (value: GitHubPublication, token: string) =>
+    localRunnerRequest(`${base}/publications/${value.publicationId}/renew`, publication, token, 'POST',
+      { intentDigestSha256: value.intentDigestSha256 }, 200, 180000),
   execute: (id: string, token: string) =>
     localRunnerRequest(`${base}/publications/${id}/execute`, publication, token, 'POST', undefined, 200, 180000),
   reconcile: (id: string, token: string) =>

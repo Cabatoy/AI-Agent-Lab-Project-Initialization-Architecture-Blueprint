@@ -134,6 +134,28 @@ internal sealed class GitHubPublicationStore(string connectionString)
         return true;
     }
 
+    internal async Task<bool> RenewAsync(GitHubPublicationPlan previous, CancellationToken ct)
+    {
+        var renewed = previous with { ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5) };
+        await using var db = new NpgsqlConnection(connectionString);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        var changed = await db.ExecuteAsync(new CommandDefinition("""
+            update hic_github_publications set plan_json=@json::jsonb,digest=@digest,updated_at_utc=now()
+            where publication_id=@PublicationId and actor_id=@ActorId and digest=@oldDigest
+                and state='preview' and approved_at_utc is null
+                and (plan_json->>'expiresAtUtc')::timestamptz<=now();
+            """, new { previous.PublicationId, previous.ActorId, oldDigest = previous.Digest(),
+            json = JsonSerializer.Serialize(renewed, GitEditExecutor.JsonOptions), digest = renewed.Digest() },
+            tx, cancellationToken: ct));
+        if (changed != 1) return false;
+        await db.ExecuteAsync(new CommandDefinition("""
+            insert into hic_github_publication_events(publication_id,event_code) values(@PublicationId,'preview-renewed');
+            """, new { previous.PublicationId }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
     internal async Task SaveAsync(GitHubPublication row, string eventCode, CancellationToken ct)
     {
         await using var db = new NpgsqlConnection(connectionString);

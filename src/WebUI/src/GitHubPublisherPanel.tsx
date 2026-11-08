@@ -19,7 +19,12 @@ export function GitHubPublisherPanel({ token, runId, saved, onChanged }: {
       if (active) setStatus(value);
       if (value.configured && !runId) {
         const history = await githubApi.bootstraps(token);
-        if (active) setCurrent(history.find(row => row.state !== 'preview') ?? history[0] ?? null);
+        const selected = history.find(row => row.state !== 'preview') ?? history[0] ?? null;
+        if (active) setCurrent(selected);
+        if (selected?.state === 'preview' && Date.parse(selected.plan.expiresAtUtc) <= Date.now()) {
+          const renewed = await githubApi.renew(selected, token);
+          if (active) setCurrent(renewed);
+        }
       }
     })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'GitHub status unavailable.'); });
@@ -89,7 +94,7 @@ export function GitHubPublisherPanel({ token, runId, saved, onChanged }: {
       </button>}
       {current.state === 'preview' && Date.parse(current.plan.expiresAtUtc) <= now &&
         <button disabled={busy} onClick={() => void perform(() =>
-          runId ? githubApi.preview(runId, token) : githubApi.bootstrapPreview(token))}>Create fresh publication preview</button>}
+          githubApi.renew(current, token))}>Renew same unapproved publication preview</button>}
       {current.state === 'pending' && <button className="primary" disabled={busy ||
         Date.parse(current.plan.expiresAtUtc) <= now}
         onClick={() => void perform(() => githubApi.execute(current.publicationId, token))}>
