@@ -147,3 +147,7 @@ P1 + P2 + P5 + P6/P7/P8'in gerekli dilimleri -> P10
 ```
 
 Bağımlılıkların tam kapsamı uygulama tasarımında teyit edilir; özellikle P4 ve P5, scheduling davranışıyla birlikte değerlendirilmelidir.
+
+## P6–P8 değerlendirme kaydı — 8 Kasım 2026
+
+[Ücretsiz bulut API ve yerel uzman model havuzu](./features/tr/HYBRID_MODEL_POOL_EVALUATION.md) ([EN](./features/en/HYBRID_MODEL_POOL_EVALUATION.md)), mevcut provider contract/routing/telemetry işlerine bağlı discovery önerisidir. NVIDIA Nemotron, Groq, Gemini, OpenRouter ve küçük yerel coding/embedding modelleri; kota başına doğrulanmış görev, kalite, gecikme, veri politikası ve kontrollü fallback açısından değerlendirilecektir. P0–P10 sırası ve mevcut coding lifecycle önceliği değişmez. Bu kayıt uygulama, hesap oluşturma, canlı model çağrısı veya ücretli servis onayı değildir.
