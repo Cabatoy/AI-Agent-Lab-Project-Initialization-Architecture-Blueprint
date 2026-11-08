@@ -2,7 +2,7 @@ name: HIC Control Plane and Web UI CI
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, main]
     paths:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
@@ -39,6 +39,44 @@ permissions:
   contents: read
 
 jobs:
+  isolated-health-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Create disposable loopback PostgreSQL without persistent volumes
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name hic41-ci-pg \
+            --publish 127.0.0.1:25444:5432 \
+            --tmpfs /var/lib/postgresql/data:rw,size=512m \
+            --env POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine
+          ready=0
+          for i in $(seq 1 60); do
+            if docker logs hic41-ci-pg 2>&1 | grep -q 'PostgreSQL init process complete' &&
+               docker exec hic41-ci-pg psql -U postgres -tAc 'select 1' 2>/dev/null | grep -qx '1'; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then echo 'Disposable PostgreSQL failed readiness'; exit 1; fi
+          docker exec hic41-ci-pg psql -U postgres -v ON_ERROR_STOP=1 \
+            -c 'CREATE ROLE hic_r1_test_runner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;' \
+            -c 'CREATE DATABASE hic_r1_tests OWNER hic_r1_test_runner;' \
+            -c "COMMENT ON DATABASE hic_r1_tests IS 'HIC:R1:dedicated-integration:v1';"
+      - name: Verify all API tests with real isolated PostgreSQL
+        env:
+          HIC_R1_TEST_POSTGRES: 'Host=127.0.0.1;Port=25444;Database=hic_r1_tests;Username=hic_r1_test_runner'
+        run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
+      - name: Stop only disposable test PostgreSQL
+        if: always()
+        run: docker stop hic41-ci-pg
+
   control-plane:
     runs-on: ubuntu-latest
     timeout-minutes: 15

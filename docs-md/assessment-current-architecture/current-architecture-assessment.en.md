@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-This document summarizes what is currently implemented in the `C:\Enterprise` repository, what is operational today, and what remains missing compared to the target multi-agent platform vision.
+This document summarizes what was implemented in this repository at the time of assessment, what was operational then, and what remained missing compared to the target multi-agent platform vision.
 
 **Current state (summary):**
 - A working .NET 8 local prototype exists.

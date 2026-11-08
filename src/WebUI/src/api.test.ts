@@ -127,6 +127,74 @@ describe('Draft task creation', () => {
     expect(JSON.parse(options.body)).toEqual(input);
   });
 
+  describe('authenticated local runner API', () => {
+    const sessionToken = 'S'.repeat(44);
+    const healthRun = {
+      runId: '11234567-89ab-cdef-0123-456789abcdef',
+      taskId: task.id,
+      action: 'system.health',
+      scope: 'control-plane:health:read',
+      intentDigestSha256: 'a'.repeat(64),
+      status: 'queued',
+      createdAtUtc: task.createdAtUtc,
+      approvedAtUtc: task.createdAtUtc,
+      expiresAtUtc: '2026-11-06T12:05:00Z',
+      startedAtUtc: null,
+      completedAtUtc: null,
+      result: null,
+      events: [{ eventCode: 'approved', recordedAtUtc: task.createdAtUtc }],
+    };
+
+    it('uses a short-lived authenticated session and only fixed local-runner intents', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(Response.json({ accessToken: sessionToken, expiresInSeconds: 900 }))
+        .mockResolvedValueOnce(Response.json({
+          taskId: task.id, taskTitle: task.title, action: 'system.health',
+          scope: 'control-plane:health:read', taskUpdatedAtUtc: task.updatedAtUtc,
+          intentDigestSha256: 'a'.repeat(64),
+        }))
+        .mockResolvedValueOnce(Response.json({
+          runId: healthRun.runId, taskId: task.id, action: 'system.health',
+          scope: 'control-plane:health:read', intentDigestSha256: 'a'.repeat(64), status: 'queued',
+        }, { status: 202 }))
+        .mockResolvedValueOnce(Response.json({ runId: healthRun.runId, status: 'completed' }))
+        .mockResolvedValueOnce(Response.json(healthRun));
+      vi.stubGlobal('fetch', fetchMock);
+
+      expect(await api.createLocalRunnerSession('R'.repeat(44))).toEqual({ accessToken: sessionToken, expiresInSeconds: 900 });
+      expect((await api.localHealthIntent(task.id, sessionToken)).action).toBe('system.health');
+      expect((await api.approveLocalHealthRun(task.id, 'a'.repeat(64), sessionToken)).runId).toBe(healthRun.runId);
+      await api.executeLocalHealthRun(healthRun.runId, sessionToken);
+      expect((await api.localHealthRun(healthRun.runId, sessionToken)).status).toBe('queued');
+
+      expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+        '/api/local-runner/session',
+        `/api/local-runner/tasks/${task.id}/intent`,
+        `/api/local-runner/tasks/${task.id}/approve`,
+        `/api/local-runner/runs/${healthRun.runId}/execute`,
+        `/api/local-runner/runs/${healthRun.runId}`,
+      ]);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ bootstrapToken: 'R'.repeat(44) });
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+      expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${sessionToken}`);
+      expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ intentDigestSha256: 'a'.repeat(64) });
+      expect(fetchMock.mock.calls[3][1].body).toBeUndefined();
+      expect(fetchMock.mock.calls.every(call => call[1].credentials === 'omit' &&
+        call[1].headers['X-HIC-Request'] === 'local-runner')).toBe(true);
+    });
+
+    it('rejects malformed or replay-shaped runner responses and invalid identifiers locally', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(Response.json({ accessToken: 'short', expiresInSeconds: 900 }))
+        .mockResolvedValueOnce(Response.json({ ...healthRun, action: 'shell.run' }));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(api.createLocalRunnerSession('R'.repeat(44))).rejects.toMatchObject({ kind: 'invalid' });
+      await expect(api.localHealthRun('../tasks', sessionToken)).rejects.toMatchObject({ kind: 'invalid' });
+      await expect(api.localHealthRun(healthRun.runId, sessionToken)).rejects.toMatchObject({ kind: 'invalid' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('validates input before making a request', async () => {
     const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
     await expect(api.createTask({ title: ' ', description: 'x' })).rejects.toMatchObject({ kind: 'invalid' });
