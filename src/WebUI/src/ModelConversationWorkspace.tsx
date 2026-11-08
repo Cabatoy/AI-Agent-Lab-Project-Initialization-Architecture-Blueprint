@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GitHubPublisherPanel } from './GitHubPublisherPanel';
+import { useOperatorSession } from './useOperatorSession';
 import {
   api,
+  isExpiredOperatorSession,
   type LocalCodeModelInfo,
   type ModelConversation,
   type ModelConversationSummary,
@@ -34,11 +36,24 @@ export function ModelConversationWorkspace() {
     if (!authorizedFiles.includes(selectedFile)) setSelectedFile(authorizedFiles[0] ?? '');
   }, [authorizedFiles, selectedFile]);
 
+  function clearSession() {
+    setToken(''); setBootstrap(''); setError(null);
+    setModel(emptyModel); setRepositories([]); setConversations([]);
+    setConversation(null); setAttemptedRunIds([]); setInput('');
+    setSelectedRepository(''); setSelectedFile(''); setTitle('');
+  }
+
+  const operator = useOperatorSession(loadWorkspace, clearSession, reason => setError(errorText(reason)));
+
   async function perform(action: () => Promise<void>) {
     setBusy(true);
     setError(null);
     try { await action(); }
-    catch (reason) { setError(errorText(reason)); }
+    catch (reason) {
+      if (isExpiredOperatorSession(reason)) {
+        clearSession();
+      } else setError(errorText(reason));
+    }
     finally { setBusy(false); }
   }
 
@@ -50,22 +65,19 @@ export function ModelConversationWorkspace() {
       updated.runs.some(run => run.runId === runId && run.status === 'queued')));
   }
 
-  async function loadWorkspace(accessToken: string) {
+  async function loadWorkspace(accessToken: string, active = () => true) {
     const [modelInfo, repos, saved] = await Promise.all([
       api.localCodeModel(accessToken),
       api.modelRepositories(accessToken),
       api.modelConversations(accessToken),
     ]);
+    const current = saved.length ? await api.modelConversation(saved[0].conversationId, accessToken) : null;
+    if (!active()) return;
     setToken(accessToken);
     setModel(modelInfo);
     setRepositories(repos);
     setConversations(saved);
-    if (saved.length) {
-      const current = await api.modelConversation(saved[0].conversationId, accessToken);
-      setConversation(current);
-    } else {
-      setConversation(null);
-    }
+    setConversation(current);
   }
 
   return <section className="local-runner" aria-label="HIC conversation workspace">
@@ -78,23 +90,25 @@ export function ModelConversationWorkspace() {
       {!token ? <div className="command-form">
         <label htmlFor="conversation-bootstrap">Local operator bootstrap token</label>
         <input id="conversation-bootstrap" className="command-title" type="password" autoComplete="off"
-          value={bootstrap} disabled={busy} onChange={event => setBootstrap(event.target.value)} />
-        <button className="primary" disabled={busy || !bootstrap} onClick={() => void perform(async () => {
+          value={bootstrap} disabled={busy || operator.restoring} onChange={event => setBootstrap(event.target.value)} />
+        <button className="primary" disabled={busy || operator.restoring || !bootstrap} onClick={() => void perform(async () => {
           const session = await api.createLocalRunnerSession(bootstrap);
           setBootstrap('');
           await loadWorkspace(session.accessToken);
+          operator.authenticated(session);
         })}>Open conversation workspace</button>
+        <p className="muted small">Reload or reopen this same UI address to restore an unexpired session.
+          After expiry, use the configured bootstrap login or have the operator explicitly run
+          scripts/hic-open-operator.ps1 for this visible browser at #operator-access.
+          The helper fills this existing login without manual token copying; it never grants approval.</p>
       </div> : <div className="notice">
-        Operator session · memory only · 15 minutes · Model: {model.configured ? `${model.provider} / ${model.model}` : 'not configured'}
-        <button className="text-button" disabled={busy} onClick={() => {
-          setToken('');
-          setModel(emptyModel);
-          setRepositories([]);
-          setConversations([]);
-          setConversation(null);
-          setAttemptedRunIds([]);
-        }}>End session</button>
+        Operator session · HttpOnly cookie · 8-hour absolute expiry · Model: {model.configured ? `${model.provider} / ${model.model}` : 'not configured'}
+        <button className="text-button" disabled={busy} onClick={() => void perform(async () => {
+          await operator.logout(token);
+        })}>End session</button>
       </div>}
+      {operator.restoring && <p role="status">Restoring operator session…</p>}
+      {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
       {token && <p className={model.configured ? 'notice' : 'notice error'} role={model.configured ? 'status' : 'alert'}>
         {model.configured
           ? `Requests use only the configured local model; model timeout ${model.timeoutSeconds}s.`

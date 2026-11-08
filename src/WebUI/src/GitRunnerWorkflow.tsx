@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { api, type Task } from './api';
+import { api, isExpiredOperatorSession, type Task } from './api';
 import { gitApi, type GitPreview, type GitRepository, type GitRun } from './gitApi';
+import { useOperatorSession } from './useOperatorSession';
 
 export function GitRunnerWorkflow() {
   const [bootstrap, setBootstrap] = useState('');
@@ -17,11 +18,23 @@ export function GitRunnerWorkflow() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repository = repositories.find(r => r.id === repoId);
+  const operator = useOperatorSession(async (accessToken, active) => {
+    const [repos, drafts] = await Promise.all([gitApi.repositories(accessToken), api.tasks()]);
+    if (!active()) return;
+    setToken(accessToken); setRepositories(repos); setTasks(drafts.filter(t => t.status === 'Draft'));
+  }, () => {
+    setToken(''); setBootstrap(''); setRepositories([]); setTasks([]); invalidate();
+    setTaskId(''); setRepoId(''); setContent('Approved HIC test edit.\n');
+    setAttemptedRunId(''); setError(null);
+  }, reason => setError(reason instanceof Error ? reason.message : 'Operator session restore failed.'));
 
   async function perform(action: () => Promise<void>) {
     setBusy(true); setError(null);
     try { await action(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Local Git operation failed.'); }
+    catch (reason) {
+      if (!isExpiredOperatorSession(reason))
+        setError(reason instanceof Error ? reason.message : 'Local Git operation failed.');
+    }
     finally { setBusy(false); }
   }
   function invalidate() { setPreview(null); setRun(null); setRunId(''); }
@@ -35,17 +48,19 @@ export function GitRunnerWorkflow() {
       {!token ? <div className="command-form">
         <label htmlFor="git-bootstrap">Local operator bootstrap token</label>
         <input id="git-bootstrap" className="command-title" type="password" autoComplete="off" value={bootstrap}
-          disabled={busy} onChange={e => setBootstrap(e.target.value)} />
-        <button className="primary" disabled={busy || !bootstrap} onClick={() => void perform(async () => {
+          disabled={busy || operator.restoring} onChange={e => setBootstrap(e.target.value)} />
+        <button className="primary" disabled={busy || operator.restoring || !bootstrap} onClick={() => void perform(async () => {
           const session = await api.createLocalRunnerSession(bootstrap);
           const repos = await gitApi.repositories(session.accessToken);
           const drafts = (await api.tasks()).filter(t => t.status === 'Draft');
           setToken(session.accessToken); setBootstrap(''); setRepositories(repos); setTasks(drafts);
+          operator.authenticated(session);
         })}>Authenticate Git operator</button>
-      </div> : <div className="notice">Authenticated session · memory only · 15 minutes
-        <button className="text-button" disabled={busy} onClick={() => {
-          setToken(''); setRepositories([]); setTasks([]); invalidate();
-        }}>End Git session</button></div>}
+      </div> : <div className="notice">Authenticated operator session · HttpOnly cookie · 8-hour absolute expiry
+        <button className="text-button" disabled={busy} onClick={() => void perform(() =>
+          operator.logout(token))}>End Git session</button></div>}
+      {operator.restoring && <p role="status">Restoring operator session…</p>}
+      {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
       {error && <p className="notice error" role="alert">{error} Refresh the durable run status; never retry execution blindly.</p>}
       {busy && <p role="status">Checking local operation…</p>}
     </section>

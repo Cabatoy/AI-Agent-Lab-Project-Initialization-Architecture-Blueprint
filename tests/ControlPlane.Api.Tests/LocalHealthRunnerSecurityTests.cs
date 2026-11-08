@@ -2,11 +2,117 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Dapper;
 using Npgsql;
+using System.Net;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ControlPlane.Api.Tests;
 
 public sealed class LocalHealthRunnerSecurityTests
 {
+    private sealed class SessionClock : TimeProvider
+    {
+        internal DateTimeOffset Now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    [Fact]
+    public void Sessions_HaveDistinctAbsoluteLifetimesAndDeterministicRevocation()
+    {
+        var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var actor = Guid.NewGuid();
+        var clock = new SessionClock();
+        var sessions = LocalOperatorSessions.Create(bootstrap, actor.ToString(), clock)!;
+        var bearer = sessions.IssueSessionToken(bootstrap)!;
+        var browser = sessions.IssueSessionToken(bootstrap, browserSession: true)!;
+        var other = sessions.IssueSessionToken(bootstrap, browserSession: true)!;
+        Assert.Equal(clock.Now.AddMinutes(15), sessions.Restore("Bearer " + bearer)!.Value.ExpiresAtUtc);
+        var absoluteExpiry = clock.Now.AddHours(8);
+        Assert.Equal(absoluteExpiry, sessions.Restore("Bearer " + browser)!.Value.ExpiresAtUtc);
+        clock.Now = clock.Now.AddMinutes(15);
+        Assert.Null(sessions.Authenticate("Bearer " + bearer));
+        Assert.Equal(actor, sessions.Authenticate("Bearer " + browser));
+        Assert.Equal(absoluteExpiry, sessions.Restore("Bearer " + browser)!.Value.ExpiresAtUtc);
+        Assert.True(sessions.Revoke("Bearer " + browser));
+        Assert.False(sessions.Revoke("Bearer " + browser));
+        Assert.Null(sessions.Authenticate("Bearer " + browser));
+        Assert.False(sessions.Revoke("Basic " + other));
+        Assert.Equal(actor, sessions.Authenticate("Bearer " + other));
+        clock.Now = absoluteExpiry;
+        Assert.Null(sessions.Restore("Bearer " + other));
+        Assert.False(sessions.Revoke("Bearer " + other));
+        var replacement = sessions.IssueSessionToken(bootstrap, browserSession: true)!;
+        Assert.Equal(actor, sessions.Authenticate("Bearer " + replacement));
+        Assert.Null(LocalOperatorSessions.Create(bootstrap, actor.ToString())!.Authenticate("Bearer " + replacement));
+    }
+
+    [PostgresFact]
+    public async Task SessionEndpoints_RestoreAndRevokeWithoutChangingExistingApprovals()
+    {
+        await WithHealthDatabase(async (store, db, id) =>
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            await using var app = builder.Build();
+            var actor = Guid.NewGuid();
+            var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var clock = new SessionClock();
+            var sessions = LocalOperatorSessions.Create(bootstrap, actor.ToString(), clock)!;
+            LocalHealthRunnerEndpoints.Map(app, db.ConnectionString, null!, sessions);
+            await app.StartAsync();
+            try
+            {
+                var address = app.Services.GetRequiredService<IServer>().Features
+                    .Get<IServerAddressesFeature>()!.Addresses.Single();
+                using var client = new HttpClient { BaseAddress = new Uri(address) };
+                Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/local-runner/session")).StatusCode);
+                Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync("/local-runner/session/revoke", null)).StatusCode);
+                using var legacy = await client.PostAsync("/local-runner/session",
+                    new StringContent(JsonSerializer.Serialize(new { bootstrapToken = bootstrap }), System.Text.Encoding.UTF8, "application/json"));
+                Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
+                var legacySession = await legacy.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal(900, legacySession.GetProperty("expiresInSeconds").GetInt32());
+                client.DefaultRequestHeaders.Add("X-HIC-Session-Mode", "browser");
+                using var login = await client.PostAsync("/local-runner/session",
+                    new StringContent(JsonSerializer.Serialize(new { bootstrapToken = bootstrap }), System.Text.Encoding.UTF8, "application/json"));
+                Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+                Assert.Equal("no-store", login.Headers.CacheControl!.ToString());
+                var issued = await login.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal(28800, issued.GetProperty("expiresInSeconds").GetInt32());
+                var token = issued.GetProperty("accessToken").GetString()!;
+                client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+                clock.Now = clock.Now.AddHours(1);
+                using var restoredResponse = await client.GetAsync("/local-runner/session");
+                var restored = await restoredResponse.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal(actor, restored.GetProperty("actorId").GetGuid());
+                Assert.Equal(25200, restored.GetProperty("expiresInSeconds").GetInt32());
+                Assert.False(restored.TryGetProperty("accessToken", out _));
+                var intent = await store.GetIntentAsync(id, CancellationToken.None);
+                var approval = await store.ApproveAsync(id, actor, intent!.IntentDigestSha256, CancellationToken.None);
+                var auditCount = await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit");
+                Assert.Equal(HttpStatusCode.BadRequest,
+                    (await client.PostAsJsonAsync("/local-runner/session/revoke", new { all = true })).StatusCode);
+                Assert.Equal(actor, sessions.Authenticate("Bearer " + token));
+                Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/local-runner/session/revoke", null)).StatusCode);
+                Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/local-runner/session")).StatusCode);
+                var replacement = sessions.IssueSessionToken(bootstrap, browserSession: true)!;
+                Assert.Equal(actor, sessions.Authenticate("Bearer " + replacement));
+                Assert.NotNull(await store.GetAsync(approval.Run!.RunId, actor, CancellationToken.None));
+                Assert.Equal(auditCount, await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit"));
+                client.DefaultRequestHeaders.Authorization = new("Bearer", replacement);
+                clock.Now = clock.Now.AddHours(8);
+                Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/local-runner/session")).StatusCode);
+            }
+            finally { await app.StopAsync(); }
+        });
+    }
+
     [PostgresFact]
     public async Task DurableApproval_ActorIsolationSingleClaimAndReplayRejection()
     {

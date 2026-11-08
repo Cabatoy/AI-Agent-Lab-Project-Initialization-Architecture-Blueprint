@@ -72,14 +72,16 @@ internal sealed class LocalOperatorSessions
     private readonly Guid actorId;
     private readonly Dictionary<string, DateTimeOffset> sessions = new(StringComparer.Ordinal);
     private readonly object sync = new();
+    private readonly TimeProvider clock;
 
-    private LocalOperatorSessions(byte[] bootstrapTokenHash, Guid actorId)
+    private LocalOperatorSessions(byte[] bootstrapTokenHash, Guid actorId, TimeProvider clock)
     {
         this.bootstrapTokenHash = bootstrapTokenHash;
         this.actorId = actorId;
+        this.clock = clock;
     }
 
-    internal static LocalOperatorSessions? Create(string? bootstrapToken, string? actorIdText)
+    internal static LocalOperatorSessions? Create(string? bootstrapToken, string? actorIdText, TimeProvider? clock = null)
     {
         if (!Guid.TryParse(actorIdText, out var actorId) || actorId == Guid.Empty ||
             bootstrapToken is null || !Regex.IsMatch(bootstrapToken, "^[A-Za-z0-9+/]{43}=$", RegexOptions.CultureInvariant))
@@ -96,10 +98,10 @@ internal sealed class LocalOperatorSessions
 
         var hash = SHA256.HashData(token);
         CryptographicOperations.ZeroMemory(token);
-        return new LocalOperatorSessions(hash, actorId);
+        return new LocalOperatorSessions(hash, actorId, clock ?? TimeProvider.System);
     }
 
-    internal string? IssueSessionToken(string? suppliedBootstrapToken)
+    internal string? IssueSessionToken(string? suppliedBootstrapToken, bool browserSession = false)
     {
         if (suppliedBootstrapToken is null ||
             !Regex.IsMatch(suppliedBootstrapToken, "^[A-Za-z0-9+/]{43}=$", RegexOptions.CultureInvariant))
@@ -121,15 +123,18 @@ internal sealed class LocalOperatorSessions
         var session = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         lock (sync)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             RemoveExpiredSessions(now);
             sessions[Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(session)))] =
-                now.Add(SessionLifetime);
+                now.Add(browserSession ? TimeSpan.FromHours(8) : SessionLifetime);
         }
         return session;
     }
 
     internal Guid? Authenticate(string? authorizationHeader)
+        => Restore(authorizationHeader)?.ActorId;
+
+    internal (Guid ActorId, DateTimeOffset ExpiresAtUtc)? Restore(string? authorizationHeader)
     {
         const string prefix = "Bearer ";
         if (authorizationHeader is null || !authorizationHeader.StartsWith(prefix, StringComparison.Ordinal))
@@ -140,11 +145,24 @@ internal sealed class LocalOperatorSessions
         var sessionHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(session)));
         lock (sync)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             RemoveExpiredSessions(now);
-            return sessions.TryGetValue(sessionHash, out var expiresAt) && now < expiresAt ? actorId : null;
+            return sessions.TryGetValue(sessionHash, out var expiresAt) && now < expiresAt ? (actorId, expiresAt) : null;
         }
     }
+
+    internal bool Revoke(string? authorizationHeader)
+    {
+        lock (sync)
+        {
+            if (Restore(authorizationHeader) is null) return false;
+            return sessions.Remove(Convert.ToHexStringLower(SHA256.HashData(
+                Encoding.UTF8.GetBytes(authorizationHeader!["Bearer ".Length..]))));
+        }
+    }
+
+    internal int RemainingSeconds(DateTimeOffset expiresAtUtc) =>
+        (int)Math.Ceiling((expiresAtUtc - clock.GetUtcNow()).TotalSeconds);
 
     private void RemoveExpiredSessions(DateTimeOffset now)
     {
@@ -505,15 +523,42 @@ internal static class LocalHealthRunnerEndpoints
         var store = new LocalHealthRunStore(postgresConnectionString);
         app.MapPost("/local-runner/session", async (HttpContext context, CancellationToken cancellationToken) =>
         {
+            context.Response.Headers.CacheControl = "no-store";
             if (sessions is null) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
             if (!await store.IsSchemaReadyAsync(cancellationToken))
                 return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
             var token = await ReadBootstrapTokenAsync(context.Request, cancellationToken);
             if (token is null) return Results.BadRequest(new { error = "Invalid session request." });
-            var session = sessions.IssueSessionToken(token);
-            return session is null
-                ? Results.Unauthorized()
-                : Results.Ok(new { accessToken = session, expiresInSeconds = 900 });
+            var browserSession = context.Request.Headers["X-HIC-Session-Mode"] == "browser";
+            var session = sessions.IssueSessionToken(token, browserSession);
+            if (session is null) return Results.Unauthorized();
+            var restored = sessions.Restore("Bearer " + session)!.Value;
+            return Results.Ok(new
+            {
+                accessToken = session,
+                expiresInSeconds = sessions.RemainingSeconds(restored.ExpiresAtUtc),
+                expiresAtUtc = restored.ExpiresAtUtc
+            });
+        });
+
+        app.MapGet("/local-runner/session", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var session = sessions?.Restore(context.Request.Headers.Authorization);
+            return session is null ? Results.Unauthorized() : Results.Ok(new
+            {
+                actorId = session.Value.ActorId,
+                expiresAtUtc = session.Value.ExpiresAtUtc,
+                expiresInSeconds = sessions!.RemainingSeconds(session.Value.ExpiresAtUtc)
+            });
+        });
+        app.MapPost("/local-runner/session/revoke", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (context.Request.ContentLength is > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
+                return Results.BadRequest();
+            return sessions?.Revoke(context.Request.Headers.Authorization) == true
+                ? Results.Ok(new { revoked = true }) : Results.Unauthorized();
         });
 
         app.MapGet("/local-runner/capabilities", async (HttpContext context, CancellationToken cancellationToken) =>

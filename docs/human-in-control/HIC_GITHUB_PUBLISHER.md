@@ -200,8 +200,10 @@ iddiası değildir; her iki repo durumu da mevcut tek-C#-dosya workflow'unu kull
 6. Conversation aynı DB'den publication state, actual commit/ref SHA, PR number/link
    ve append-only audit'i reload sonrasında gösterir.
 
-Auth tüm publisher read/write endpoint'lerinde mevcut 15 dakikalık memory-only
-operator session'dır. Model/prompt içinde publisher credential'ı veya permission
+Auth tüm publisher read/write endpoint'lerinde aynı `LocalOperatorSessions`
+operator kimliğidir. Doğrudan bearer client'ları 15 dakikalık oturum kullanır;
+WebUI açık bootstrap girişinden sonra 8 saatlik mutlak süreli HttpOnly cookie kullanır.
+Model/prompt içinde publisher credential'ı veya permission
 kararı bulunmaz. Task sürümü, code plan, tested content, source config veya remote
 base değişirse publication reddedilir. İzinli run başına tek onaylı publication vardır.
 
@@ -254,10 +256,59 @@ Yardımcı exact browser PID, address bar URL, Control Plane revision ve sandbox
 kimliğini doğrular. DPAPI korumalı **local operator** token'ını yalnız mevcut
 parola alanına Windows UI Automation ile yazar ve mevcut login düğmesine basar.
 Clipboard, URL, log, browser storage veya model prompt'una token yazılmaz.
-GitHub App PEM/token'ına erişmez; 15 dakikalık session ve tüm insan onayları
-değişmeden kalır. Kalıcı login servisi, browser policy değişikliği veya auth
-fallback'i oluşturmaz. Session/page refresh sonrasında yardımcı açıkça yeniden
+GitHub App PEM/token'ına erişmez; kısa süreli runtime doğrulama bearer oturumunu
+işlem sonunda revoke eder. Giriş UI'nin desteklenen bootstrap akışından geçer;
+tüm insan onayları korunur. Kalıcı login servisi, browser policy değişikliği veya auth
+fallback'i oluşturmaz. Süre dolduğunda yardımcı açıkça yeniden
 çalıştırılabilir; hiçbir Approve/Reject/Execute kontrolünü kullanmaz.
+
+### Kalıcı operatör oturumu — local HTTP WebUI
+
+- Bootstrap token yalnız mevcut parola girişinde bir kez kullanılır. Vite proxy
+  backend'e `X-HIC-Session-Mode: browser` ile aynı session issuance isteğini iletir.
+  Backend varsayılan doğrudan bearer sözleşmesi **15 dakika** kalır; açık browser
+  modu aynı actor için **8 saat mutlak** geçerlilik verir. GET/aktivite süreyi
+  uzatmaz, refresh token veya otomatik bootstrap yoktur.
+- Proxy başarılı issuance yanıtındaki session token'ını JavaScript'e göndermez.
+  Yanıttaki `cookie-session` yalnız gizli olmayan transport işaretidir.
+  Asıl token `HttpOnly; SameSite=Strict; Max-Age=<kalan saniye>` cookie'dedir;
+  bootstrap token hiçbir cookie, localStorage, sessionStorage, URL veya loga yazılmaz.
+  Cookie `Domain` içermez; adı frontend portu ve API origin hash'i ile ayrılır,
+  yolu `/api/local-runner` olur. Aynı host'taki diğer runtime cookie'leri
+  kullanılmaz veya backend'e aktarılmaz. Cookie'ler port güvenlik sınırı değildir:
+  bu izolasyon yanlış runtime karışmasını önler, kötü niyetli local process'e
+  karşı işletim sistemi izolasyonunun yerini tutmaz.
+- Mevcut exact `http://127.0.0.1:<UI-port>` üzerinde `Secure` kullanılmaz;
+  bu yalnız onaylı loopback development akışıdır, uzak/production HTTP için
+  güvenlik tasarımı değildir. Proxy exact Host, Origin, `Sec-Fetch-Site` ve
+  `X-HIC-Request: local-runner` denetimleriyle cookie-authenticated read/write
+  ve bootstrap/revoke isteklerini CSRF'den korur. Backend cookie kabul etmez;
+  proxy yalnız seçilen runtime cookie'sini Authorization bearer'a çevirir.
+- Conversations, Local Runner ve Isolated Git mount sırasında
+  `GET /api/local-runner/session` ile aynı oturumun actor/absolute expiry
+  metadata'sını okur ve mevcut actor'a ait kayıtları yeniden yükler.
+  Sayfa yenileme, sidebar navigation ve aynı browser profilinde aynı UI adresini
+  yeniden açma geçerli cookie'yi korur; bunlar yeni bootstrap veya write değildir.
+  Private browser, cookie silinmesi, başka port/API veya backend restart
+  yeniden açık giriş gerektirir: session kayıtları backend belleğindedir.
+- `End session` yalnız mevcut oturumu
+  `POST /api/local-runner/session/revoke` ile server-side iptal eder ve cookie'yi
+  temizler. Revoke edilmiş token tekrar kullanılamaz. Eksik/expired/revoked
+  session 401 üretir; proxy cookie'yi temizler, UI stale workspace ve hatayı
+  kaldırıp açık yeniden giriş açıklamasını gösterir. Idle UI mutlak expiry'de
+  de giriş görünümüne döner. Başka açık sekme sonraki protected isteğinde
+  revoke'u görür. Ağ hatası sign-out başarısı sayılmaz.
+- Süre dolduğunda kullanıcı aynı desteklenen bootstrap login'i kullanabilir.
+  Tokenı elle taşımadan giriş için ajan, açıkça seçilmiş görünür browser'ı
+  exact UI adresinde `#operator-access` konumuna getirip mevcut
+  `scripts/hic-open-operator.ps1` yardımcısını açıkça bir kez çalıştırır.
+  Yardımcı mevcut DPAPI token dosyası, exact UI/API origin, browser PID ve
+  beklenen revision ister; token dosyası yoksa yeni kimlik uydurmaz.
+  Bu etkileşim her reload için değil, expiry/logout/restart sonrasında gerekir.
+  Perpetual/arka plan otomatik login değildir.
+- Oturum restore/revoke/yeniden giriş onay vermez, publication yenilemez ve
+  interrupted write'ı tekrar çalıştırmaz. Conversation/run/publication kayıtları
+  ve mevcut onay DB'si korunur; yeni giriş aynı configured actor'ı doğrular.
 
 Launcher kendi checkout'undaki UI'yi başlatır; readiness yalnız page title/health
 ile ölçülür. Bu kontroller source revision, conversation/publisher capability veya

@@ -1,12 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { api, type ModelConversation } from './api';
+import { api, OPERATOR_SESSION_ENDED, type ModelConversation } from './api';
 import { ModelConversationWorkspace } from './ModelConversationWorkspace';
 import { githubApi } from './githubApi';
 
 vi.mock('./githubApi', () => ({ githubApi: { status: vi.fn() } }));
 
-vi.mock('./api', () => ({ api: {
+vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(), api: {
+  restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
   createLocalRunnerSession: vi.fn(), localCodeModel: vi.fn(), modelRepositories: vi.fn(),
   modelConversations: vi.fn(), modelConversation: vi.fn(), createModelConversation: vi.fn(),
   sendModelMessage: vi.fn(), approveModelCodeEdit: vi.fn(), executeLocalHealthRun: vi.fn(),
@@ -41,6 +42,8 @@ const generated: ModelConversation = {
 };
 
 beforeEach(() => {
+  vi.mocked(api.restoreLocalRunnerSession).mockRejectedValue({ status: 401 });
+  vi.mocked(api.revokeLocalRunnerSession).mockResolvedValue({ revoked: true });
   vi.mocked(githubApi.status).mockResolvedValue({ configured: false, repository: '', missing: ['HIC_GITHUB_APP_ID'] });
   vi.stubGlobal('crypto', { randomUUID: () => '41234567-89ab-cdef-0123-456789abcdef' });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 's'.repeat(44), expiresInSeconds: 900 });
@@ -61,10 +64,11 @@ beforeEach(() => {
   });
   vi.mocked(api.executeLocalHealthRun).mockResolvedValue({ status: 'completed' });
 });
-afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
 it('creates a durable conversation, displays a model proposal, requires approval and reports execution results', async () => {
   render(<ModelConversationWorkspace />);
+  await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'bootstrap' } });
   fireEvent.click(screen.getByText('Open conversation workspace'));
   await screen.findByText('Start a conversation');
@@ -108,4 +112,109 @@ it('creates a durable conversation, displays a model proposal, requires approval
   expect(api.executeLocalHealthRun).toHaveBeenCalledWith(id, 's'.repeat(44), 120000);
   expect(screen.getByText('+public static class Value')).toBeInTheDocument();
   expect(screen.getByText(/completed ·/)).toBeInTheDocument();
+});
+
+it('restores history after navigation/remount without bootstrap or any approval/write', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: id, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(), expiresInSeconds: 3600,
+  });
+  vi.mocked(api.modelConversations).mockResolvedValue([{
+    conversationId: id, taskId: id, title: emptyConversation.title, repositoryId: 'fixture',
+    baseCommit: 'b'.repeat(40), file: emptyConversation.file, updatedAtUtc: now,
+  }]);
+  const first = render(<ModelConversationWorkspace />);
+  await screen.findByText('Start a conversation');
+  expect(api.localCodeModel).toHaveBeenCalledWith('cookie-session');
+  first.unmount();
+  render(<ModelConversationWorkspace />);
+  await screen.findByText('Start a conversation');
+  expect(api.restoreLocalRunnerSession).toHaveBeenCalledTimes(2);
+  expect(api.modelConversation).toHaveBeenCalledWith(id, 'cookie-session');
+  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
+  expect(api.approveModelCodeEdit).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+  expect(api.createModelConversation).not.toHaveBeenCalled();
+  expect(api.sendModelMessage).not.toHaveBeenCalled();
+});
+
+it('revokes on logout, clears private workspace/error and permits supported explicit reauthentication', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: id, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(), expiresInSeconds: 3600,
+  });
+  render(<ModelConversationWorkspace />);
+  await screen.findByText('Start a conversation');
+  vi.mocked(api.createModelConversation).mockRejectedValueOnce(new Error('Old write error'));
+  fireEvent.change(screen.getByLabelText('Conversation title'), { target: { value: 'Update value' } });
+  fireEvent.change(screen.getByLabelText('Authorized repository'), { target: { value: 'fixture' } });
+  await waitFor(() => expect(screen.getByLabelText('One permitted C# source file')).toHaveValue('src/Value.cs'));
+  fireEvent.click(screen.getByText('Create conversation'));
+  await screen.findByText(/Old write error/);
+  fireEvent.click(screen.getByText('End session'));
+  await screen.findByText(/Signed out/);
+  expect(api.revokeLocalRunnerSession).toHaveBeenCalledWith('cookie-session');
+  expect(screen.queryByText(/Old write error/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled();
+  expect(screen.getByText(/hic-open-operator.ps1/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'bootstrap' } });
+  fireEvent.click(screen.getByText('Open conversation workspace'));
+  await screen.findByText('Start a conversation');
+  expect(screen.queryByText(/Signed out/)).not.toBeInTheDocument();
+  expect(api.createLocalRunnerSession).toHaveBeenCalledTimes(1);
+});
+
+it('clears stale workspace/errors on a protected endpoint 401 and never retries a write', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: id, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(), expiresInSeconds: 3600,
+  });
+
+  render(<ModelConversationWorkspace />);
+  await screen.findByText('Start a conversation');
+  fireEvent.change(screen.getByLabelText('Conversation title'), { target: { value: 'Update value' } });
+  fireEvent.change(screen.getByLabelText('Authorized repository'), { target: { value: 'fixture' } });
+  await waitFor(() => expect(screen.getByLabelText('One permitted C# source file')).toHaveValue('src/Value.cs'));
+  vi.mocked(api.createModelConversation).mockImplementationOnce(async () => {
+    window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
+    throw Object.assign(new Error('Stale unauthorized response'), { status: 401 });
+  });
+  fireEvent.click(screen.getByText('Create conversation'));
+  await screen.findByText(/expired or was revoked/);
+  expect(screen.queryByText(/Stale unauthorized response/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled();
+  expect(api.createModelConversation).toHaveBeenCalledTimes(1);
+  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
+  expect(api.approveModelCodeEdit).not.toHaveBeenCalled();
+});
+
+it('shows explicit reauthentication at absolute expiry even while idle', async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: id, expiresAtUtc: new Date(Date.now() + 2000).toISOString(), expiresInSeconds: 2,
+  });
+  await act(async () => { render(<ModelConversationWorkspace />); });
+  expect(screen.getByText('Start a conversation')).toBeInTheDocument();
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument();
+  expect(screen.getByText(/Operator session expired. Reauthenticate explicitly/)).toBeInTheDocument();
+  expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled();
+  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+});
+
+it('does not resurrect a session when a 401 invalidates an in-flight restore', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: id, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(), expiresInSeconds: 3600,
+  });
+  let complete!: (value: Awaited<ReturnType<typeof api.localCodeModel>>) => void;
+  vi.mocked(api.localCodeModel).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  render(<ModelConversationWorkspace />);
+  await waitFor(() => expect(api.localCodeModel).toHaveBeenCalled());
+  await act(async () => {
+    window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
+    complete({ configured: true, provider: 'podman-ai-lab', model: 'mistral-local', timeoutSeconds: 60 });
+  });
+  expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled();
+  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
 });

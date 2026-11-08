@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { api, type LocalHealthIntent, type LocalHealthRunSnapshot, type LocalRunnerCapability, type Task } from './api';
+import { api, isExpiredOperatorSession, type LocalHealthIntent, type LocalHealthRunSnapshot, type LocalRunnerCapability, type Task } from './api';
+import { useOperatorSession } from './useOperatorSession';
 
 const delay = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
-const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'Unexpected local runner error.';
+const errorMessage = (reason: unknown) => isExpiredOperatorSession(reason) ? null
+  : reason instanceof Error ? reason.message : 'Unexpected local runner error.';
 
 export function LocalRunnerWorkflow() {
   const [bootstrapToken, setBootstrapToken] = useState('');
@@ -19,6 +21,15 @@ export function LocalRunnerWorkflow() {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const operator = useOperatorSession(async (token, active) => {
+    const [registered, drafts] = await Promise.all([api.localRunnerCapabilities(token), api.tasks()]);
+    if (!active()) return;
+    setSessionToken(token); setCapability(registered);
+    setTasks(drafts.filter(task => task.status === 'Draft'));
+  }, () => {
+    setSessionToken(''); setBootstrapToken(''); setCapability(null);
+    setTasks([]); setTaskId(''); setIntent(null); setRun(null); setError(null); setNotice(null);
+  }, reason => setError(errorMessage(reason)));
 
   async function connect() {
     setConnecting(true);
@@ -30,6 +41,7 @@ export function LocalRunnerWorkflow() {
       setSessionToken(session.accessToken);
       setCapability(registered);
       setBootstrapToken('');
+      operator.authenticated(session);
       setTaskId('');
       setIntent(null);
       setRun(null);
@@ -137,32 +149,27 @@ export function LocalRunnerWorkflow() {
       {!sessionToken
         ? <div className="command-form">
           <label className="field-label" htmlFor="runner-bootstrap-token">Local operator bootstrap token</label>
-          <input id="runner-bootstrap-token" className="command-title" type="password" autoComplete="off"
+          <input id="runner-bootstrap-token" className="command-title" type="password" autoComplete="off" disabled={operator.restoring}
             value={bootstrapToken} onChange={event => setBootstrapToken(event.target.value)}
             placeholder="Paste the configured local registration token" />
           <div className="form-actions">
-            <button type="button" className="primary" disabled={connecting || !bootstrapToken}
+            <button type="button" className="primary" disabled={connecting || operator.restoring || !bootstrapToken}
               onClick={() => void connect()}>{connecting ? 'Authenticating…' : 'Authenticate local operator'}</button>
             <span className="muted small">Token is not stored in browser storage.</span>
           </div>
         </div>
         : <div className="detail-block" role="status">
           <span className="label">Authenticated local actor</span>
-          <p>{capability?.actorId ?? 'Loading…'} · session expires after 15 minutes</p>
-          <button className="text-button" type="button" onClick={() => {
-            setSessionToken('');
-            setCapability(null);
-            setTasks([]);
-            setTaskId('');
-            setIntent(null);
-            setRun(null);
-            setNotice(null);
-            setError(null);
-          }}>End local session</button>
+          <p>{capability?.actorId ?? 'Loading…'} · HttpOnly cookie · 8-hour absolute expiry</p>
+          <button className="text-button" type="button" disabled={approving || executing || connecting}
+            onClick={() => void operator.logout(sessionToken).catch(reason => setError(errorMessage(reason)))}>
+            End local session</button>
         </div>}
 
       {error && <p className="notice error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
+      {operator.restoring && <p role="status">Restoring operator session…</p>}
+      {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
     </section>
 
     {sessionToken && capability && <section className="panel">

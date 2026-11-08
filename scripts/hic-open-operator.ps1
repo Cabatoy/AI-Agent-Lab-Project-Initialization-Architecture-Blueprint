@@ -61,6 +61,12 @@ try {
     }
     $input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue([Convert]::ToBase64String($bytes))
 } finally {
+    if ($null -ne $session -and $null -ne $authorization) {
+        try {
+            $null = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/local-runner/session/revoke" `
+                -Headers $authorization -MaximumRedirection 0 -TimeoutSec 10
+        } catch { Write-Warning 'Temporary runtime verification session could not be revoked; it expires within 15 minutes.' }
+    }
     [Array]::Clear($bytes, 0, $bytes.Length)
     $payload = $null
     $session = $null
