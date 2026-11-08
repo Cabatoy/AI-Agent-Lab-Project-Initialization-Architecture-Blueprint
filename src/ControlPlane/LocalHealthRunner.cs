@@ -199,7 +199,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
 
     internal async Task<(string Code, LocalHealthRun? Run)> ApproveAsync(
         Guid taskId, Guid actorId, string expectedDigest, CancellationToken cancellationToken,
-        GitEditPlan? plan = null)
+        ILocalRunPlan? plan = null)
     {
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
@@ -216,7 +216,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
                 return ("intent-changed", null);
             intent = intent with
             {
-                Action = GitEditPlan.Action, Scope = GitEditPlan.Scope,
+                Action = plan.PlanAction, Scope = plan.PlanScope,
                 IntentDigestSha256 = plan.Digest()
             };
         }
@@ -226,20 +226,33 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         var now = DateTime.UtcNow;
         var runId = Guid.NewGuid();
         var expiresAt = plan?.ExpiresAtUtc ?? now.AddMinutes(5);
-        var inserted = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(@"
-            insert into native_health_runs
-                (run_id, task_id, actor_id, action, scope, intent_digest_sha256, task_updated_at_utc,
-                 status, created_at_utc, approved_at_utc, expires_at_utc)
-            values
-                (@RunId, @TaskId, @ActorId, @Action, @Scope, @Digest, @TaskUpdatedAtUtc,
-                 'queued', @Now, @Now, @ExpiresAtUtc)
-            on conflict (task_id) do nothing
-            returning run_id;",
+        var insertSql = plan?.PlanConversationId is null
+            ? @"
+                insert into native_health_runs
+                    (run_id, task_id, actor_id, action, scope, intent_digest_sha256, task_updated_at_utc,
+                     status, created_at_utc, approved_at_utc, expires_at_utc)
+                values
+                    (@RunId, @TaskId, @ActorId, @Action, @Scope, @Digest, @TaskUpdatedAtUtc,
+                     'queued', @Now, @Now, @ExpiresAtUtc)
+                on conflict (task_id) do nothing returning run_id;"
+            : @"
+                insert into native_health_runs
+                    (run_id, task_id, actor_id, action, scope, intent_digest_sha256, task_updated_at_utc,
+                     status, created_at_utc, approved_at_utc, expires_at_utc, conversation_id, plan_json)
+                values
+                    (@RunId, @TaskId, @ActorId, @Action, @Scope, @Digest, @TaskUpdatedAtUtc,
+                     'queued', @Now, @Now, @ExpiresAtUtc, @ConversationId, @PlanJson::jsonb)
+                on conflict (task_id) do nothing returning run_id;";
+        var inserted = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(insertSql,
             new
             {
-                RunId = runId, TaskId = task.Id, ActorId = actorId, Action = LocalHealthRunIntent.Action,
-                Scope = LocalHealthRunIntent.Scope, Digest = intent.IntentDigestSha256, TaskUpdatedAtUtc = task.UpdatedAtUtc,
-                Now = now, ExpiresAtUtc = expiresAt
+                RunId = runId, TaskId = task.Id, ActorId = actorId,
+                Action = plan?.PlanConversationId is null ? LocalHealthRunIntent.Action : intent.Action,
+                Scope = plan?.PlanConversationId is null ? LocalHealthRunIntent.Scope : intent.Scope,
+                Digest = intent.IntentDigestSha256, TaskUpdatedAtUtc = task.UpdatedAtUtc,
+                Now = now, ExpiresAtUtc = expiresAt, ConversationId = plan?.PlanConversationId,
+                PlanJson = plan?.PlanConversationId is null || plan is null
+                    ? null : JsonSerializer.Serialize(plan, plan.GetType(), ResultJsonOptions)
             }, transaction, cancellationToken: cancellationToken));
         if (inserted is null)
         {
@@ -264,8 +277,8 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         if (plan is not null)
             await connection.ExecuteAsync(new CommandDefinition(
                 "update native_health_runs set action = @Action, scope = @Scope, plan_json = @Json::jsonb where run_id = @runId;",
-                new { runId, Action = GitEditPlan.Action, Scope = GitEditPlan.Scope,
-                    Json = JsonSerializer.Serialize(plan, ResultJsonOptions) },
+                new { runId, Action = plan.PlanAction, Scope = plan.PlanScope,
+                    Json = JsonSerializer.Serialize(plan, plan.GetType(), ResultJsonOptions) },
                 transaction, cancellationToken: cancellationToken));
         await InsertEventAsync(connection, transaction, runId, actorId, "approved", cancellationToken);
         await InsertEventAsync(connection, transaction, runId, actorId, "queued", cancellationToken);
@@ -300,8 +313,17 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         }
 
         var task = await ReadTaskAsync(connection, transaction, run.TaskId, cancellationToken, forUpdate: true);
-        var plan = run.Action == GitEditPlan.Action
-            ? await ReadPlanAsync(connection, transaction, runId, cancellationToken) : null;
+        ILocalRunPlan? plan = run.Action switch
+        {
+            GitEditPlan.Action => await ReadPlanAsync(connection, transaction, runId, cancellationToken),
+            ModelCodeEditPlan.Action => await ReadModelCodePlanAsync(connection, transaction, runId, cancellationToken),
+            _ => null
+        };
+        var modelConversationMatches = plan is not ModelCodeEditPlan modelPlan ||
+            await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "select conversation_id = @conversationId from native_health_runs where run_id = @runId;",
+                new { conversationId = modelPlan.ConversationId, runId }, transaction,
+                cancellationToken: cancellationToken));
         var now = DateTime.UtcNow;
         if (now >= run.ExpiresAtUtc)
         {
@@ -318,6 +340,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             !(plan is null && run.Action == LocalHealthRunIntent.Action
                 ? LocalHealthRunIntent.Matches(run.IntentDigestSha256, ToIntent(task).IntentDigestSha256)
                 : plan is not null && plan.ActorId == actorId && plan.TaskId == run.TaskId &&
+                  modelConversationMatches && plan.PlanAction == run.Action && plan.PlanScope == run.Scope &&
                   plan.ExpiresAtUtc == run.ExpiresAtUtc &&
                   LocalHealthRunIntent.Matches(plan.TaskDigest, ToIntent(task).IntentDigestSha256) &&
                   LocalHealthRunIntent.Matches(run.IntentDigestSha256, plan.Digest())))
@@ -349,6 +372,12 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         Guid runId, Guid actorId, GitEditResult result, CancellationToken cancellationToken) =>
         CompleteResultAsync(runId, actorId, JsonSerializer.Serialize(result, ResultJsonOptions), cancellationToken,
             result.TestCode == "passed:exact-content-and-scope" && result.SourceUnchanged ? "completed" : "failed");
+
+    internal Task<bool> CompleteModelCodeAsync(
+        Guid runId, Guid actorId, ModelCodeEditResult result, CancellationToken cancellationToken) =>
+        CompleteResultAsync(runId, actorId, JsonSerializer.Serialize(result, ResultJsonOptions), cancellationToken,
+            result.TestCode == "passed:isolated-csharp-compile-and-scope" && result.SourceUnchanged
+                ? "completed" : "failed");
 
     private async Task<bool> CompleteResultAsync(
         Guid runId, Guid actorId, string resultJson, CancellationToken cancellationToken, string status = "completed")
@@ -397,6 +426,12 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
         return await ReadPlanAsync(connection, null, runId, cancellationToken);
     }
 
+    internal async Task<ModelCodeEditPlan?> GetModelCodePlanAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(postgresConnectionString);
+        return await ReadModelCodePlanAsync(connection, null, runId, cancellationToken);
+    }
+
     private static async Task<GitEditPlan?> ReadPlanAsync(
         NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid runId, CancellationToken cancellationToken)
     {
@@ -404,6 +439,15 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             "select plan_json::text from native_health_runs where run_id = @runId;",
             new { runId }, transaction, cancellationToken: cancellationToken));
         return json is null ? null : JsonSerializer.Deserialize<GitEditPlan>(json, ResultJsonOptions);
+    }
+
+    private static async Task<ModelCodeEditPlan?> ReadModelCodePlanAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid runId, CancellationToken cancellationToken)
+    {
+        var json = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+            "select plan_json::text from native_health_runs where run_id = @runId;",
+            new { runId }, transaction, cancellationToken: cancellationToken));
+        return json is null ? null : JsonSerializer.Deserialize<ModelCodeEditPlan>(json, ResultJsonOptions);
     }
 
     private static LocalHealthIntent ToIntent(TaskIntentSource task) => new(
@@ -539,6 +583,16 @@ internal static class LocalHealthRunnerEndpoints
                     return Results.Conflict(new { error = "Local run result was not durably recorded." });
                 return Results.Ok(new { runId, status = gitResult.SourceUnchanged &&
                     gitResult.TestCode == "passed:exact-content-and-scope" ? "completed" : "failed" });
+            }
+            if (claim.Run.Action == ModelCodeEditPlan.Action)
+            {
+                var plan = await store.GetModelCodePlanAsync(runId, CancellationToken.None);
+                var codeResult = await ModelCodeEditExecutor.ExecuteAsync(
+                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
+                if (!await store.CompleteModelCodeAsync(runId, actorId.Value, codeResult, CancellationToken.None))
+                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
+                return Results.Ok(new { runId, status = codeResult.SourceUnchanged &&
+                    codeResult.TestCode == "passed:isolated-csharp-compile-and-scope" ? "completed" : "failed" });
             }
             var result = await LocalDiagnostics.InspectAsync(postgresConnectionString, redisDb,
                 CancellationToken.None);

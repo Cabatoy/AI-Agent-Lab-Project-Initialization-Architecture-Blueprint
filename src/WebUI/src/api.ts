@@ -65,6 +65,104 @@ export interface LocalHealthRunSnapshot {
   result: LocalDiagnosticSnapshot | null;
   events: LocalHealthRunEvent[];
 }
+export interface ModelRepository {
+  id: string;
+  path: string;
+  baseCommit: string;
+  files: string[];
+  available: boolean;
+}
+export interface LocalCodeModelInfo {
+  configured: boolean;
+  provider: string;
+  model: string;
+  timeoutSeconds: number;
+}
+export interface ModelCodeEditPlan {
+  revision: number;
+  taskId: string;
+  actorId: string;
+  conversationId: string;
+  taskDigest: string;
+  repositoryId: string;
+  repositoryPath: string;
+  baseCommit: string;
+  file: string;
+  content: string;
+  provider: string;
+  model: string;
+  expiresAtUtc: string;
+}
+export interface ModelCodeEditProposal {
+  intentDigestSha256: string;
+  plan: ModelCodeEditPlan;
+}
+export interface ModelConversationMessage {
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  provider: string | null;
+  modelName: string | null;
+  status: string;
+  proposal: ModelCodeEditProposal | null;
+  createdAtUtc: string;
+}
+export interface ModelCodeEditResult {
+  action: 'repository.model-code-edit';
+  runId: string;
+  conversationId: string | null;
+  repositoryId: string | null;
+  baseCommit: string | null;
+  file: string | null;
+  worktreePath: string | null;
+  branch: string | null;
+  diff: string;
+  testCode: string;
+  sourceUnchanged: boolean;
+  checkedAtUtc: string;
+}
+export interface ModelConversationRun {
+  runId: string;
+  taskId: string;
+  status: string;
+  action: 'repository.model-code-edit';
+  scope: 'disposable-worktree:one-allowlisted-csharp-file:write';
+  intentDigestSha256: string;
+  plan: ModelCodeEditPlan | null;
+  result: ModelCodeEditResult | null;
+  events: LocalHealthRunEvent[];
+}
+export interface ModelConversation {
+  conversationId: string;
+  taskId: string;
+  title: string;
+  repositoryId: string;
+  repositoryPath: string;
+  baseCommit: string;
+  file: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  messages: ModelConversationMessage[];
+  runs: ModelConversationRun[];
+}
+export interface ModelConversationSummary {
+  conversationId: string;
+  taskId: string;
+  title: string;
+  repositoryId: string;
+  baseCommit: string;
+  file: string;
+  updatedAtUtc: string;
+}
+export interface ModelCodeEditApproval {
+  runId: string;
+  taskId: string;
+  conversationId: string;
+  action: 'repository.model-code-edit';
+  scope: 'disposable-worktree:one-allowlisted-csharp-file:write';
+  intentDigestSha256: string;
+  status: string;
+}
 export interface Task {
   id: string;
   title: string;
@@ -88,6 +186,7 @@ export interface Plan {
 }
 
 type Guard<T> = (value: unknown) => value is T;
+const list = <T>(guard: Guard<T>): Guard<T[]> => (v): v is T[] => Array.isArray(v) && v.every(guard);
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === 'string';
 const nullable = (v: unknown): v is string | null => v === null || str(v);
@@ -129,14 +228,59 @@ const localHealthRun: Guard<LocalHealthRunSnapshot> = (v): v is LocalHealthRunSn
   (v.completedAtUtc === null || date(v.completedAtUtc)) &&
   (v.result === null || localDiagnostics(v.result)) &&
   list(localHealthEvent)(v.events);
+const modelRepository: Guard<ModelRepository> = (v): v is ModelRepository =>
+  object(v) && /^[a-z0-9-]{1,40}$/.test(String(v.id)) && str(v.path) &&
+  str(v.baseCommit) && /^[0-9a-f]{40}$/.test(v.baseCommit) &&
+  list(str)(v.files) && v.files.length > 0 && v.files.length <= 8 && v.available === true;
+const codeModelInfo: Guard<LocalCodeModelInfo> = (v): v is LocalCodeModelInfo =>
+  object(v) && typeof v.configured === 'boolean' && str(v.provider) && str(v.model) &&
+  Number.isSafeInteger(v.timeoutSeconds) && Number(v.timeoutSeconds) >= 5 && Number(v.timeoutSeconds) <= 120;
+const modelCodeEditPlan: Guard<ModelCodeEditPlan> = (v): v is ModelCodeEditPlan =>
+  object(v) && v.revision === 1 && guid(v.taskId) && guid(v.actorId) && guid(v.conversationId) &&
+  str(v.taskDigest) && /^[0-9a-f]{64}$/.test(v.taskDigest) &&
+  /^[a-z0-9-]{1,40}$/.test(String(v.repositoryId)) && str(v.repositoryPath) &&
+  str(v.baseCommit) && /^[0-9a-f]{40}$/.test(v.baseCommit) && str(v.file) &&
+  v.file.length <= 120 && v.file.toLowerCase().endsWith('.cs') && str(v.content) && v.content.length <= 8192 &&
+  v.content.endsWith('\n') && str(v.provider) && str(v.model) && date(v.expiresAtUtc);
+const modelCodeEditProposal: Guard<ModelCodeEditProposal> = (v): v is ModelCodeEditProposal =>
+  object(v) && str(v.intentDigestSha256) && /^[0-9a-f]{64}$/.test(v.intentDigestSha256) &&
+  modelCodeEditPlan(v.plan);
+const modelConversationMessage: Guard<ModelConversationMessage> = (v): v is ModelConversationMessage =>
+  object(v) && guid(v.messageId) && (v.role === 'user' || v.role === 'assistant') &&
+  str(v.content) && v.content.length <= 12000 && nullable(v.provider) && nullable(v.modelName) &&
+  str(v.status) && (v.proposal === null || modelCodeEditProposal(v.proposal)) && date(v.createdAtUtc);
+const modelCodeEditResult: Guard<ModelCodeEditResult> = (v): v is ModelCodeEditResult =>
+  object(v) && v.action === 'repository.model-code-edit' && guid(v.runId) &&
+  (v.conversationId === null || guid(v.conversationId)) && nullable(v.repositoryId) &&
+  nullable(v.baseCommit) && nullable(v.file) && nullable(v.worktreePath) && nullable(v.branch) &&
+  str(v.diff) && str(v.testCode) && typeof v.sourceUnchanged === 'boolean' && date(v.checkedAtUtc);
+const modelRunEventList = list(localHealthEvent);
+const modelConversationRun: Guard<ModelConversationRun> = (v): v is ModelConversationRun =>
+  object(v) && guid(v.runId) && guid(v.taskId) && str(v.status) &&
+  v.action === 'repository.model-code-edit' &&
+  v.scope === 'disposable-worktree:one-allowlisted-csharp-file:write' &&
+  str(v.intentDigestSha256) && /^[0-9a-f]{64}$/.test(v.intentDigestSha256) &&
+  (v.plan === null || modelCodeEditPlan(v.plan)) &&
+  (v.result === null || modelCodeEditResult(v.result)) && modelRunEventList(v.events);
+const modelConversation: Guard<ModelConversation> = (v): v is ModelConversation =>
+  object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
+  str(v.repositoryId) && str(v.repositoryPath) && str(v.baseCommit) &&
+  str(v.file) && date(v.createdAtUtc) && date(v.updatedAtUtc) &&
+  list(modelConversationMessage)(v.messages) && list(modelConversationRun)(v.runs);
+const modelConversationSummary: Guard<ModelConversationSummary> = (v): v is ModelConversationSummary =>
+  object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
+  str(v.repositoryId) && str(v.baseCommit) && str(v.file) && date(v.updatedAtUtc);
+const modelCodeEditApproval: Guard<ModelCodeEditApproval> = (v): v is ModelCodeEditApproval =>
+  object(v) && guid(v.runId) && guid(v.taskId) && guid(v.conversationId) &&
+  v.action === 'repository.model-code-edit' &&
+  v.scope === 'disposable-worktree:one-allowlisted-csharp-file:write' &&
+  str(v.intentDigestSha256) && /^[0-9a-f]{64}$/.test(v.intentDigestSha256) && str(v.status);
 const task: Guard<Task> = (v): v is Task => object(v) && guid(v.id) && str(v.title) &&
   str(v.description) && str(v.status) && Number.isSafeInteger(v.attemptCount) && Number(v.attemptCount) >= 0 &&
   nullable(v.result) && nullable(v.errorMessage) && date(v.createdAtUtc) && date(v.updatedAtUtc);
 const plan: Guard<Plan> = (v): v is Plan => object(v) && guid(v.id) && nullable(v.projectKey) &&
   str(v.requestTitle) && nullable(v.requestDescription) && str(v.status) && str(v.planSummary) &&
   date(v.createdAtUtc) && date(v.updatedAtUtc);
-const list = <T>(guard: Guard<T>): Guard<T[]> => (v): v is T[] => Array.isArray(v) && v.every(guard);
-
 export class ApiError extends Error {
   constructor(public kind: 'network' | 'timeout' | 'http' | 'invalid', message: string, public status?: number,
     /** True when a write may have reached the Control Plane even though no confirmation was received. */
@@ -344,13 +488,36 @@ export const api = {
     return localRunnerRequest(`/tasks/${taskId}/approve`, localHealthRunApproval, token, 'POST',
       { intentDigestSha256 }, 202);
   },
-  executeLocalHealthRun: (runId: string, token: string) => {
+  executeLocalHealthRun: (runId: string, token: string, timeoutMs = 15000) => {
     if (!guid(runId)) return Promise.reject(new ApiError('invalid', 'Invalid local run identifier.'));
-    return localRunnerRequest(`/runs/${runId}/execute`, object, token, 'POST');
+    return localRunnerRequest(`/runs/${runId}/execute`, object, token, 'POST', undefined, 200, timeoutMs);
   },
   localHealthRun: (runId: string, token: string) => {
     if (!guid(runId)) return Promise.reject(new ApiError('invalid', 'Invalid local run identifier.'));
     return localRunnerRequest(`/runs/${runId}`, localHealthRun, token, 'GET');
+  },
+  localCodeModel: (token: string) => localRunnerRequest('/model', codeModelInfo, token, 'GET'),
+  modelRepositories: (token: string) =>
+    localRunnerRequest('/repositories', list(modelRepository), token, 'GET'),
+  modelConversations: (token: string) =>
+    localRunnerRequest('/conversations', list(modelConversationSummary), token, 'GET'),
+  modelConversation: (conversationId: string, token: string) => {
+    if (!guid(conversationId)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
+    return localRunnerRequest(`/conversations/${conversationId}`, modelConversation, token, 'GET');
+  },
+  createModelConversation: (input: { title: string; repositoryId: string; file: string }, token: string) =>
+    localRunnerRequest('/conversations', modelConversation, token, 'POST', input, 201),
+  sendModelMessage: (conversationId: string, clientMessageId: string, content: string, token: string) => {
+    if (!guid(conversationId) || !guid(clientMessageId) || content.length < 1 || content.length > 4000)
+      return Promise.reject(new ApiError('invalid', 'Invalid bounded conversation message.'));
+    return localRunnerRequest(`/conversations/${conversationId}/messages`, modelConversation, token, 'POST',
+      { clientMessageId, content }, 200, 130000);
+  },
+  approveModelCodeEdit: (conversationId: string, messageId: string, intentDigestSha256: string, token: string) => {
+    if (!guid(conversationId) || !guid(messageId) || !/^[0-9a-f]{64}$/.test(intentDigestSha256))
+      return Promise.reject(new ApiError('invalid', 'Invalid code-edit plan approval.'));
+    return localRunnerRequest(`/conversations/${conversationId}/messages/${messageId}/approve`,
+      modelCodeEditApproval, token, 'POST', { intentDigestSha256 }, 202);
   },
   health: () => get('/health', health),
   localDiagnostics: () => get('/diagnostics/local', localDiagnostics),

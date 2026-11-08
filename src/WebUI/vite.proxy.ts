@@ -4,9 +4,12 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
-const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|repositories|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve|git-preview|git-approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
+const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const localRunnerPath = new RegExp(
+  `^/api/local-runner/(?:session|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
+const MODEL_UPSTREAM_TIMEOUT_MS = 125000;
 
 export function apiTarget(value = process.env.HIC_API_URL ?? 'http://127.0.0.1:19480'): URL {
   let url: URL;
@@ -159,14 +162,20 @@ async function localRunnerRequest(
   }
   const isSession = path === '/api/local-runner/session';
   const isRead = req.method === 'GET' &&
-    (/^\/api\/local-runner\/(?:capabilities|repositories|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (/^\/api\/local-runner\/(?:capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
   const isApprove = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
+  const isConversationCreate = req.method === 'POST' && path === '/api/local-runner/conversations';
+  const isConversationMessage = req.method === 'POST' &&
+    /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages$/i.test(path);
+  const isConversationApprove = req.method === 'POST' &&
+    /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages\/[0-9a-f-]+\/approve$/i.test(path);
+  const isConversationWrite = isConversationCreate || isConversationMessage || isConversationApprove;
   const isExecute = req.method === 'POST' &&
     /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path);
-  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan)
+  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
   const authorization = header(req, 'authorization');
@@ -188,7 +197,7 @@ async function localRunnerRequest(
       return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
     const received = await readBody(req, timeouts.bodyTimeoutMs);
     if (!received.ok || received.body.length !== 0) return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
-    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs, undefined, authorization);
+    forward(req, res, target, 'POST', path.slice(4), timeouts.executionTimeoutMs, undefined, authorization);
     return;
   }
 
@@ -213,6 +222,33 @@ async function localRunnerRequest(
     return;
   }
 
+  if (isConversationWrite) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || received.body.length > 12 * 1024)
+      return reject(res, 400, 'Invalid bounded conversation request.');
+    const body = parsed as Record<string, unknown>;
+    if (isConversationCreate) {
+      if (Object.keys(body).length !== 3 || typeof body.title !== 'string' ||
+          body.title.length < 1 || body.title.length > 120 || /[\u0000-\u001f\u007f]/.test(body.title) ||
+          typeof body.repositoryId !== 'string' || !/^[a-z0-9-]{1,40}$/.test(body.repositoryId) ||
+          typeof body.file !== 'string' || body.file.length > 120 ||
+          !/^(?!\.git(?:\/|$))(?!\.hic-disposable$)[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.cs$/i.test(body.file) ||
+          body.file.split('/').some(segment => segment === '.' || segment === '..'))
+        return reject(res, 400, 'Invalid conversation repository, title or C# file.');
+    } else if (isConversationMessage) {
+      if (Object.keys(body).length !== 2 || typeof body.clientMessageId !== 'string' ||
+          !new RegExp(`^${guidPath}$`, 'i').test(body.clientMessageId) ||
+          typeof body.content !== 'string' || body.content.length < 1 || body.content.length > 4000 ||
+          /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(body.content))
+        return reject(res, 400, 'Invalid bounded conversation message.');
+    } else if (Object.keys(body).length !== 1 || typeof body.intentDigestSha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(body.intentDigestSha256)) {
+      return reject(res, 400, 'Invalid conversation plan approval.');
+    }
+    forward(req, res, target, 'POST', path.slice(4), isConversationMessage
+      ? timeouts.modelTimeoutMs : timeouts.upstreamTimeoutMs, JSON.stringify(body), authorization);
+    return;
+  }
+
   if (isGitPlan) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || received.body.length > 4096)
       return reject(res, 400, 'Invalid bounded Git plan.');
@@ -229,11 +265,21 @@ async function localRunnerRequest(
     JSON.stringify({ intentDigestSha256: (parsed as Record<string, string>).intentDigestSha256 }), authorization);
 }
 
-export interface ProxyOptions { upstreamTimeoutMs?: number; bodyTimeoutMs?: number }
+export interface ProxyOptions {
+  upstreamTimeoutMs?: number;
+  bodyTimeoutMs?: number;
+  modelTimeoutMs?: number;
+  executionTimeoutMs?: number;
+}
 
 export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugin {
   const target = apiTarget(value);
-  const timeouts = { upstreamTimeoutMs: options.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS, bodyTimeoutMs: options.bodyTimeoutMs ?? BODY_TIMEOUT_MS };
+  const timeouts = {
+    upstreamTimeoutMs: options.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
+    bodyTimeoutMs: options.bodyTimeoutMs ?? BODY_TIMEOUT_MS,
+    modelTimeoutMs: options.modelTimeoutMs ?? MODEL_UPSTREAM_TIMEOUT_MS,
+    executionTimeoutMs: options.executionTimeoutMs ?? 115000,
+  };
   return {
     name: 'hic-local-api',
     configureServer(server) {

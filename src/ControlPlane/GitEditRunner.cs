@@ -8,14 +8,32 @@ using Dapper;
 using Npgsql;
 
 internal sealed record GitEditRequest(string RepositoryId, string BaseCommit, string File, string Content);
-internal sealed record GitTestRepository(string Id, string Path, string BaseCommit);
+internal sealed record GitTestRepository(string Id, string Path, string BaseCommit, string[]? AllowedFiles = null)
+{
+    internal IReadOnlyList<string> Files => AllowedFiles ?? ["message.txt"];
+}
+internal interface ILocalRunPlan
+{
+    Guid TaskId { get; }
+    Guid ActorId { get; }
+    string TaskDigest { get; }
+    DateTime ExpiresAtUtc { get; }
+    string PlanAction { get; }
+    string PlanScope { get; }
+    Guid? PlanConversationId { get; }
+    string Digest();
+}
+
 internal sealed record GitEditPlan(
     int Revision, Guid TaskId, Guid ActorId, string TaskDigest, string RepositoryId,
-    string RepositoryPath, string BaseCommit, string File, string Content, DateTime ExpiresAtUtc)
+    string RepositoryPath, string BaseCommit, string File, string Content, DateTime ExpiresAtUtc) : ILocalRunPlan
 {
     internal const string Action = "repository.test-edit";
     internal const string Scope = "disposable-worktree:message.txt:write";
-    internal string Digest() => Convert.ToHexStringLower(SHA256.HashData(
+    public string PlanAction => Action;
+    public string PlanScope => Scope;
+    public Guid? PlanConversationId => null;
+    public string Digest() => Convert.ToHexStringLower(SHA256.HashData(
         JsonSerializer.SerializeToUtf8Bytes(new { domain = "hic-disposable-git-plan-v1",
             action = Action, scope = Scope, plan = this }, GitEditExecutor.JsonOptions)));
 }
@@ -52,6 +70,18 @@ internal static class GitEditExecutor
         content is { Length: > 0 and <= 512 } && content.EndsWith('\n') &&
         content.Replace("\r\n", "\n", StringComparison.Ordinal).All(c => c is '\n' or >= ' ' and <= '~');
 
+    internal static bool ValidModelContent(string? content) =>
+        content is { Length: > 0 and <= 8192 } && content.EndsWith('\n') &&
+        !content.Contains('\0') && content.All(c => c is '\n' or '\r' or '\t' || !char.IsControl(c));
+
+    internal static bool ValidRepositoryFile(string? file) =>
+        file is { Length: > 0 and <= 120 } && !file.StartsWith('/') &&
+        !file.Contains('\\') && !file.Contains(':') &&
+        file.Split('/').All(segment => segment.Length > 0 && segment is not ("." or "..")) &&
+        !file.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(file, ".git", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(file, ".hic-disposable", StringComparison.Ordinal);
+
     internal static void CheckPath(string path)
     {
         Require(System.IO.Path.IsPathFullyQualified(path));
@@ -77,6 +107,9 @@ internal static class GitEditExecutor
                 Regex.IsMatch(repo.BaseCommit, "^[0-9a-f]{40}$") &&
                 System.IO.Path.IsPathFullyQualified(repo.Path));
             Require(repo.Path == System.IO.Path.GetFullPath(repo.Path));
+            Require(repo.Files.Count is > 0 and <= 8 &&
+                repo.Files.Distinct(StringComparer.Ordinal).Count() == repo.Files.Count &&
+                repo.Files.All(ValidRepositoryFile));
         }
         return repositories;
     }
@@ -164,20 +197,29 @@ internal static class GitEditExecutor
         Require((await GitAsync(repo.Path, cancellationToken, "rev-parse", "--show-toplevel")).Trim()
             .Replace('/', System.IO.Path.DirectorySeparatorChar) == repo.Path);
         Require((await GitAsync(repo.Path, cancellationToken, "rev-parse", "HEAD")).Trim() == repo.BaseCommit);
-        var tree = (await GitAsync(repo.Path, cancellationToken, "ls-tree", repo.BaseCommit)).TrimEnd().Split('\n');
-        Require(tree.Length == 2 && tree[0].StartsWith("100644 blob ", StringComparison.Ordinal) &&
-            tree[0].EndsWith("\t.hic-disposable", StringComparison.Ordinal) &&
-            tree[1].StartsWith("100644 blob ", StringComparison.Ordinal) &&
-            tree[1].EndsWith("\tmessage.txt", StringComparison.Ordinal));
+        var tree = (await GitAsync(repo.Path, cancellationToken, "ls-tree", "-r", "--full-tree", repo.BaseCommit))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Require(tree.Length == repo.Files.Count + 1 &&
+            tree.All(entry => entry.StartsWith("100644 blob ", StringComparison.Ordinal)));
+        var paths = tree.Select(entry => entry[(entry.IndexOf('\t') + 1)..]).ToHashSet(StringComparer.Ordinal);
+        Require(paths.SetEquals(repo.Files.Append(".hic-disposable")));
         Require((await GitAsync(repo.Path, cancellationToken, "status", "--porcelain", "--untracked-files=all")).Length == 0);
-        foreach (var file in new[] { ".hic-disposable", "message.txt" })
+        foreach (var file in repo.Files.Append(".hic-disposable"))
         {
-            CheckPath(System.IO.Path.Combine(repo.Path, file));
-            Require(new FileInfo(System.IO.Path.Combine(repo.Path, file)).Length <= 1024);
+            var path = System.IO.Path.Combine(repo.Path, file.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            CheckPath(path);
+            Require(new FileInfo(path).Length <= 64 * 1024);
+            var bytes = File.ReadAllBytes(path);
+            Require(bytes.Length <= 64 * 1024 && !bytes.Contains((byte)0));
+            _ = new UTF8Encoding(false, true).GetString(bytes);
         }
         Require(File.ReadAllText(System.IO.Path.Combine(repo.Path, ".hic-disposable"))
             .Replace("\r\n", "\n", StringComparison.Ordinal) == Marker);
-        Require(ValidContent(File.ReadAllText(System.IO.Path.Combine(repo.Path, "message.txt"))));
+        foreach (var file in repo.Files)
+        {
+            var path = System.IO.Path.Combine(repo.Path, file.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            Require(ValidModelContent(File.ReadAllText(path)));
+        }
     }
 
     internal static async Task<GitEditResult> ExecuteAsync(
@@ -242,7 +284,7 @@ internal static class GitEditEndpoints
             if (!await Ready(cancellationToken)) return Results.StatusCode(503);
             var repositories = GitEditExecutor.Configuration(app.Configuration);
             foreach (var repo in repositories) await GitEditExecutor.InspectAsync(repo, cancellationToken);
-            return Results.Ok(repositories.Select(r => new { r.Id, r.Path, r.BaseCommit, available = true }));
+            return Results.Ok(repositories.Select(r => new { r.Id, r.Path, r.BaseCommit, files = r.Files, available = true }));
         });
         app.MapPost("/local-runner/tasks/{taskId:guid}/git-preview", async (
             Guid taskId, HttpContext context, CancellationToken cancellationToken) =>
