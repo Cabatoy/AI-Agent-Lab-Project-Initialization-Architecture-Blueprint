@@ -3,8 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api, type ModelConversation } from './api';
 import { ModelConversationWorkspace } from './ModelConversationWorkspace';
 import { githubApi } from './githubApi';
-import { operatorBrowserAccess, openOperatorBrowserSession } from './operatorBrowserAccess';
-vi.mock('./operatorBrowserAccess', () => ({ operatorBrowserAccess: vi.fn(), openOperatorBrowserSession: vi.fn() }));
 
 vi.mock('./githubApi', () => ({ githubApi: { status: vi.fn() } }));
 
@@ -43,7 +41,6 @@ const generated: ModelConversation = {
 };
 
 beforeEach(() => {
-  vi.mocked(operatorBrowserAccess).mockResolvedValue(null);
   vi.mocked(githubApi.status).mockResolvedValue({ configured: false, repository: '', missing: ['HIC_GITHUB_APP_ID'] });
   vi.stubGlobal('crypto', { randomUUID: () => '41234567-89ab-cdef-0123-456789abcdef' });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 's'.repeat(44), expiresInSeconds: 900 });
@@ -65,21 +62,6 @@ beforeEach(() => {
   vi.mocked(api.executeLocalHealthRun).mockResolvedValue({ status: 'completed' });
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
-
-it('opens a Windows-authenticated browser workspace without a bootstrap secret or an approval', async () => {
-  window.history.replaceState(null, '', '/#operator-access');
-  vi.mocked(operatorBrowserAccess).mockResolvedValue({
-    sessionUrl: 'http://localhost:19556/session', expiresAtUtc: new Date(Date.now() + 60000).toISOString(),
-  });
-  vi.mocked(openOperatorBrowserSession).mockResolvedValue('w'.repeat(43) + '=');
-  render(<ModelConversationWorkspace />);
-  await screen.findByText('Start a conversation');
-  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
-  expect(api.localCodeModel).toHaveBeenCalledWith('w'.repeat(43) + '=');
-  expect(api.approveModelCodeEdit).not.toHaveBeenCalled();
-  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
-  expect(screen.queryByLabelText('Local operator bootstrap token')).not.toBeInTheDocument();
-});
 
 it('creates a durable conversation, displays a model proposal, requires approval and reports execution results', async () => {
   render(<ModelConversationWorkspace />);

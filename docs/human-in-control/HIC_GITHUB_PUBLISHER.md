@@ -246,22 +246,18 @@ olmadan doğrulanmış değildir**. Geliştirme draft PR'si bu kabulün yerine g
 
 ### Standart launcher ile development UI farkı
 
-Windows'ta token taşımadan browser erişimi için
-[`hic-operator-browser.ps1`](../../scripts/hic-operator-browser.ps1) açıkça
-başlatılan geçici bir localhost Negotiate köprüsüdür. Köprü yalnız process'i
-başlatan Windows SID'yi, exact UI Origin'i, custom preflight header'ını ve
-pinlenmiş Control Plane revision/repository'yi kabul eder. DPAPI korumalı mevcut
-operator bootstrap token'ı backend session endpoint'inde kullanır; yalnız mevcut
-15 dakikalık session token'ını no-store HTTP yanıtıyla UI belleğine verir.
-GitHub App token veya PEM hiçbir zaman bu köprüye/frontend'e verilmez.
-
-UI'nin Git dışında tutulan `public/operator-browser-access.json` dosyası yalnız
-credential içermeyen localhost endpoint'i ve expiry taşır. `/#operator-access`
-URL'si açık browser giriş niyetidir; URL'de sır yoktur. Köprü/config olmadan
-mevcut manuel login korunur; bu kalıcı auto-login veya genel bir auth fallback'i
-değildir. Windows browser'ın Negotiate'ı desteklemesi gerekir. Page refresh veya
-session expiry durumunda aynı süreli Windows login kullanılabilir. Köprü ömrü
-en fazla 120 dakikadır; UI/API/DB ömrünü veya insan onayını değiştirmez.
+Windows'ta operator token taşımadan erişim için
+[`hic-open-operator.ps1`](../../scripts/hic-open-operator.ps1) açıkça çağrılan
+tek seferlik bir desktop giriş yardımcısıdır. Ajan launcher'ı kullanıcının görünür
+browser penceresinde çalıştırır; insan terminal veya token taşıma işlemi yapmaz.
+Yardımcı exact browser PID, address bar URL, Control Plane revision ve sandbox
+kimliğini doğrular. DPAPI korumalı **local operator** token'ını yalnız mevcut
+parola alanına Windows UI Automation ile yazar ve mevcut login düğmesine basar.
+Clipboard, URL, log, browser storage veya model prompt'una token yazılmaz.
+GitHub App PEM/token'ına erişmez; 15 dakikalık session ve tüm insan onayları
+değişmeden kalır. Kalıcı login servisi, browser policy değişikliği veya auth
+fallback'i oluşturmaz. Session/page refresh sonrasında yardımcı açıkça yeniden
+çalıştırılabilir; hiçbir Approve/Reject/Execute kontrolünü kullanmaz.
 
 Launcher kendi checkout'undaki UI'yi başlatır; readiness yalnız page title/health
 ile ölçülür. Bu kontroller source revision, conversation/publisher capability veya

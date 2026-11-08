@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GitHubPublisherPanel } from './GitHubPublisherPanel';
-import { operatorBrowserAccess, openOperatorBrowserSession, type OperatorBrowserAccess } from './operatorBrowserAccess';
 import {
   api,
   type LocalCodeModelInfo,
@@ -27,7 +26,6 @@ export function ModelConversationWorkspace() {
   const [busy, setBusy] = useState(false);
   const [attemptedRunIds, setAttemptedRunIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [browserAccess, setBrowserAccess] = useState<OperatorBrowserAccess | null>(null);
   const repository = repositories.find(item => item.id === selectedRepository);
   const authorizedFiles = useMemo(() => repository?.files.filter(file => file.endsWith('.cs') && file !== '.hic-disposable') ?? [],
     [repository]);
@@ -35,22 +33,6 @@ export function ModelConversationWorkspace() {
   useEffect(() => {
     if (!authorizedFiles.includes(selectedFile)) setSelectedFile(authorizedFiles[0] ?? '');
   }, [authorizedFiles, selectedFile]);
-
-  useEffect(() => {
-    let active = true;
-    void operatorBrowserAccess().then(async access => {
-      if (!active) return;
-      setBrowserAccess(access);
-      if (access && window.location.hash === '#operator-access') {
-        setBusy(true);
-        try {
-          const session = await openOperatorBrowserSession(access);
-          if (active) await loadWorkspace(session);
-        } finally { if (active) setBusy(false); }
-      }
-    }).catch(reason => { if (active) setError(errorText(reason)); });
-    return () => { active = false; };
-  }, []);
 
   async function perform(action: () => Promise<void>) {
     setBusy(true);
@@ -94,13 +76,6 @@ export function ModelConversationWorkspace() {
         in an isolated worktree. GitHub publication needs a separate repository-scoped approval.
         No shell, merge, deployment or paid-provider fallback.</p>
       {!token ? <div className="command-form">
-        {browserAccess && <>
-          <p className="notice">Temporary Windows-authenticated operator access. Existing 15-minute session rules
-            apply; signing in does not approve any code edit or GitHub write.</p>
-          <button className="primary" disabled={busy} onClick={() => void perform(async () => {
-            await loadWorkspace(await openOperatorBrowserSession(browserAccess));
-          })}>Open workspace with Windows identity</button>
-        </>}
         <label htmlFor="conversation-bootstrap">Local operator bootstrap token</label>
         <input id="conversation-bootstrap" className="command-title" type="password" autoComplete="off"
           value={bootstrap} disabled={busy} onChange={event => setBootstrap(event.target.value)} />
