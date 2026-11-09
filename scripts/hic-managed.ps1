@@ -212,10 +212,22 @@ function New-HicManagedCredentials {
 }
 
 function Start-HicManagedInfrastructure {
-    param([System.Collections.IDictionary]$Status, [int]$ControlPlanePort)
+    param(
+        [System.Collections.IDictionary]$Status,
+        [int]$ControlPlanePort,
+        [switch]$ExistingOnly
+    )
 
     $paths = Get-HicManagedPaths
+    if ($ExistingOnly -and
+        (-not (Test-Path -LiteralPath $paths.manifest) -or
+            -not (Test-Path -LiteralPath $paths.credentials))) {
+        return [pscustomobject]@{ outcome='skipped'; reason='No complete HIC ownership record exists; resource start never provisions a second database.' }
+    }
     if ($Status.podmanMachine -ne 'running') {
+        if ($ExistingOnly) {
+            return [pscustomobject]@{ outcome='skipped'; reason='Podman machine is not already running; resource start never starts or reconfigures the machine.' }
+        }
         $machineResult = Start-HicPinnedPodmanMachine -Status $Status -Paths $paths
         if ($machineResult.outcome -ne 'ready') {
             return [pscustomobject]@{ outcome='skipped'; reason=$machineResult.reason }
@@ -225,6 +237,9 @@ function Start-HicManagedInfrastructure {
     $decision = Get-HicManagedDecision $snapshot
     if ($decision.action -eq 'skip') {
         return [pscustomobject]@{ outcome = 'skipped'; reason = $decision.reason }
+    }
+    if ($ExistingOnly -and $decision.action -ne 'resume') {
+        return [pscustomobject]@{ outcome='skipped'; reason='Only previously registered HIC-managed containers may be resumed; bootstrap is disabled for resource start.' }
     }
 
     $mutex = New-Object System.Threading.Mutex($false, 'Local\HIC.Managed.Infrastructure')
@@ -237,6 +252,9 @@ function Start-HicManagedInfrastructure {
         $decision = Get-HicManagedDecision $snapshot
         if ($decision.action -eq 'skip') {
             return [pscustomobject]@{ outcome = 'skipped'; reason = $decision.reason }
+        }
+        if ($ExistingOnly -and $decision.action -ne 'resume') {
+            return [pscustomobject]@{ outcome='skipped'; reason='Existing-only recheck no longer identifies a resumable HIC-managed stack; bootstrap remains disabled.' }
         }
 
         if ($decision.action -eq 'bootstrap') {

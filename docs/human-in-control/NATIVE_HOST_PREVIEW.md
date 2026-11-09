@@ -12,13 +12,14 @@ This is the first **independent local Windows/.NET 10 process** in Human In Cont
 
 ## Windows first-use preview (requires a trusted local checkout of this PR after merge)
 
-**Preflight:** Windows, .NET 10 SDK, Node/npm, existing Control Plane on 127.0.0.1:8080 if you want the other dashboard panels to work. Confirm ports **19482** and **19481** unused.
+**Preflight:** Windows, .NET 10 SDK, Node/npm, existing Control Plane on 127.0.0.1:8080 if you want the other dashboard panels to work. Review `hic.cmd resource status` and confirm ports **19482** and **19481** are unused.
 
 1. Update an **existing, clean or separately-worktreed** local checkout to the approved `develop` commit. Do not reset worktrees or destroy uncommitted changes.
-2. In File Explorer, double-click **`run-hic-native.cmd`** from that checkout. Review this local script before first use: it compiles a Native Host and runs the existing HIC UI with npm. Do **not** download or run similarly named untrusted launchers.
-3. The PowerShell launcher checks local ports, builds only the new project, installs locked UI npm dependencies if absent, generates an ephemeral token (not written to disk), starts the Native Host and runs a **new Vite UI on 127.0.0.1:19482**.
-4. Open **http://127.0.0.1:19482**, choose Command Center → **Inspect local workspace**. The result comes from the native local host, not from ChatGPT or Fusion.
-5. Press **Ctrl+C** in the launcher to stop the preview Native Host and the foreground Vite UI. Existing 5173/5174 UI, Postgres, Redis, Podman and Control Plane are untouched.
+2. Run `hic.cmd profile plan -Profile Light -Task ui` and review the plan ID and protected listeners. The default `hic.cmd up` only reuses an existing verified preview or prints this no-mutation Light plan.
+3. Run **`run-hic-native.cmd -PlanId <reviewed-plan-id> -Apply`** or `hic.cmd preview -PlanId <reviewed-plan-id> -Apply`. These entry points route through the plan gate and fail closed if listeners or inventory change.
+4. The PowerShell launcher checks local ports, builds only the new project, installs locked UI npm dependencies if absent, generates an ephemeral token (not written to disk), starts the Native Host and runs a **new Vite UI on 127.0.0.1:19482**. Do **not** download or run similarly named untrusted launchers.
+5. Open **http://127.0.0.1:19482**, choose Command Center → **Inspect local workspace**. The result comes from the native local host, not from ChatGPT or Fusion.
+6. Press **Ctrl+C** in the launcher to stop the preview Native Host and the foreground Vite UI. Existing 5173/5174 UI, Postgres, Redis, Podman and Control Plane are untouched.
 
 This intentionally does **not** automatically start at Windows login or replace existing services. Autostart, secrets at rest, packaged installation, watchdogs and self-healing belong to later separately reviewed milestones.
 

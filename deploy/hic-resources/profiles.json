@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "observation": {
+    "protectedPreviewPorts": [20066, 20067, 5248, 5180],
+    "protectedServicePorts": [5432, 6379, 8000]
+  },
+  "profiles": {
+    "Light": {
+      "available": true,
+      "memoryBudgetGiB": { "minimum": 3, "maximum": 6, "guaranteed": false },
+      "testParallelism": 1,
+      "inferenceParallelism": 1,
+      "tasks": {
+        "ui": ["web-ui"],
+        "api": ["control-plane"],
+        "tests": ["isolated-test-runner", "disposable-postgres"],
+        "inference": ["selected-model"]
+      }
+    },
+    "Development": {
+      "available": true,
+      "memoryBudgetGiB": { "minimum": 8, "maximum": 14, "guaranteed": false },
+      "testParallelism": 2,
+      "inferenceParallelism": 1,
+      "tasks": {
+        "ui": ["web-ui", "control-plane"],
+        "api": ["web-ui", "control-plane"],
+        "tests": ["web-ui", "control-plane", "isolated-test-runner", "disposable-postgres"],
+        "inference": ["web-ui", "control-plane", "selected-model"]
+      }
+    },
+    "FullAgent": {
+      "available": false,
+      "memoryBudgetGiB": { "minimum": 20, "maximum": 30, "guaranteed": false },
+      "testParallelism": 1,
+      "inferenceParallelism": 1,
+      "tasks": {
+        "ui": ["web-ui", "control-plane"],
+        "api": ["web-ui", "control-plane"],
+        "tests": ["web-ui", "control-plane", "isolated-test-runner", "disposable-postgres"],
+        "inference": ["web-ui", "control-plane", "selected-model", "agent-worker", "executor"]
+      }
+    }
+  },
+  "services": {
+    "native-host": {
+      "dependsOn": [],
+      "kind": "host-process",
+      "managed": true
+    },
+    "web-ui": {
+      "dependsOn": ["native-host"],
+      "kind": "host-process",
+      "managed": true
+    },
+    "postgres": {
+      "dependsOn": [],
+      "kind": "container",
+      "managed": true,
+      "composeService": "postgres",
+      "containerName": "hic-managed-postgres"
+    },
+    "redis": {
+      "dependsOn": [],
+      "kind": "container",
+      "managed": true,
+      "composeService": "redis",
+      "containerName": "hic-managed-redis"
+    },
+    "control-plane": {
+      "dependsOn": ["postgres", "redis"],
+      "kind": "container",
+      "managed": true,
+      "composeService": "control-plane",
+      "containerName": "hic-managed-control-plane"
+    },
+    "isolated-test-runner": {
+      "dependsOn": ["disposable-postgres"],
+      "kind": "test-only",
+      "managed": false
+    },
+    "disposable-postgres": {
+      "dependsOn": [],
+      "kind": "test-only",
+      "managed": false
+    },
+    "selected-model": {
+      "dependsOn": [],
+      "kind": "external-explicit-selection",
+      "managed": false
+    },
+    "agent-worker": {
+      "dependsOn": ["control-plane", "redis", "selected-model"],
+      "kind": "container",
+      "managed": false
+    },
+    "executor": {
+      "dependsOn": ["agent-worker"],
+      "kind": "unavailable",
+      "managed": false
+    }
+  }
+}

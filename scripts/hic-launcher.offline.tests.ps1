@@ -1,4 +1,4 @@
-# Offline contract tests for HIC Launcher. Never invokes "up" or any mutating command.
+# Offline contract tests for HIC Launcher. Never starts a lifecycle action or mutates a container.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $requiredSourceFiles = @(
@@ -41,7 +41,9 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed.ps1'),
     (Join-Path $PSScriptRoot 'hic-machine.ps1'),
-    (Join-Path $PSScriptRoot 'hic-process.ps1')
+    (Join-Path $PSScriptRoot 'hic-process.ps1'),
+    (Join-Path $PSScriptRoot 'hic-resource.ps1'),
+    (Join-Path $PSScriptRoot 'hic-resource.offline.tests.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -56,6 +58,14 @@ if (-not (Test-Path $launcherFile)) { throw 'hic.cmd not found.' }
 $launcher = Get-Content -Raw $launcherFile
 if ($launcher -notmatch 'scripts\\hic\.ps1' -or $launcher -notmatch '\bup\b') {
     throw 'Expected launcher entry point was not found.'
+}
+$nativeWrapper = Get-Content -Raw (Join-Path (Join-Path $PSScriptRoot '..') 'run-hic-native.cmd')
+if ($nativeWrapper -notmatch 'scripts\\hic\.ps1"\s+preview\s+%\*') {
+    throw 'run-hic-native.cmd must route through the profile-gated preview command.'
+}
+$managedScript = Get-Content -Raw (Join-Path $PSScriptRoot 'hic-managed.ps1')
+if ($managedScript -notmatch '(?s)# Re-inspect after acquiring.*?if \(\$ExistingOnly -and \$decision\.action -ne ''resume''\)') {
+    throw 'Existing-only resume must be revalidated under the managed startup mutex.'
 }
 foreach ($mode in @('status', 'doctor')) {
     $response = (& (Join-Path $PSScriptRoot 'hic.ps1') $mode -Json) | ConvertFrom-Json
