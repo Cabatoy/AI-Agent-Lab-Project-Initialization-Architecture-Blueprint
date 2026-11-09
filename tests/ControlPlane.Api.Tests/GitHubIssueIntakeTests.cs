@@ -75,4 +75,27 @@ public sealed class GitHubIssueIntakeTests
         Code("issue-timestamp-invalid", () =>
             GitHubIssueIntake.Capture(Destination, Reference(), 123, 456, "Title", "", Updated.ToOffset(TimeSpan.FromHours(1))));
     }
+
+    [Fact]
+    public void GithubResponseIsBoundToRepositoryAndRejectsPullRequests()
+    {
+        using var repository = System.Text.Json.JsonDocument.Parse(
+            """{"id":123,"full_name":"Example/Project","html_url":"https://github.com/Example/Project","archived":false,"disabled":false}""");
+        using var issue = System.Text.Json.JsonDocument.Parse(
+            """{"id":456,"number":42,"html_url":"https://github.com/Example/Project/issues/42","title":"Issue","body":null,"updated_at":"2026-01-02T00:00:00Z"}""");
+        var source = GitHubIssueIntake.CaptureResponse(Destination, Reference(), repository.RootElement, issue.RootElement);
+        Assert.Equal(456, source.IssueId);
+        Assert.Equal("", source.Body);
+        using var pull = System.Text.Json.JsonDocument.Parse(
+            """{"id":456,"number":42,"html_url":"https://github.com/Example/Project/issues/42","title":"PR","body":"","updated_at":"2026-01-02T00:00:00Z","pull_request":{}}""");
+        Code("issue-response-invalid", () =>
+            GitHubIssueIntake.CaptureResponse(Destination, Reference(), repository.RootElement, pull.RootElement));
+        using var malformed = System.Text.Json.JsonDocument.Parse("""{"number":42}""");
+        Code("issue-response-invalid", () =>
+            GitHubIssueIntake.CaptureResponse(Destination, Reference(), repository.RootElement, malformed.RootElement));
+        using var wrongRepository = System.Text.Json.JsonDocument.Parse(
+            """{"id":124,"full_name":"Example/Project","html_url":"https://github.com/Example/Project","archived":false,"disabled":false}""");
+        Code("github-repository-scope-mismatch", () =>
+            GitHubIssueIntake.CaptureResponse(Destination, Reference(), wrongRepository.RootElement, issue.RootElement));
+    }
 }

@@ -78,6 +78,31 @@ internal static class GitHubIssueIntake
         return new GitHubIssueSource(repositoryId, issueId, reference, title, body, updatedAtUtc, digest);
     }
 
+    internal static GitHubIssueSource CaptureResponse(GitHubDestination authorized,
+        GitHubIssueReference reference, JsonElement repository, JsonElement issue)
+    {
+        try
+        {
+            GitHubAppBroker.VerifyRepository(repository, authorized);
+            if (issue.ValueKind != JsonValueKind.Object || issue.TryGetProperty("pull_request", out _) ||
+                issue.GetProperty("number").GetInt32() != reference.Number ||
+                issue.GetProperty("html_url").GetString() != reference.Url ||
+                !DateTimeOffset.TryParse(issue.GetProperty("updated_at").GetString(),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var updated))
+                throw new GitHubPublishException("issue-response-invalid");
+            var body = issue.GetProperty("body");
+            return Capture(authorized, reference, repository.GetProperty("id").GetInt64(),
+                issue.GetProperty("id").GetInt64(), issue.GetProperty("title").GetString(),
+                body.ValueKind == JsonValueKind.Null ? "" : body.GetString(), updated.ToUniversalTime());
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException or
+            FormatException or OverflowException)
+        {
+            throw new GitHubPublishException("issue-response-invalid");
+        }
+    }
+
     private static string Normalize(string? value, int maxBytes, bool allowNewlines)
     {
         if (value is null) throw new GitHubPublishException("issue-content-invalid");
