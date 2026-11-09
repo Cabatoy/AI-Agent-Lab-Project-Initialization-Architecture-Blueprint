@@ -463,7 +463,15 @@ export async function localRunnerRequest<T>(
     }
     if (response.status !== expectedStatus) {
       if (response.status === 401) window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
-      const message = response.status === 401 ? 'The local runner session is invalid or expired.'
+      let modelUnavailable = false;
+      if (response.status === 503 && path.endsWith('/plan/generate')) {
+        try {
+          const error: unknown = await response.json();
+          modelUnavailable = object(error) && error.code === 'model-unavailable';
+        } catch { /* An unreadable error remains a generic service failure. */ }
+      }
+      const message = modelUnavailable ? 'The local model did not return a usable plan. Check Models & Providers; no tasks were created.'
+        : response.status === 401 ? 'The local runner session is invalid or expired.'
         : response.status === 503 ? 'The local runner is not registered or its approved schema is unavailable.'
           : response.status === 409 ? 'The task or approved run is no longer eligible.'
             : `The local runner returned HTTP ${response.status}.`;

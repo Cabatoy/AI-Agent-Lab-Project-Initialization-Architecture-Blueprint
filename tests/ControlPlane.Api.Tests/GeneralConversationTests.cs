@@ -32,12 +32,14 @@ public sealed class GeneralConversationTests
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var block = false;
+            var failModel = false;
             modelApp.MapPost("/v1/chat/completions", async (HttpRequest request) =>
             {
                 using var reader = new StreamReader(request.Body);
                 var json = await reader.ReadToEndAsync();
                 requests.Add(json);
                 if (block) { entered.TrySetResult(); await release.Task; }
+                if (failModel) return Results.StatusCode(503);
                 var answer = json.Contains("response_format", StringComparison.Ordinal)
                     ? """{"tasks":[{"title":"Design","description":"Review the design."},{"title":"Test","description":"Define tests."}]}"""
                     : "A real fixture reply.";
@@ -113,9 +115,19 @@ public sealed class GeneralConversationTests
                 Assert.Equal(HttpStatusCode.OK, (await first).StatusCode);
                 block = false;
                 Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                failModel = true;
+                var unavailable = await Post(client, $"/local-runner/general-conversations/{id}/plan/generate",
+                    new { expectedRevision = 0 });
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+                using var unavailableBody = JsonDocument.Parse(await unavailable.Content.ReadAsStringAsync());
+                Assert.Equal("model-unavailable", unavailableBody.RootElement.GetProperty("code").GetString());
+                Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                failModel = false;
                 var generated = await Post(client, $"/local-runner/general-conversations/{id}/plan/generate",
                     new { expectedRevision = 0 });
                 Assert.Equal(HttpStatusCode.OK, generated.StatusCode);
+                using var planRequest = JsonDocument.Parse(requests[^1]);
+                Assert.Equal(512, planRequest.RootElement.GetProperty("max_tokens").GetInt32());
                 var plan = await generated.Content.ReadFromJsonAsync<GeneralPlan>();
                 Assert.Equal(1, plan!.Revision);
                 Assert.False(plan.Approved);

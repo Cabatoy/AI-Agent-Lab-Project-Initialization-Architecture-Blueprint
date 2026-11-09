@@ -61,7 +61,7 @@ internal static class GeneralPlanEndpoints
                     return Results.Conflict(new { error = "A conversation message is required before planning." });
                 var response = await model.GenerateGeneralPlanAsync(conversation.Messages, token);
                 if (response.ErrorCode is not null)
-                    return Results.StatusCode(503);
+                    return Results.Json(new { code = "model-unavailable", error = "Local model did not return a usable plan; no tasks were created." }, statusCode: 503);
                 if (!TryParseTasks(response.Content, out var tasks))
                     return Results.UnprocessableEntity(new { error = "The model did not return a valid bounded task plan." });
                 return await Store(db, id, actor, expected + 1, "model", tasks!, token);
