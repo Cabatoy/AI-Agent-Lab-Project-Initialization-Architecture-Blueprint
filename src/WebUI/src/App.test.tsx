@@ -53,6 +53,18 @@ describe('dashboard', () => {
     expect(await screen.findByText('Actual result')).toBeInTheDocument();
     expect(api.task).toHaveBeenCalledWith(item.id);
     expect(screen.getByText(/Execution history and audit events are not exposed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Prepare bounded Git plan' })).not.toBeInTheDocument();
+  });
+  it('navigates a Draft into the bounded Git workflow without approving or executing', async () => {
+    const draft = { ...item, status: 'Draft' };
+    vi.mocked(api.tasks).mockResolvedValue([draft]);
+    vi.mocked(api.task).mockResolvedValue(draft);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Actual task' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Prepare bounded Git plan' }));
+    expect(await screen.findByRole('heading', { name: 'Approve an isolated Git edit' })).toBeInTheDocument();
+    expect(screen.getByText(/Repository execution is disabled|does not offer repository execution/i)).toBeInTheDocument();
+    expect(api.createTask).not.toHaveBeenCalled();
   });
   it('shows actual plans and read-only placeholders without action buttons', async () => {
     vi.mocked(api.plans).mockResolvedValue([{ id: item.id, projectKey: null, requestTitle: 'Actual plan',

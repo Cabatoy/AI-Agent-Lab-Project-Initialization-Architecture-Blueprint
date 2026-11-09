@@ -56,6 +56,27 @@ it('restores the shared operator cookie without granting or replaying Git approv
   await screen.findByText(/Signed out/);
   expect(api.revokeLocalRunnerSession).toHaveBeenCalledWith('cookie-session');
 });
+it('selects a transferred Draft only after restoring the operator and loading authoritative tasks', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: taskId, expiresInSeconds: 3600, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(),
+  });
+  render(<GitRunnerWorkflow initialTaskId={taskId} />);
+  expect(await screen.findByLabelText('Draft task')).toHaveValue(taskId);
+  expect(gitApi.preview).not.toHaveBeenCalled();
+  expect(gitApi.approve).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+});
+it('does not select a transferred task when it is no longer a Draft', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: taskId, expiresInSeconds: 3600, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(),
+  });
+  vi.mocked(api.tasks).mockResolvedValue([]);
+  render(<GitRunnerWorkflow initialTaskId={taskId} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('no longer an available Draft');
+  expect(screen.getByLabelText('Draft task')).toHaveValue('');
+  expect(gitApi.preview).not.toHaveBeenCalled();
+  expect(gitApi.approve).not.toHaveBeenCalled();
+});
 it('records exact approval without executing and displays historical provenance and diff', async () => {
   await prepare();
   expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
