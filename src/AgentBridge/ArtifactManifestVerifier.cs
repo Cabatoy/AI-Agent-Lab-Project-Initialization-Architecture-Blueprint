@@ -147,7 +147,7 @@ public static class ArtifactManifestVerifier
         Safety.Sha(value, length);
     }
 
-    private static void ValidatePath(string path)
+    internal static void ValidatePath(string path)
     {
         if (string.IsNullOrEmpty(path) || path.Length > 240 || path.Any(c => c > 127) ||
             !Regex.IsMatch(path, @"^[A-Za-z0-9._/-]+$", RegexOptions.CultureInvariant))
@@ -159,7 +159,7 @@ public static class ArtifactManifestVerifier
             throw new BridgeException("INVALID_PATH");
     }
 
-    private static void AddPath(HashSet<string> paths, string path)
+    internal static void AddPath(HashSet<string> paths, string path)
     {
         if (!paths.Add(path)) throw new BridgeException("PATH_COLLISION");
         foreach (var other in paths)
