@@ -1,6 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-resource.ps1')
+
+if ((Get-HicResourceLabelValue -Labels 'com.docker.compose.depends_on=redis:service_started:false,com.docker.compose.service=agent-worker' -Name 'com.docker.compose.service') -cne 'agent-worker' -or
+    (Get-HicResourceLabelValue -Labels 'com.docker.compose.service=agent-worker' -Name 'com.docker.compose.project') -cne '') {
+    throw 'Podman label-map parsing must extract only the requested compose label.'
+}
 . (Join-Path $PSScriptRoot 'hic-preview.ps1')
 
 $ports = [pscustomobject]@{
@@ -169,8 +174,24 @@ if (@($externalPlan.blockers | Where-Object { $_ -like '*second database*' }).Co
 $workerInventory = Copy-TestInventory $ownedInventory
 $workerInventory.worker = 'running'
 $workerPlan = New-HicResourcePlan -Profile 'Development' -Task 'api' -Inventory $workerInventory -ModelService ''
-if (@($workerPlan.blockers | Where-Object { $_ -like '*Worker is running*' }).Count -eq 0) {
+if (@($workerPlan.blockers | Where-Object { $_ -like '*Worker state is running*' }).Count -eq 0) {
     throw 'Unexpected Worker state must block development lifecycle changes.'
+}
+$unknownWorkerInventory = Copy-TestInventory $ownedInventory
+$unknownWorkerInventory.worker = 'unknown'
+$unknownWorkerPlan = New-HicResourcePlan -Profile 'Development' -Task 'api' -Inventory $unknownWorkerInventory -ModelService ''
+if (@($unknownWorkerPlan.blockers | Where-Object { $_ -like '*Worker state is unknown*' }).Count -eq 0 -or
+    (Get-HicResourceStartDecision -Plan $unknownWorkerPlan -Inventory $unknownWorkerInventory -ApprovedPlanId $unknownWorkerPlan.planId).action -ne 'blocked') {
+    throw 'An unverified Worker state on a running Podman machine must block infrastructure activation.'
+}
+$unknownWorkerUi = Copy-TestInventory $inventory
+$unknownWorkerUi.podmanMachine = 'running'
+$unknownWorkerUi.preview.nativeHost = 'unavailable'
+$unknownWorkerUi.preview.webUI = 'unavailable'
+$unknownWorkerUi.worker = 'unknown'
+$unknownWorkerUiPlan = New-HicResourcePlan -Profile 'Light' -Task 'ui' -Inventory $unknownWorkerUi -ModelService ''
+if ((Get-HicResourceStartDecision -Plan $unknownWorkerUiPlan -Inventory $unknownWorkerUi -ApprovedPlanId $unknownWorkerUiPlan.planId).action -ne 'blocked') {
+    throw 'An unverified Worker state must block launching a new preview while Podman is running.'
 }
 
 $fullAgent = New-HicResourcePlan -Profile 'FullAgent' -Task 'inference' -Inventory $inventory -ModelService 'local-model'

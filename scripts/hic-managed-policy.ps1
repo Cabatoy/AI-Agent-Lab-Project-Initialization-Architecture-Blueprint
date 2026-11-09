@@ -1,5 +1,19 @@
 # Pure, offline-testable, fail-closed decision. Only a brand-new, isolated stack
 # is bootstrapped; an existing HIC-managed stack may be resumed after identity checks.
+function Get-HicManagedWorkerState {
+    param([object[]]$Containers)
+
+    $workers = @($Containers | Where-Object {
+        $_.service -ceq 'agent-worker' -or $_.name -match '(^|-)worker($|-)'
+    })
+    if ($workers.Count -eq 0) { return 'not-detected' }
+    if (@($workers | Where-Object { $_.state -eq 'running' }).Count -gt 0) { return 'running' }
+    if (@($workers | Where-Object { $_.state -notin @('exited', 'stopped', 'created', 'configured') }).Count -gt 0) {
+        return 'unknown'
+    }
+    return 'stopped'
+}
+
 function Get-HicManagedDecision {
     param([System.Collections.IDictionary]$Snapshot)
 
@@ -8,6 +22,9 @@ function Get-HicManagedDecision {
     }
     if ($Snapshot.discovery -ne 'verified') {
         return [pscustomobject]@{ action = 'skip'; reason = 'Cannot verify existing Podman containers/volumes; refusing infrastructure mutation.' }
+    }
+    if ($Snapshot.worker -in @('running', 'unknown')) {
+        return [pscustomobject]@{ action = 'skip'; reason = "Worker state is $($Snapshot.worker); refusing managed infrastructure mutation." }
     }
     $names = @($Snapshot.containers)
     $volumes = @($Snapshot.volumes)

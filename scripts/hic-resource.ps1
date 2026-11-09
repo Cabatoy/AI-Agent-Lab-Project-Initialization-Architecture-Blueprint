@@ -18,6 +18,14 @@ function Get-HicResourceProperty {
     return $property.Value
 }
 
+function Get-HicResourceLabelValue {
+    param([string]$Labels, [string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Labels) -or [string]::IsNullOrWhiteSpace($Name)) { return '' }
+    $pattern = '(?:^|,)' + [regex]::Escape($Name) + '=([^,]*)'
+    if ($Labels -match $pattern) { return $Matches[1] }
+    return ''
+}
+
 function Get-HicResourceProfile {
     param([string]$Name)
     $definitions = Get-HicResourceDefinitions
@@ -193,7 +201,7 @@ function Get-HicResourceContainerInventory {
         return $result
     }
 
-    $format = '{{.ID}}|{{.Names}}|{{.State}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}'
+    $format = '{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}'
     $containersProbe = Invoke-HicBoundedPodman -Arguments @('ps', '--all', '--no-trunc', '--format', $format) -TimeoutMs 5000
     if (-not $containersProbe.Success) {
         $result.state = if ($containersProbe.TimedOut) { 'unresponsive' } else { 'unavailable' }
@@ -201,8 +209,8 @@ function Get-HicResourceContainerInventory {
     }
     $containers = [System.Collections.Generic.List[object]]::new()
     foreach ($line in $containersProbe.Lines) {
-        $fields = $line -split '\|', 5
-        if ($fields.Count -ne 5 -or $fields[0] -notmatch '^[0-9a-fA-F]{12,64}$' -or
+        $fields = $line -split '\|', 4
+        if ($fields.Count -ne 4 -or $fields[0] -notmatch '^[0-9a-fA-F]{12,64}$' -or
             $fields[1] -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$') {
             continue
         }
@@ -210,8 +218,8 @@ function Get-HicResourceContainerInventory {
             id = $fields[0].ToLowerInvariant()
             name = $fields[1]
             state = $fields[2].Trim().ToLowerInvariant()
-            project = $fields[3]
-            service = $fields[4]
+            project = Get-HicResourceLabelValue -Labels $fields[3] -Name 'com.docker.compose.project'
+            service = Get-HicResourceLabelValue -Labels $fields[3] -Name 'com.docker.compose.service'
             ownership = 'external-or-unknown'
             memory = 'unknown'
         })
@@ -517,8 +525,10 @@ function New-HicResourcePlan {
             if ($previewAction -eq 'blocked') { $blockers.Add($previewDecision.reason) }
         }
     }
-    if ($Inventory.worker -eq 'running' -and @($services | Where-Object { $_ -in @('control-plane', 'agent-worker', 'executor') }).Count -gt 0) {
-        $blockers.Add('An unexpected Worker is running. Development infrastructure activation is blocked; no Worker action will be taken.')
+    $workerStateNeedsReview = $Inventory.worker -eq 'running' -or
+        ($Inventory.worker -eq 'unknown' -and $Inventory.podmanMachine -eq 'running')
+    if ($workerStateNeedsReview -and @($services | Where-Object { $_ -in @('control-plane', 'agent-worker', 'executor') }).Count -gt 0) {
+        $blockers.Add("Worker state is $($Inventory.worker). Infrastructure activation is blocked; no Worker action will be taken.")
     }
     if (@($services | Where-Object { $_ -in @('control-plane', 'postgres', 'redis') }).Count -gt 0) {
         if ($Inventory.podmanMachine -ne 'running') {
@@ -709,8 +719,9 @@ function Get-HicResourceStartDecision {
     if ($ApprovedPlanId -cne $Plan.planId) {
         return [pscustomobject]@{ action = 'blocked'; reason = 'Inventory or selection changed since planning. Review a new profile plan before activation.' }
     }
-    if ($Inventory.worker -eq 'running') {
-        return [pscustomobject]@{ action = 'blocked'; reason = 'Worker is unexpectedly running; no new development services will start.' }
+    if ($Inventory.worker -eq 'running' -or
+        ($Inventory.worker -eq 'unknown' -and $Inventory.podmanMachine -eq 'running')) {
+        return [pscustomobject]@{ action = 'blocked'; reason = "Worker state is $($Inventory.worker); no new development services will start." }
     }
     if ($Plan.task -eq 'tests' -or $Plan.task -eq 'inference') {
         return [pscustomobject]@{ action = 'blocked'; reason = 'Test-database and local-model lifecycle are not activated in Phase 1.' }

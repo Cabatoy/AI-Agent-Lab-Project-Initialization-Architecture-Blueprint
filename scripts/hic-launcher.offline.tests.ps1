@@ -201,6 +201,7 @@ Write-Host 'HIC recovery-plan safety matrix: PASS'
 $virgin = [ordered]@{
     machine='running'
     discovery='verified'
+    worker='not-detected'
     containers=@()
     volumes=@()
     manifestPresent=$false
@@ -208,6 +209,17 @@ $virgin = [ordered]@{
     controlPlanePortState='free'
 }
 if ((Get-HicManagedDecision $virgin).action -ne 'bootstrap') { throw 'Fresh isolated Podman must be eligible for bootstrap.' }
+if ((Get-HicManagedWorkerState @()) -ne 'not-detected' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='agentlab-worker'; service=''; state='running' })) -ne 'running' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='custom-worker'; service=''; state='restarting' })) -ne 'unknown' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='custom-worker'; service=''; state='exited' })) -ne 'stopped') {
+    throw 'Worker observation must distinguish absent, active, uncertain and stopped containers.'
+}
+$virgin.worker='unknown'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Unknown Worker state at the locked recheck must block bootstrap.' }
+$virgin.worker='running'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Running Worker state at the locked recheck must block bootstrap.' }
+$virgin.worker='not-detected'
 
 $virgin.machine='stopped'
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Stopped Podman machine must not auto-start.' }
