@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, type GeneralConversation, type GeneralConversationSummary } from './api';
 import { GeneralPlanReview } from './GeneralPlanReview';
 import { useOperatorSession } from './useOperatorSession';
+import { GitHubIssuePreview } from './GitHubIssuePreview';
 
 export function GeneralPlanningWorkspace({ openConversations, onTasksCreated, onViewTask }: {
   openConversations: () => void; onTasksCreated: () => void; onViewTask: (id: string) => void;
@@ -35,6 +36,7 @@ export function GeneralPlanningWorkspace({ openConversations, onTasksCreated, on
     {!token && !session.restoring && <p className="notice">Authenticate and create a general conversation first.{' '}
       <button className="text-button" onClick={openConversations}>Open Conversations</button></p>}
     {token && <>
+      <GitHubIssuePreview key={token} token={token} />
       {!saved.length && <p className="notice">No saved general conversations.{' '}
         <button className="text-button" onClick={openConversations}>Open Conversations</button></p>}
       {!!saved.length && <div className="command-form">
