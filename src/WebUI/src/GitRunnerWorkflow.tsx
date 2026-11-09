@@ -3,7 +3,7 @@ import { api, isExpiredOperatorSession, type Task } from './api';
 import { gitApi, type GitPreview, type GitRepository, type GitRun } from './gitApi';
 import { useOperatorSession } from './useOperatorSession';
 
-export function GitRunnerWorkflow() {
+export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: string | null }) {
   const [bootstrap, setBootstrap] = useState('');
   const [token, setToken] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -20,7 +20,9 @@ export function GitRunnerWorkflow() {
   const operator = useOperatorSession(async (accessToken, active) => {
     const [repos, drafts] = await Promise.all([gitApi.repositories(accessToken), api.tasks()]);
     if (!active()) return;
-    setToken(accessToken); setRepositories(repos); setTasks(drafts.filter(t => t.status === 'Draft'));
+    const available = drafts.filter(t => t.status === 'Draft');
+    setToken(accessToken); setRepositories(repos); setTasks(available);
+    setTaskId(initialTaskId && available.some(t => t.id === initialTaskId) ? initialTaskId : '');
   }, () => {
     setToken(''); setBootstrap(''); setRepositories([]); setTasks([]); invalidate();
     setTaskId(''); setRepoId(''); setContent('Approved HIC test edit.\n');
@@ -54,6 +56,7 @@ export function GitRunnerWorkflow() {
           const repos = await gitApi.repositories(session.accessToken);
           const drafts = (await api.tasks()).filter(t => t.status === 'Draft');
           setToken(session.accessToken); setBootstrap(''); setRepositories(repos); setTasks(drafts);
+          setTaskId(initialTaskId && drafts.some(t => t.id === initialTaskId) ? initialTaskId : '');
           operator.authenticated(session);
         })}>Authenticate Git operator</button>
       </div> : <div className="notice">Authenticated operator session · HttpOnly cookie · 8-hour absolute expiry
@@ -66,6 +69,8 @@ export function GitRunnerWorkflow() {
     </section>
     {token && <section className="panel command-form">
       <h2>Repository, task and bounded scope</h2>
+      {initialTaskId && !tasks.some(task => task.id === initialTaskId) &&
+        <p className="notice error" role="alert">The selected task is no longer an available Draft. Refresh the task list before preparing a plan.</p>}
       <label htmlFor="git-task">Draft task</label>
       <select id="git-task" className="command-title" value={taskId} disabled={busy} onChange={e => { invalidate(); setTaskId(e.target.value); }}>
         <option value="">Select a Draft task</option>

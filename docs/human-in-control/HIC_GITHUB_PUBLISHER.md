@@ -55,6 +55,13 @@ yeniden düzenleme ya da yeni model önerisi ayrı sürüm oluşturur. Bu onay W
 GitHub veya deployment yetkisi vermez. Her genel konuşmada en fazla bir plan
 sürümü için Draft task oluşturulur; yeniden deneme aynı task kimliklerini döndürür.
 
+Tasks ekranında Draft detayındaki **Prepare bounded Git plan**, task'ı mevcut
+Isolated Git akışına taşır. Oturum ve güncel Draft durumu yeniden denetlenir;
+repository ve `message.txt` kapsamı operatör tarafından ayrıca seçilip
+incelenir. Bu sınırlı test capability'si genel kod geliştirme değildir.
+Planın ayrı onayı execution veya GitHub publication izni vermez; güvenilir
+izolasyon backend'i doğrulanana kadar repository execution kapalı kalır.
+
 ### 1. GitHub App ve eksik local ayarlar
 
 App yalnız **Selected repositories → Cabatoy/hic-agent-sandbox** üzerinde kurulu

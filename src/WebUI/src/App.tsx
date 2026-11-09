@@ -59,7 +59,7 @@ function TaskTable({ tasks, onSelect }: { tasks: Task[], onSelect: (id: string) 
   </table></div>;
 }
 
-function Detail({ id, onClose }: { id: string, onClose: () => void }) {
+function Detail({ id, onClose, onPrepareGit }: { id: string, onClose: () => void, onPrepareGit: (id: string) => void }) {
   const [detail, setDetail] = useState<Resource<Task>>(initial);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
@@ -88,6 +88,11 @@ function Detail({ id, onClose }: { id: string, onClose: () => void }) {
     <div className="detail-block"><span className="label">Description</span><p>{task.description || 'No description provided.'}</p></div>
     <div className="detail-block"><span className="label">Result</span><p className="preserve">{task.result ?? 'Not available.'}</p></div>
     <div className="detail-block"><span className="label">Error message</span><p className="preserve">{task.errorMessage ?? 'Not available.'}</p></div>
+    {task.status === 'Draft' && <div className="detail-block">
+      <p>Prepare the existing bounded disposable-repository plan. Repository execution remains blocked
+        until an isolation backend is verified; approval does not authorize publication.</p>
+      <button className="secondary" onClick={() => onPrepareGit(task.id)}>Prepare bounded Git plan</button>
+    </div>}
     <p className="muted small">Execution history and audit events are not exposed by this API.</p></>}
   </section>;
 }
@@ -111,6 +116,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [gitTask, setGitTask] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     setLoading(true);
     const [h, t, p] = await Promise.allSettled([api.health(), api.tasks(), api.plans()]);
@@ -120,8 +126,11 @@ export default function App() {
     return t.status === 'fulfilled';
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
-  const selectTask = (id: string) => { setSelected(id); setPage('Tasks'); };
-  const navigate = (next: Page) => { setPage(next); setSelected(null); };
+  const selectTask = (id: string) => { setSelected(id); setGitTask(null); setPage('Tasks'); };
+  const navigate = (next: Page) => {
+    setPage(next); setSelected(null);
+    if (next !== 'Isolated Git') setGitTask(null);
+  };
   const counts = tasks.data?.reduce<Record<string, number>>((acc, item) => {
     acc[item.status] = (acc[item.status] ?? 0) + 1; return acc;
   }, {});
@@ -149,7 +158,7 @@ export default function App() {
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
       {page === 'Local Runner' && <LocalRunnerWorkflow />}
-      {page === 'Isolated Git' && <GitRunnerWorkflow />}
+      {page === 'Isolated Git' && <GitRunnerWorkflow initialTaskId={gitTask} />}
       {page === 'Conversations' && <ModelConversationWorkspace onTasksCreated={() => void refresh()} onViewTask={selectTask} />}
       {page === 'Planning' && <>
         <GeneralPlanningWorkspace openConversations={() => navigate('Conversations')}
@@ -180,7 +189,9 @@ export default function App() {
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">LATEST ACTIVITY</p><h2>Recent tasks</h2></div><button className="text-button" onClick={() => setPage('Tasks')}>View all →</button></div>
           <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>
       </>}
-      {page === 'Tasks' && <>{selected && <Detail id={selected} onClose={() => setSelected(null)} />}<section className="panel">
+      {page === 'Tasks' && <>{selected && <Detail id={selected} onClose={() => setSelected(null)} onPrepareGit={id => {
+        setGitTask(id); navigate('Isolated Git');
+      }} />}<section className="panel">
         <div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>All tasks</h2></div><span className="outline-badge">{tasks.data ? `${tasks.data.length} TASKS` : 'UNAVAILABLE'}</span></div>
         <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data} onSelect={selectTask} />}</State></section></>}
       {page === 'Plans' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Execution plans</h2></div><span className="outline-badge">READ ONLY</span></div>
