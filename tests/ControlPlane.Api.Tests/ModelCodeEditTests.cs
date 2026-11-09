@@ -3,6 +3,12 @@ using ControlPlane.Api.Tests;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 public sealed class ModelCodeEditTests
@@ -86,6 +92,49 @@ public sealed class ModelCodeEditTests
             }).Build());
         Assert.True(local.Info.Configured);
         Assert.Equal("podman-ai-lab", local.Info.Provider);
+    }
+
+    [Fact]
+    public async Task ModelReadiness_ReportsConfiguredModelInventoryAndFailsClosed()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var app = builder.Build();
+        var payload = """{"data":[{"id":"/models/mistral-local"}]}""";
+        app.MapGet("/v1/models", () => Results.Text(payload, "application/json"));
+        await app.StartAsync();
+        try
+        {
+            var address = app.Services.GetRequiredService<IServer>().Features
+                .Get<IServerAddressesFeature>()!.Addresses.Single();
+            var model = new LocalCodeModel(new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["MODEL_PROVIDER"] = "podman-ai-lab",
+                    ["MODEL_ENDPOINT"] = address,
+                    ["MODEL_NAME"] = "mistral-local"
+                }).Build());
+            Assert.Equal("available", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            payload = """{"data":[{"id":"mistral-local"}]}""";
+            Assert.Equal("available", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            payload = """{"data":[{"id":"other-model"}]}""";
+            Assert.Equal("model-not-listed", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            payload = """{"unexpected":true}""";
+            Assert.Equal("unavailable", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            payload = "[]";
+            Assert.Equal("unavailable", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            payload = new string('x', 33 * 1024);
+            Assert.Equal("unavailable", (await model.InspectAsync(CancellationToken.None)).Readiness);
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => model.InspectAsync(cancelled.Token));
+            await app.StopAsync();
+            Assert.Equal("unavailable", (await model.InspectAsync(CancellationToken.None)).Readiness);
+        }
+        finally { await app.StopAsync(); }
+
+        var disabled = new LocalCodeModel(new ConfigurationBuilder().Build());
+        Assert.Equal("not-configured", (await disabled.InspectAsync(CancellationToken.None)).Readiness);
     }
 
     [Theory]

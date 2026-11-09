@@ -83,7 +83,7 @@ internal sealed record ModelConversationSummary(
     string BaseCommit,
     string File,
     DateTime UpdatedAtUtc);
-internal sealed record LocalCodeModelInfo(bool Configured, string Provider, string Model, int TimeoutSeconds);
+internal sealed record LocalCodeModelInfo(bool Configured, string Provider, string Model, int TimeoutSeconds, string Readiness);
 internal sealed record LocalCodeModelReply(string Content, string? ErrorCode);
 internal sealed record ParsedModelReply(string Response, string? File, string? Content);
 internal sealed record ModelMessageRequest(Guid ClientMessageId, string Content);
@@ -98,7 +98,38 @@ internal sealed class LocalCodeModel(IConfiguration configuration)
     private readonly HttpClient? client = CreateClient(configuration);
 
     internal LocalCodeModelInfo Info => new(client is not null, client is null ? "disabled" : provider!,
-        client is null ? string.Empty : model!, timeoutSeconds);
+        client is null ? string.Empty : model!, timeoutSeconds, client is null ? "not-configured" : "not-checked");
+
+    internal async Task<LocalCodeModelInfo> InspectAsync(CancellationToken cancellationToken)
+    {
+        var info = Info;
+        if (client is null) return info;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/models");
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode) return info with { Readiness = "unavailable" };
+            using var document = JsonDocument.Parse(await ReadBoundedAsync(response.Content, 32 * 1024, timeout.Token));
+            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return info with { Readiness = "unavailable" };
+            var found = data.EnumerateArray().Any(item =>
+                item.ValueKind == JsonValueKind.Object &&
+                item.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String &&
+                (id.GetString() == model || id.GetString() == "/models/" + model));
+            return info with { Readiness = found ? "available" : "model-not-listed" };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or TimeoutException
+            or IOException or JsonException or InvalidOperationException or DecoderFallbackException)
+        {
+            return info with { Readiness = "unavailable" };
+        }
+    }
 
     internal async Task<LocalCodeModelReply> GenerateAsync(
         IReadOnlyList<ModelConversationMessage> history,
@@ -419,7 +450,7 @@ internal static class ProjectConversationEndpoints
         {
             var actor = await ActorAsync(context, cancellationToken);
             if (actor is null) return sessions is null ? Results.StatusCode(503) : Results.Unauthorized();
-            return Results.Ok(model.Info);
+            return Results.Ok(await model.InspectAsync(cancellationToken));
         });
         app.MapGet("/local-runner/conversations", async (
             HttpContext context, CancellationToken cancellationToken) =>

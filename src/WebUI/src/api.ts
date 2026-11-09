@@ -86,6 +86,7 @@ export interface LocalCodeModelInfo {
   provider: string;
   model: string;
   timeoutSeconds: number;
+  readiness: 'not-configured' | 'not-checked' | 'available' | 'unavailable' | 'model-not-listed';
 }
 export interface ModelCodeEditPlan {
   revision: number;
@@ -245,7 +246,8 @@ const modelRepository: Guard<ModelRepository> = (v): v is ModelRepository =>
   list(str)(v.files) && v.files.length > 0 && v.files.length <= 8 && v.available === true;
 const codeModelInfo: Guard<LocalCodeModelInfo> = (v): v is LocalCodeModelInfo =>
   object(v) && typeof v.configured === 'boolean' && str(v.provider) && str(v.model) &&
-  Number.isSafeInteger(v.timeoutSeconds) && Number(v.timeoutSeconds) >= 5 && Number(v.timeoutSeconds) <= 120;
+  Number.isSafeInteger(v.timeoutSeconds) && Number(v.timeoutSeconds) >= 5 && Number(v.timeoutSeconds) <= 120 &&
+  ['not-configured', 'not-checked', 'available', 'unavailable', 'model-not-listed'].includes(String(v.readiness));
 const modelCodeEditPlan: Guard<ModelCodeEditPlan> = (v): v is ModelCodeEditPlan =>
   object(v) && v.revision === 1 && guid(v.taskId) && guid(v.actorId) && guid(v.conversationId) &&
   str(v.taskDigest) && /^[0-9a-f]{64}$/.test(v.taskDigest) &&

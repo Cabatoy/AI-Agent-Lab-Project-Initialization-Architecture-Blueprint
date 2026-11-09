@@ -12,7 +12,7 @@ import {
 
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : 'Unexpected conversation error.';
 const stamp = (value: string) => new Date(value).toLocaleString();
-const emptyModel: LocalCodeModelInfo = { configured: false, provider: 'disabled', model: '', timeoutSeconds: 60 };
+const emptyModel: LocalCodeModelInfo = { configured: false, provider: 'disabled', model: '', timeoutSeconds: 60, readiness: 'not-configured' };
 
 export function ModelConversationWorkspace() {
   const [bootstrap, setBootstrap] = useState('');
@@ -107,11 +107,16 @@ export function ModelConversationWorkspace() {
       </div>}
       {operator.restoring && <p role="status">Restoring operator session…</p>}
       {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
-      {token && <p className={model.configured ? 'notice' : 'notice error'} role={model.configured ? 'status' : 'alert'}>
-        {model.configured
-          ? `Local model is configured; connectivity is checked when a message is sent. Model timeout ${model.timeoutSeconds}s.`
-          : 'Local model is unavailable or not configured. Messages are retained, but no model response or plan will be fabricated.'}
-      </p>}
+      {token && <div>
+        <p className={model.readiness === 'available' ? 'notice' : 'notice error'} role={model.readiness === 'available' ? 'status' : 'alert'}>
+          {model.readiness === 'available'
+            ? `Local provider is reachable and lists the configured model. Message timeout ${model.timeoutSeconds}s; a response is not guaranteed.`
+            : `Local model readiness: ${model.readiness}. Messages are retained; no response or plan will be fabricated.`}
+        </p>
+        <button disabled={busy} onClick={() => void perform(async () => {
+          setModel(await api.localCodeModel(token));
+        })}>Refresh model status</button>
+      </div>}
       {error && <p className="notice error" role="alert">{error} For an interrupted write, refresh this conversation before sending again.</p>}
       {busy && <p role="status">Working with the local Control Plane…</p>}
       {token && <GitHubPublisherPanel token={token} />}

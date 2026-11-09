@@ -23,6 +23,16 @@ Mevcut PostgreSQL/Redis/Podman servislerine migration, restart, merge veya deplo
 
 ## Teknik Ek
 
+### Yerel model erişilebilirliği
+
+Konuşma ekranındaki model durumu, yapılandırılmış yerel sağlayıcının
+`/v1/models` yanıtını denetler. `available`, ilgili modelin envanterde
+listelendiğini gösterir; sonraki üretim isteğinin başarılı olacağını garanti
+etmez. Erişim hatası veya geçersiz yanıt `unavailable`, listede bulunmayan
+model `model-not-listed` olarak gösterilir. Durum oturum açılırken kontrol
+edilir; **Refresh model status** ile yeniden sorgulanabilir. Kontrol prompt
+veya sır göndermez.
+
 ### 1. GitHub App ve eksik local ayarlar
 
 App yalnız **Selected repositories → Cabatoy/hic-agent-sandbox** üzerinde kurulu
