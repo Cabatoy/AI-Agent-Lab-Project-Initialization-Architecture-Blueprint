@@ -87,6 +87,7 @@ function Get-HicManagedSnapshot {
         discovery = 'unverified'
         containers = @()
         volumes = @()
+        worker = 'unknown'
         manifestPresent = Test-Path -LiteralPath $paths.manifest
         credentialsPresent = Test-Path -LiteralPath $paths.credentials
         controlPlanePortState = Get-LoopbackPortState $ControlPlanePort
@@ -95,7 +96,44 @@ function Get-HicManagedSnapshot {
         return $snapshot
     }
     try {
-        $snapshot.containers = @(Invoke-HicPodmanReadOnly -CommandArgs @('ps', '-a', '--format', '{{.Names}}'))
+        $containerRows = @(Invoke-HicPodmanReadOnly -CommandArgs @('ps', '-a', '--format', '{{.Names}}|{{.State}}'))
+        $containerRecords = [System.Collections.Generic.List[object]]::new()
+        $workerRecords = [System.Collections.Generic.List[object]]::new()
+        foreach ($line in $containerRows) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $fields = $line -split '\|', 2
+            if ($fields.Count -ne 2 -or
+                $fields[0] -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' -or
+                [string]::IsNullOrWhiteSpace($fields[1])) {
+                throw 'Podman container inventory format is incomplete.'
+            }
+            $record = [pscustomobject]@{
+                name = $fields[0]
+                state = $fields[1].Trim().ToLowerInvariant()
+                service = ''
+            }
+            $containerRecords.Add($record)
+            $workerRecords.Add($record)
+        }
+        $workerRows = @(Invoke-HicPodmanReadOnly -CommandArgs @(
+            'ps', '-a', '--filter', 'label=com.docker.compose.service=agent-worker', '--format', '{{.Names}}|{{.State}}'
+        ))
+        foreach ($line in $workerRows) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $fields = $line -split '\|', 2
+            if ($fields.Count -ne 2 -or
+                $fields[0] -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' -or
+                [string]::IsNullOrWhiteSpace($fields[1])) {
+                throw 'Podman Worker inventory format is incomplete.'
+            }
+            $workerRecords.Add([pscustomobject]@{
+                name = $fields[0]
+                state = $fields[1].Trim().ToLowerInvariant()
+                service = 'agent-worker'
+            })
+        }
+        $snapshot.containers = @($containerRecords | ForEach-Object { $_.name })
+        $snapshot.worker = Get-HicManagedWorkerState -Containers $workerRecords.ToArray()
         $snapshot.volumes = @(Invoke-HicPodmanReadOnly -CommandArgs @('volume', 'ls', '--format', '{{.Name}}'))
         $snapshot.discovery = 'verified'
     }
@@ -212,10 +250,22 @@ function New-HicManagedCredentials {
 }
 
 function Start-HicManagedInfrastructure {
-    param([System.Collections.IDictionary]$Status, [int]$ControlPlanePort)
+    param(
+        [System.Collections.IDictionary]$Status,
+        [int]$ControlPlanePort,
+        [switch]$ExistingOnly
+    )
 
     $paths = Get-HicManagedPaths
+    if ($ExistingOnly -and
+        (-not (Test-Path -LiteralPath $paths.manifest) -or
+            -not (Test-Path -LiteralPath $paths.credentials))) {
+        return [pscustomobject]@{ outcome='skipped'; reason='No complete HIC ownership record exists; resource start never provisions a second database.' }
+    }
     if ($Status.podmanMachine -ne 'running') {
+        if ($ExistingOnly) {
+            return [pscustomobject]@{ outcome='skipped'; reason='Podman machine is not already running; resource start never starts or reconfigures the machine.' }
+        }
         $machineResult = Start-HicPinnedPodmanMachine -Status $Status -Paths $paths
         if ($machineResult.outcome -ne 'ready') {
             return [pscustomobject]@{ outcome='skipped'; reason=$machineResult.reason }
@@ -225,6 +275,9 @@ function Start-HicManagedInfrastructure {
     $decision = Get-HicManagedDecision $snapshot
     if ($decision.action -eq 'skip') {
         return [pscustomobject]@{ outcome = 'skipped'; reason = $decision.reason }
+    }
+    if ($ExistingOnly -and $decision.action -ne 'resume') {
+        return [pscustomobject]@{ outcome='skipped'; reason='Only previously registered HIC-managed containers may be resumed; bootstrap is disabled for resource start.' }
     }
 
     $mutex = New-Object System.Threading.Mutex($false, 'Local\HIC.Managed.Infrastructure')
@@ -237,6 +290,9 @@ function Start-HicManagedInfrastructure {
         $decision = Get-HicManagedDecision $snapshot
         if ($decision.action -eq 'skip') {
             return [pscustomobject]@{ outcome = 'skipped'; reason = $decision.reason }
+        }
+        if ($ExistingOnly -and $decision.action -ne 'resume') {
+            return [pscustomobject]@{ outcome='skipped'; reason='Existing-only recheck no longer identifies a resumable HIC-managed stack; bootstrap remains disabled.' }
         }
 
         if ($decision.action -eq 'bootstrap') {

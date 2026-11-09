@@ -1,4 +1,4 @@
-# Offline contract tests for HIC Launcher. Never invokes "up" or any mutating command.
+# Offline contract tests for HIC Launcher. Never starts a lifecycle action or mutates a container.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $requiredSourceFiles = @(
@@ -41,7 +41,9 @@ $paths = @(
     (Join-Path $PSScriptRoot 'hic-managed-policy.ps1'),
     (Join-Path $PSScriptRoot 'hic-managed.ps1'),
     (Join-Path $PSScriptRoot 'hic-machine.ps1'),
-    (Join-Path $PSScriptRoot 'hic-process.ps1')
+    (Join-Path $PSScriptRoot 'hic-process.ps1'),
+    (Join-Path $PSScriptRoot 'hic-resource.ps1'),
+    (Join-Path $PSScriptRoot 'hic-resource.offline.tests.ps1')
 )
 foreach ($path in $paths) {
     $tokens = $null
@@ -56,6 +58,14 @@ if (-not (Test-Path $launcherFile)) { throw 'hic.cmd not found.' }
 $launcher = Get-Content -Raw $launcherFile
 if ($launcher -notmatch 'scripts\\hic\.ps1' -or $launcher -notmatch '\bup\b') {
     throw 'Expected launcher entry point was not found.'
+}
+$nativeWrapper = Get-Content -Raw (Join-Path (Join-Path $PSScriptRoot '..') 'run-hic-native.cmd')
+if ($nativeWrapper -notmatch 'scripts\\hic\.ps1"\s+preview\s+%\*') {
+    throw 'run-hic-native.cmd must route through the profile-gated preview command.'
+}
+$managedScript = Get-Content -Raw (Join-Path $PSScriptRoot 'hic-managed.ps1')
+if ($managedScript -notmatch '(?s)# Re-inspect after acquiring.*?if \(\$ExistingOnly -and \$decision\.action -ne ''resume''\)') {
+    throw 'Existing-only resume must be revalidated under the managed startup mutex.'
 }
 foreach ($mode in @('status', 'doctor')) {
     $response = (& (Join-Path $PSScriptRoot 'hic.ps1') $mode -Json) | ConvertFrom-Json
@@ -191,6 +201,7 @@ Write-Host 'HIC recovery-plan safety matrix: PASS'
 $virgin = [ordered]@{
     machine='running'
     discovery='verified'
+    worker='not-detected'
     containers=@()
     volumes=@()
     manifestPresent=$false
@@ -198,6 +209,17 @@ $virgin = [ordered]@{
     controlPlanePortState='free'
 }
 if ((Get-HicManagedDecision $virgin).action -ne 'bootstrap') { throw 'Fresh isolated Podman must be eligible for bootstrap.' }
+if ((Get-HicManagedWorkerState @()) -ne 'not-detected' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='agentlab-worker'; service=''; state='running' })) -ne 'running' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='custom-worker'; service=''; state='restarting' })) -ne 'unknown' -or
+    (Get-HicManagedWorkerState @([pscustomobject]@{ name='custom-worker'; service=''; state='exited' })) -ne 'stopped') {
+    throw 'Worker observation must distinguish absent, active, uncertain and stopped containers.'
+}
+$virgin.worker='unknown'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Unknown Worker state at the locked recheck must block bootstrap.' }
+$virgin.worker='running'
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Running Worker state at the locked recheck must block bootstrap.' }
+$virgin.worker='not-detected'
 
 $virgin.machine='stopped'
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Stopped Podman machine must not auto-start.' }
@@ -205,6 +227,12 @@ $virgin.machine='running'
 $virgin.discovery='unverified'
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Unverified discovery must fail closed.' }
 $virgin.discovery='verified'
+$virgin.containers=@('unrelated-postgres')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'An unrelated container found during the locked recheck must block bootstrap.' }
+$virgin.containers=@()
+$virgin.volumes=@('unrelated-persistent-data')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'An unrelated persistent volume found during the locked recheck must block bootstrap.' }
+$virgin.volumes=@()
 $virgin.containers=@('agentlab-postgres')
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Legacy R2 container must prevent fresh installation.' }
 $virgin.containers=@()

@@ -3,8 +3,23 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('up', 'preview', 'status', 'doctor', 'recovery-plan')]
+    [ValidateSet('up', 'preview', 'status', 'doctor', 'recovery-plan', 'resource', 'profile')]
     [string]$Action = 'up',
+    [Parameter(Position=1)]
+    [string]$SubAction,
+    [ValidateSet('Light', 'Development', 'FullAgent')]
+    [string]$Profile = 'Light',
+    [ValidateSet('ui', 'api', 'tests', 'inference')]
+    [string]$Task = 'ui',
+    [string]$ModelService,
+    [string]$PlanId,
+    [ValidateRange(0, 128)]
+    [int]$MemoryBudgetGiB = 0,
+    [ValidateRange(0, 32)]
+    [int]$TestParallelism = 0,
+    [ValidateRange(0, 32)]
+    [int]$InferenceParallelism = 0,
+    [switch]$Apply,
     [switch]$Json
 )
 
@@ -19,6 +34,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-recovery.ps1')
 . (Join-Path $PSScriptRoot 'hic-process.ps1')
 . (Join-Path $PSScriptRoot 'hic-managed.ps1')
+. (Join-Path $PSScriptRoot 'hic-resource.ps1')
 $ports = Get-HicPorts
 
 function Test-HttpReady {
@@ -184,6 +200,24 @@ if ($Action -eq 'preview') {
         exit 0
     }
     if ($previewDecision.action -eq 'blocked') { throw $previewDecision.reason }
+    $resourceInventory = Get-HicResourceInventory -Ports $ports
+    $resourcePlan = New-HicResourcePlan -Profile 'Light' -Task 'ui' -Inventory $resourceInventory -ModelService ''
+    if (-not $Apply) {
+        Write-HicResourceReport -Report ([ordered]@{
+            operation = 'profile-plan'
+            profile = 'Light'
+            task = 'ui'
+            planId = $resourcePlan.planId
+            inventory = $resourceInventory
+            plan = $resourcePlan
+        })
+        Write-Host ("No preview started. Review the plan, then run: hic.cmd preview -PlanId {0} -Apply" -f $resourcePlan.planId)
+        exit 0
+    }
+    if ($Json) { throw 'preview with -Apply does not support -Json.' }
+    if ([string]::IsNullOrWhiteSpace($PlanId) -or $PlanId -cne $resourcePlan.planId) {
+        throw 'Preview plan is missing or stale. Run hic.cmd profile plan -Profile Light -Task ui and review the current protected resources.'
+    }
 
     if (-not $env:HIC_CONTROL_PLANE_PORT) {
         # A verified legacy HIC pair identifies the old CP port without any WSL access.
@@ -202,36 +236,75 @@ if ($Action -eq 'preview') {
     exit 0
 }
 
-# Fast path MUST run before any Podman machine query. A frozen WSL subsystem
-# must not hide an already healthy Native Host + Web UI session.
-# This path NEVER starts or changes a service, container or Worker.
+if ($Action -in @('resource', 'profile')) {
+    try {
+        $resourceReport = Invoke-HicResourceCommand -Action $Action -SubAction $SubAction `
+            -Profile $Profile -Task $Task -ModelService $ModelService -PlanId $PlanId `
+            -MemoryBudgetGiB $MemoryBudgetGiB -TestParallelism $TestParallelism `
+            -InferenceParallelism $InferenceParallelism -Apply:$Apply -Json:$Json -Ports $ports -Root $root
+        if ($Json) { $resourceReport | ConvertTo-Json -Compress -Depth 10 }
+        exit 0
+    }
+    catch {
+        Write-Error $_.Exception.Message
+        exit 1
+    }
+}
+
 if ($Action -eq 'up') {
-    $nativeReady = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
-    $uiReady = Test-HicWebUI $ports.WebUI
-    $legacyNativeReady = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
-    $legacyUiReady = Test-HicWebUI 5180
-    $quickState = [ordered]@{
-        nativeHost = if ($nativeReady) { 'ready' } else { 'unavailable' }
-        webUI = if ($uiReady) { 'ready' } else { 'unavailable' }
-        legacyNative = $legacyNativeReady
-        legacyWebUI = $legacyUiReady
-        nativePortState = Get-LoopbackPortState $ports.NativeHost
-        webUIPortState = Get-LoopbackPortState $ports.WebUI
+    if (-not $Apply -and $Profile -eq 'Light' -and $Task -eq 'ui') {
+        $nativeReady = Test-HttpReady "http://127.0.0.1:$($ports.NativeHost)/v1/status" 'status' 'ready' 'hic-native-host'
+        $uiReady = Test-HicWebUI $ports.WebUI
+        $legacyNativeReady = Test-HttpReady 'http://127.0.0.1:5248/v1/status' 'status' 'ready' 'hic-native-host'
+        $legacyUiReady = Test-HicWebUI 5180
+        $quickState = [ordered]@{
+            nativeHost = if ($nativeReady) { 'ready' } else { 'unavailable' }
+            webUI = if ($uiReady) { 'ready' } else { 'unavailable' }
+            legacyNative = $legacyNativeReady
+            legacyWebUI = $legacyUiReady
+            nativePortState = Get-LoopbackPortState $ports.NativeHost
+            webUIPortState = Get-LoopbackPortState $ports.WebUI
+        }
+        $quickDecision = Get-HicStartupDecision $quickState
+        if ($quickDecision.action -eq 'reuse') {
+            Write-Host 'HIC native session is already running. Skipping Podman/WSL inspection.'
+            Write-Host "Open http://127.0.0.1:$($ports.WebUI)"
+            exit 0
+        }
+        if ($quickDecision.action -eq 'reuse-legacy') {
+            Write-Host 'Existing 5248/5180 HIC preview is healthy. Skipping Podman/WSL inspection.'
+            Write-Host 'Open http://127.0.0.1:5180. Control Plane health is not verified by this fast path.'
+            exit 0
+        }
+        if ($quickDecision.action -eq 'blocked') { throw $quickDecision.reason }
     }
-    $quickDecision = Get-HicStartupDecision $quickState
-    if ($quickDecision.action -eq 'reuse') {
-        Write-Host 'HIC native session is already running. Skipping Podman/WSL inspection.'
-        Write-Host "Open http://127.0.0.1:$($ports.WebUI)"
+    if ($Apply -and $Json) { throw 'up with -Apply does not support -Json because it may launch an interactive preview.' }
+    $inventory = Get-HicResourceInventory -Ports $ports
+    $plan = New-HicResourcePlan -Profile $Profile -Task $Task -Inventory $inventory -ModelService $ModelService `
+        -MemoryBudgetGiB $MemoryBudgetGiB -TestParallelism $TestParallelism -InferenceParallelism $InferenceParallelism
+    if (-not $Apply) {
+        $report = [ordered]@{
+            operation = 'profile-plan'
+            profile = $Profile
+            task = $Task
+            planId = $plan.planId
+            inventory = $inventory
+            plan = $plan
+        }
+        if ($Json) {
+            $report | ConvertTo-Json -Compress -Depth 10
+        }
+        else {
+            Write-HicResourceReport -Report $report
+            Write-Host ("No services started. Review this plan, then run: hic.cmd up -Profile {0} -Task {1} -PlanId {2} -Apply" -f $Profile, $Task, $plan.planId)
+        }
         exit 0
     }
-    if ($quickDecision.action -eq 'reuse-legacy') {
-        Write-Host 'Existing 5248/5180 HIC preview is healthy. Skipping Podman/WSL inspection.'
-        Write-Host 'Open http://127.0.0.1:5180. Control Plane health is not verified by this fast path.'
-        exit 0
-    }
-    if ($quickDecision.action -eq 'blocked') {
-        throw $quickDecision.reason
-    }
+    $resourceResult = Invoke-HicResourceCommand -Action resource -SubAction start `
+        -Profile $Profile -Task $Task -ModelService $ModelService -PlanId $PlanId `
+        -MemoryBudgetGiB $MemoryBudgetGiB -TestParallelism $TestParallelism `
+        -InferenceParallelism $InferenceParallelism -Apply -Ports $ports -Root $root
+    exit 0
 }
 
 $status = Get-HicStatus
@@ -325,54 +398,4 @@ if ($Action -eq 'status' -or $Action -eq 'doctor') {
     exit 0
 }
 
-if ($Action -ne 'up') { throw 'Unsupported action.' }
-if ($decision.action -eq 'blocked') {
-    throw $decision.reason
-}
-# First try isolated fresh/resumable infrastructure; never touch legacy R2 resources.
-# A healthy legacy CP is reused, and old Native preview sessions are not replaced.
-if ($status.controlPlane -ne 'ready' -and $decision.action -ne 'reuse-legacy') {
-    try {
-        $managedResult = Start-HicManagedInfrastructure -Status $status -ControlPlanePort $ports.ControlPlane
-        if ($managedResult.outcome -eq 'ready') {
-            Write-Host $managedResult.reason
-            $status = Get-HicStatus
-            $decision = Get-HicStartupDecision $status
-            if ($status.controlPlane -ne 'ready') {
-                Write-Warning 'Managed infrastructure returned but Control Plane health is not ready.'
-            }
-        }
-        else {
-            Write-Warning "Managed infrastructure unchanged: $($managedResult.reason)"
-        }
-    }
-    catch {
-        Write-Warning "Managed infrastructure not ready: $($_.Exception.Message)"
-        Write-Warning 'Partial new-installation resources, if any, are left untouched for safe investigation.'
-    }
-}
-if ($decision.action -eq 'reuse') {
-    Write-Host 'HIC native session is already running. No action needed.'
-    Write-Host "Open http://127.0.0.1:$($status.webUIPort)"
-    exit 0
-}
-if ($decision.action -eq 'reuse-legacy') {
-    Write-Host 'Existing native preview on 5248/5180 is running. No second Native Host started.'
-    Write-Host 'Open http://127.0.0.1:5180. No automatic port migration.'
-    exit 0
-}
-if ($status.controlPlane -ne 'ready') {
-    Write-Warning 'Control Plane unavailable. Opening HIC in read-only degraded mode; Tasks/Plans will show unavailable until CP recovery is separately approved.'
-}
-if (-not $status.workerSafe) {
-    Write-Warning "Worker state is $($status.worker). Native preview is read-only and will not interact with it."
-}
-# Pass an identity-verified legacy CP port (or configured new port) to the Native UI proxy.
-$env:HIC_CONTROL_PLANE_PORT = [string]$status.controlPlanePort
-
-$nativeLauncher = Join-Path $root 'scripts/hic-native.ps1'
-if (-not (Test-Path $nativeLauncher)) { throw 'Native launcher script not found.' }
-Write-Host 'Starting read-only Native Host and separate HIC Web UI on loopback.'
-Write-Host 'Podman, containers, data, running UI, and Worker will not be touched.'
-& $nativeLauncher
-if (-not $?) { exit 1 }
+throw 'Unsupported action.'

@@ -25,12 +25,16 @@ on:
       - 'scripts/hic-managed-policy.ps1'
       - 'scripts/hic-process.ps1'
       - 'scripts/hic-machine.ps1'
+      - 'scripts/hic-resource.ps1'
+      - 'scripts/hic-resource.offline.tests.ps1'
+      - 'deploy/hic-resources/**'
       - 'deploy/hic-managed/**'
       - 'scripts/hic-ports.ps1'
       - 'src/WebUI/vite.port.ts'
       - 'docs/human-in-control/PORTABLE_PORTS.md'
       - 'docker-compose.yml'
       - 'scripts/hic-launcher.offline.tests.ps1'
+      - 'docs/human-in-control/HIC_LAUNCHER.md'
       - 'src/WebUI/**'
       - 'tests/ControlPlane.Api.Tests/**'
       - '.github/workflows/hic-control-plane-ui-ci.yml'
@@ -125,7 +129,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate offline HIC launcher contract
         shell: pwsh
-        run: ./scripts/hic-launcher.offline.tests.ps1
+        run: |
+          ./scripts/hic-launcher.offline.tests.ps1
+          ./scripts/hic-resource.offline.tests.ps1
 
   managed-compose:
     runs-on: ubuntu-latest

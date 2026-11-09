@@ -1,5 +1,19 @@
 # Pure, offline-testable, fail-closed decision. Only a brand-new, isolated stack
 # is bootstrapped; an existing HIC-managed stack may be resumed after identity checks.
+function Get-HicManagedWorkerState {
+    param([object[]]$Containers)
+
+    $workers = @($Containers | Where-Object {
+        $_.service -ceq 'agent-worker' -or $_.name -match '(^|-)worker($|-)'
+    })
+    if ($workers.Count -eq 0) { return 'not-detected' }
+    if (@($workers | Where-Object { $_.state -eq 'running' }).Count -gt 0) { return 'running' }
+    if (@($workers | Where-Object { $_.state -notin @('exited', 'stopped', 'created', 'configured') }).Count -gt 0) {
+        return 'unknown'
+    }
+    return 'stopped'
+}
+
 function Get-HicManagedDecision {
     param([System.Collections.IDictionary]$Snapshot)
 
@@ -8,6 +22,9 @@ function Get-HicManagedDecision {
     }
     if ($Snapshot.discovery -ne 'verified') {
         return [pscustomobject]@{ action = 'skip'; reason = 'Cannot verify existing Podman containers/volumes; refusing infrastructure mutation.' }
+    }
+    if ($Snapshot.worker -in @('running', 'unknown')) {
+        return [pscustomobject]@{ action = 'skip'; reason = "Worker state is $($Snapshot.worker); refusing managed infrastructure mutation." }
     }
     $names = @($Snapshot.containers)
     $volumes = @($Snapshot.volumes)
@@ -26,6 +43,9 @@ function Get-HicManagedDecision {
             return [pscustomobject]@{ action = 'skip'; reason = 'Partial managed stack or missing credentials/manifest. Manual verification required.' }
         }
         return [pscustomobject]@{ action = 'resume'; reason = 'Managed resources present; validate immutable container IDs and volumes before start.' }
+    }
+    if ($names.Count -gt 0 -or $volumes.Count -gt 0) {
+        return [pscustomobject]@{ action = 'skip'; reason = 'Unrecognized containers or volumes appeared; refusing a fresh managed bootstrap.' }
     }
     if ($Snapshot.controlPlanePortState -ne 'free') {
         return [pscustomobject]@{ action = 'skip'; reason = 'Configured Control Plane port is occupied or unknown; will not replace listener.' }

@@ -4,11 +4,28 @@
 
 ## Commands
 
-- Double-click `hic.cmd` or use `hic.cmd up`: reuse an existing verified HIC Native session, or safely bootstrap/resume a dedicated HIC-managed PostgreSQL + Redis + Control Plane on clean verified installations, then start the Native Host and Vite UI. A missing Control Plane does **not** block the Native Host. It starts **degraded mode**: workspace inspection works while Tasks/Plans show Control Plane unavailable.
+- Double-click `hic.cmd` or use `hic.cmd up`: reuse an existing verified HIC Native session; otherwise show a default **Light / UI-only** resource plan. It does not start containers, create databases or launch a second preview until an exact plan is reviewed and passed back with `-Apply`.
 - `hic.cmd status`: report actual HTTP health, Podman machine, expected container states, configured host ports and Worker state. Read-only.
 - `hic.cmd doctor`: report the same facts and safe suggestions, without changing runtime state.
 - `hic.cmd recovery-plan`: inspect container states, the current Control Plane image ID (when available) and host-port exposure, and explain mandatory preflight blockers. It **never** starts/restarts/recreates containers, even if all infrastructure appears healthy. Use `hic.cmd recovery-plan -Json` for machine-readable diagnostics. Structured output: `powershell -NoProfile -File scripts/hic.ps1 doctor -Json`.
 - If existing HIC 5248/5180 is running, the launcher **reuses it** instead of creating a second Native Host. A partial old/new session or occupied configured ports cause a **fail-closed** error; it doesn't terminate another process.
+- `hic.cmd resource status` and `hic.cmd resource doctor`: bounded read-only inventory of host memory, top process working sets, the Podman/WSL VM process when identifiable, container stats by service, volumes, Worker state and protected listeners. JSON is available with `-Json`; unavailable measurements remain `unknown`.
+- `hic.cmd profile plan -Profile Light -Task ui`: create a no-mutation service plan. Use `-Profile Development -Task api` for the core API/data dependencies; optional `-MemoryBudgetGiB`, `-TestParallelism` and `-InferenceParallelism` values tune the advisory plan.
+- The plan includes the exact host processes, existing managed containers, new container/volume names, loopback ports and whether the guarded schema bootstrap would run. Review this before passing its `planId` to any start command.
+- `hic.cmd resource start -Profile Light -Task ui -PlanId <plan-id> -Apply`: opt in to starting the isolated Native Host/UI after reviewing the plan. `hic.cmd up -PlanId <plan-id> -Apply` is the equivalent entry point. The plan ID is re-evaluated against current containers, volumes, listeners and preview state before any start.
+- A Development start can resume an existing stack only when its per-user manifest, container IDs, Compose project/service labels, mounts and credentials digest verify. A clean machine may initialize a new isolated managed stack only when the inventory proves there are no existing containers, volumes, database listeners or stale ownership files. External/legacy resources are protected and are never adopted; an existing external PostgreSQL listener blocks bootstrap until an explicit reviewed reuse path exists.
+- `hic.cmd resource stop` is intentionally blocked in Phase 1. Persistent databases are not stopped; model unload and in-flight request coordination are Phase 2 work.
+- `hic.cmd preview` remains the explicit independent-preview command, but now requires the same `profile plan` result and `-Apply` before launching processes. A running verified legacy preview remains reusable and is not replaced.
+
+The profile graph is data-driven in `deploy/hic-resources/profiles.json`:
+
+| Profile | Planned services | Safety behavior |
+|---|---|---|
+| `Light` (default) | UI task: Native Host + Web UI. API task adds Control Plane, PostgreSQL and Redis. | Starts only the selected host preview or exact verified HIC-owned stack. |
+| `Development` | Core UI/API/PostgreSQL/Redis; tasks and inference add only their declared dependencies. | Reuses a verified stack or bootstraps only on a fully clean Podman inventory. |
+| `FullAgent` | Future model + Worker + executor plan. | Unavailable; security gate #63 is required. A profile never grants execution permission. |
+
+Memory ranges are planning budgets, not capacity guarantees or hard container caps: Light 3–6 GiB, Development 8–14 GiB and Full Agent 20–30 GiB. The inventory keeps Windows host totals, per-process working sets, VM working sets and Podman container statistics in separate scopes; these figures must not be summed. Podman reports of zero/unavailable memory and unidentified local-model memory remain `unknown`. Parallelism and memory-budget overrides affect the plan only; test and model lifecycle are not activated by Phase 1.
 
 The new-installation defaults are CP `19480`, Native Host `19481`, UI `19482` on loopback. Use `HIC_CONTROL_PLANE_PORT`, `HIC_NATIVE_PORT`, `HIC_WEB_PORT` overrides. An identity-verified older HIC Control Plane on 8080 remains supported; no existing service is migrated. See [portable ports](PORTABLE_PORTS.md).
 
@@ -28,9 +45,9 @@ The Windows CI tests use synthetic snapshots to verify degraded native startup, 
 Next milestone for **existing R2 environments**: explicitly approved rollback-safe Control Plane recovery after verified local R2 evidence. Next product milestones: native task approval/audit and R3/R4 before autonomous agent execution.
 
 
-## Single-command managed mode
+## Managed stack ownership
 
-For a clean Windows + Podman installation with an already running Podman machine, 'hic.cmd up' initializes an isolated database/cache/Control Plane and starts Native Host/UI. On later cold boots it may start only the uniquely pinned managed Podman machine with disabled user-mode networking; subsequent launches resume only previously registered managed containers after identity, image, volume mount and port checks. Existing legacy installations stay on native-only degraded mode if their Control Plane is down. For details see MANAGED_STACK.md.
+The existing managed-stack manifest and Compose project continue to identify the resources created by HIC. Resource-profile activation never starts a Podman machine, runs a `compose up` against an existing project, adopts external databases or stops services. A reviewed clean-install plan may use the existing guarded bootstrap path only when no containers, volumes, database listeners or prior ownership files exist. Later starts require the durable ownership record and exact container identity checks; legacy R2 resources stay untouched. See [managed stack](MANAGED_STACK.md).
 
 
 ## Frozen WSL fast-path (existing native session)
