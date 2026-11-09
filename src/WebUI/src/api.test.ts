@@ -14,6 +14,17 @@ const plan = {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('persistent operator session client', () => {
+  it('distinguishes model plan unavailability from a missing schema', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ code: 'model-unavailable' }, { status: 503 }))
+      .mockResolvedValueOnce(new Response('', { status: 503 })));
+    await expect(api.generateGeneralPlan(task.id, 0, 'cookie-session')).rejects.toMatchObject({
+      message: expect.stringContaining('local model did not return a usable plan'),
+    });
+    await expect(api.generateGeneralPlan(task.id, 0, 'cookie-session')).rejects.toMatchObject({
+      message: expect.stringContaining('approved schema is unavailable'),
+    });
+  });
   it('uses same-origin HttpOnly cookie transport without a bearer secret in JavaScript', async () => {
     const restored = { actorId: task.id, expiresInSeconds: 28800,
       expiresAtUtc: new Date(Date.now() + 28800000).toISOString() };

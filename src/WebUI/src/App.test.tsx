@@ -67,7 +67,8 @@ describe('dashboard', () => {
     expect(screen.getByText('Approvals are read-only')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /approve|reject/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Models & Providers/ }));
-    expect(screen.getByText('Token and budget visibility: not available')).toBeInTheDocument();
+    expect(await screen.findByText(/Authenticate in Conversations to inspect/)).toBeInTheDocument();
+    expect(screen.getByText(/token or budget visibility are not implemented/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Agents/ }));
     expect(screen.getByText('No persisted agent definitions are available.')).toBeInTheDocument();
   });

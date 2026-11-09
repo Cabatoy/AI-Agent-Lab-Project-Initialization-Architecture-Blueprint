@@ -23,6 +23,38 @@ Mevcut PostgreSQL/Redis/Podman servislerine migration, restart, merge veya deplo
 
 ## Teknik Ek
 
+### Yerel model erişilebilirliği
+
+Konuşma ekranındaki model durumu, yapılandırılmış yerel sağlayıcının
+`/v1/models` yanıtını denetler. `available`, ilgili modelin envanterde
+listelendiğini gösterir; sonraki üretim isteğinin başarılı olacağını garanti
+etmez. Erişim hatası veya geçersiz yanıt `unavailable`, listede bulunmayan
+model `model-not-listed` olarak gösterilir. Durum oturum açılırken kontrol
+edilir; **Refresh model status** ile yeniden sorgulanabilir. Kontrol prompt
+veya sır göndermez. **Models & Providers** ekranı aynı doğrulanmış operator
+oturumunu ve aynı Control Plane tanısını kullanır. Sağlayıcı yönetimi, model
+seçimi ve maliyet görünürlüğü henüz uygulanmamıştır.
+
+### Genel konuşmalar
+
+Genel konuşmalar repository, dosya veya task oluşturulmasını gerektirmez.
+Mesajlar operator kimliğiyle sınırlandırılır; model yalnızca son konuşma
+bağlamını alır ve araç, dosya, yürütme veya yayın yetkisi verilmez. Kesilmiş
+bir model yanıtında kaydedilmiş kullanıcı mesajı korunur; geçmiş gözden
+geçirilmeden aynı istek yeniden çalıştırılmaz.
+
+Bu işlev `008-general-conversations.sql`, plan incelemesi de
+`009-general-plan-review.sql` şemasını gerektirir; GitHub Publisher v7 bu
+şemalardan önce uygulanmalıdır. Migration
+otomatik çalıştırılmaz; yalnızca hedef veritabanı ve yedekleme açıkça
+onaylandıktan sonra uygulanabilir. Mevcut preview snapshot veritabanına bu
+değişiklik uygulanmamıştır. Modelin yapılandırılmış önerisi güvenilmezdir;
+operatör kaydedilmiş sürümü düzenleyip ayrıca gözden geçirerek yalnızca Draft
+task oluşturulmasını onaylar veya sürümü reddeder. Reddedilen sürüm onaylanamaz;
+yeniden düzenleme ya da yeni model önerisi ayrı sürüm oluşturur. Bu onay Worker dispatch, kod yürütme, araç,
+GitHub veya deployment yetkisi vermez. Her genel konuşmada en fazla bir plan
+sürümü için Draft task oluşturulur; yeniden deneme aynı task kimliklerini döndürür.
+
 ### 1. GitHub App ve eksik local ayarlar
 
 App yalnız **Selected repositories → Cabatoy/hic-agent-sandbox** üzerinde kurulu

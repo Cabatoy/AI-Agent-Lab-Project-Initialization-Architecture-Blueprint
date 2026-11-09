@@ -75,7 +75,7 @@ function makePlanBody(
       },
     ] satisfies PreviewStep[],
     risks: [
-      'No configured LLM provider has completed a successful availability check.',
+      'This deterministic preview does not check model availability; consult Models & Providers.',
       'This general plan preview has no authenticated approval or durable audit. Local Runner approval covers only its fixed action.',
       'Repository inspection is limited to the single Native Host configured workspace.',
     ],

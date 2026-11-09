@@ -86,6 +86,7 @@ export interface LocalCodeModelInfo {
   provider: string;
   model: string;
   timeoutSeconds: number;
+  readiness: 'not-configured' | 'not-checked' | 'available' | 'unavailable' | 'model-not-listed';
 }
 export interface ModelCodeEditPlan {
   revision: number;
@@ -115,6 +116,25 @@ export interface ModelConversationMessage {
   status: string;
   proposal: ModelCodeEditProposal | null;
   createdAtUtc: string;
+}
+export interface GeneralConversationSummary {
+  conversationId: string;
+  title: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+}
+export interface GeneralConversation extends GeneralConversationSummary {
+  messages: ModelConversationMessage[];
+}
+export interface GeneralPlanTask { title: string; description: string }
+export interface GeneralPlan {
+  revision: number;
+  source: 'model' | 'human';
+  createdAtUtc: string;
+  tasks: GeneralPlanTask[];
+  approved: boolean;
+  rejected: boolean;
+  taskIds: string[];
 }
 export interface ModelCodeEditResult {
   action: 'repository.model-code-edit';
@@ -245,7 +265,8 @@ const modelRepository: Guard<ModelRepository> = (v): v is ModelRepository =>
   list(str)(v.files) && v.files.length > 0 && v.files.length <= 8 && v.available === true;
 const codeModelInfo: Guard<LocalCodeModelInfo> = (v): v is LocalCodeModelInfo =>
   object(v) && typeof v.configured === 'boolean' && str(v.provider) && str(v.model) &&
-  Number.isSafeInteger(v.timeoutSeconds) && Number(v.timeoutSeconds) >= 5 && Number(v.timeoutSeconds) <= 120;
+  Number.isSafeInteger(v.timeoutSeconds) && Number(v.timeoutSeconds) >= 5 && Number(v.timeoutSeconds) <= 120 &&
+  ['not-configured', 'not-checked', 'available', 'unavailable', 'model-not-listed'].includes(String(v.readiness));
 const modelCodeEditPlan: Guard<ModelCodeEditPlan> = (v): v is ModelCodeEditPlan =>
   object(v) && v.revision === 1 && guid(v.taskId) && guid(v.actorId) && guid(v.conversationId) &&
   str(v.taskDigest) && /^[0-9a-f]{64}$/.test(v.taskDigest) &&
@@ -260,6 +281,17 @@ const modelConversationMessage: Guard<ModelConversationMessage> = (v): v is Mode
   object(v) && guid(v.messageId) && (v.role === 'user' || v.role === 'assistant') &&
   str(v.content) && v.content.length <= 12000 && nullable(v.provider) && nullable(v.modelName) &&
   str(v.status) && (v.proposal === null || modelCodeEditProposal(v.proposal)) && date(v.createdAtUtc);
+const generalSummary: Guard<GeneralConversationSummary> = (v): v is GeneralConversationSummary =>
+  object(v) && guid(v.conversationId) && str(v.title) && date(v.createdAtUtc) && date(v.updatedAtUtc);
+const generalConversation: Guard<GeneralConversation> = (v): v is GeneralConversation =>
+  generalSummary(v) && object(v) && list(modelConversationMessage)(v.messages) &&
+  v.messages.every(message => message.proposal === null);
+const generalPlan: Guard<GeneralPlan> = (v): v is GeneralPlan =>
+  object(v) && Number.isSafeInteger(v.revision) && Number(v.revision) > 0 &&
+  (v.source === 'model' || v.source === 'human') && date(v.createdAtUtc) &&
+  Array.isArray(v.tasks) && v.tasks.length > 0 && v.tasks.length <= 8 &&
+  v.tasks.every(item => object(item) && str(item.title) && str(item.description)) &&
+  typeof v.approved === 'boolean' && typeof v.rejected === 'boolean' && list(guid)(v.taskIds);
 const modelCodeEditResult: Guard<ModelCodeEditResult> = (v): v is ModelCodeEditResult =>
   object(v) && v.action === 'repository.model-code-edit' && guid(v.runId) &&
   (v.conversationId === null || guid(v.conversationId)) && nullable(v.repositoryId) &&
@@ -431,7 +463,15 @@ export async function localRunnerRequest<T>(
     }
     if (response.status !== expectedStatus) {
       if (response.status === 401) window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
-      const message = response.status === 401 ? 'The local runner session is invalid or expired.'
+      let modelUnavailable = false;
+      if (response.status === 503 && path.endsWith('/plan/generate')) {
+        try {
+          const error: unknown = await response.json();
+          modelUnavailable = object(error) && error.code === 'model-unavailable';
+        } catch { /* An unreadable error remains a generic service failure. */ }
+      }
+      const message = modelUnavailable ? 'The local model did not return a usable plan. Check Models & Providers; no tasks were created.'
+        : response.status === 401 ? 'The local runner session is invalid or expired.'
         : response.status === 503 ? 'The local runner is not registered or its approved schema is unavailable.'
           : response.status === 409 ? 'The task or approved run is no longer eligible.'
             : `The local runner returned HTTP ${response.status}.`;
@@ -527,6 +567,36 @@ export const api = {
     localRunnerRequest('/repositories', list(modelRepository), token, 'GET'),
   modelConversations: (token: string) =>
     localRunnerRequest('/conversations', list(modelConversationSummary), token, 'GET'),
+  generalConversations: (token: string) =>
+    localRunnerRequest('/general-conversations', list(generalSummary), token, 'GET'),
+  generalConversation: (id: string, token: string) => {
+    if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
+    return localRunnerRequest(`/general-conversations/${id}`, generalConversation, token, 'GET');
+  },
+  createGeneralConversation: (title: string, token: string) =>
+    localRunnerRequest('/general-conversations', generalConversation, token, 'POST', { title }, 201),
+  sendGeneralMessage: (id: string, clientMessageId: string, content: string, token: string) => {
+    if (!guid(id) || !guid(clientMessageId) || !content.trim() || content.length > 4000)
+      return Promise.reject(new ApiError('invalid', 'Invalid bounded conversation message.'));
+    return localRunnerRequest(`/general-conversations/${id}/messages`, generalConversation, token,
+      'POST', { clientMessageId, content }, 200, 125000);
+  },
+  generalPlan: (id: string, token: string) => {
+    if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
+    return localRunnerRequest(`/general-conversations/${id}/plan`, generalPlan, token, 'GET');
+  },
+  generateGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/generate`, generalPlan, token,
+      'POST', { expectedRevision }, 200, 125000),
+  reviseGeneralPlan: (id: string, expectedRevision: number, tasks: GeneralPlanTask[], token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/revise`, generalPlan, token,
+      'POST', { expectedRevision, tasks }),
+  approveGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/approve`, generalPlan, token,
+      'POST', { expectedRevision }),
+  rejectGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/reject`, generalPlan, token,
+      'POST', { expectedRevision }),
   modelConversation: (conversationId: string, token: string) => {
     if (!guid(conversationId)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
     return localRunnerRequest(`/conversations/${conversationId}`, modelConversation, token, 'GET');

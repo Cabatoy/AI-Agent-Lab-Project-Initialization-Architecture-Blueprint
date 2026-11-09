@@ -10,6 +10,7 @@ vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof impor
   restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
   createLocalRunnerSession: vi.fn(), localCodeModel: vi.fn(), modelRepositories: vi.fn(),
   modelConversations: vi.fn(), modelConversation: vi.fn(), createModelConversation: vi.fn(),
+  generalConversations: vi.fn(),
   sendModelMessage: vi.fn(), approveModelCodeEdit: vi.fn(), executeLocalHealthRun: vi.fn(),
 } }));
 
@@ -48,13 +49,14 @@ beforeEach(() => {
   vi.stubGlobal('crypto', { randomUUID: () => '41234567-89ab-cdef-0123-456789abcdef' });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 's'.repeat(44), expiresInSeconds: 900 });
   vi.mocked(api.localCodeModel).mockResolvedValue({
-    configured: true, provider: 'podman-ai-lab', model: 'mistral-local', timeoutSeconds: 60,
+    configured: true, provider: 'podman-ai-lab', model: 'mistral-local', timeoutSeconds: 60, readiness: 'available',
   });
   vi.mocked(api.modelRepositories).mockResolvedValue([{
     id: 'fixture', path: 'C:\\fixture', baseCommit: 'b'.repeat(40),
     files: ['src/Value.cs'], available: true,
   }]);
   vi.mocked(api.modelConversations).mockResolvedValue([]);
+  vi.mocked(api.generalConversations).mockResolvedValue([]);
   vi.mocked(api.modelConversation).mockResolvedValue(emptyConversation);
   vi.mocked(api.createModelConversation).mockResolvedValue(emptyConversation);
   vi.mocked(api.sendModelMessage).mockResolvedValue(generated);
@@ -65,6 +67,26 @@ beforeEach(() => {
   vi.mocked(api.executeLocalHealthRun).mockResolvedValue({ status: 'completed' });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
+
+it('distinguishes a configured but unreachable local model from a ready provider', async () => {
+  vi.mocked(api.localCodeModel).mockResolvedValue({
+    configured: true, provider: 'podman-ai-lab', model: 'mistral-local',
+    timeoutSeconds: 60, readiness: 'unavailable',
+  });
+  render(<ModelConversationWorkspace />);
+  await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'bootstrap' } });
+  fireEvent.click(screen.getByText('Open conversation workspace'));
+  expect(await screen.findByText(/Local model readiness: unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText(/Local provider is reachable/)).not.toBeInTheDocument();
+  vi.mocked(api.localCodeModel).mockResolvedValue({
+    configured: true, provider: 'podman-ai-lab', model: 'mistral-local',
+    timeoutSeconds: 60, readiness: 'available',
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh model status' }));
+  expect(await screen.findByText(/Local provider is reachable/)).toBeInTheDocument();
+  expect(api.localCodeModel).toHaveBeenCalledTimes(2);
+});
 
 it('creates a durable conversation, displays a proposal and preserves historical results without executing', async () => {
   render(<ModelConversationWorkspace />);
@@ -213,7 +235,7 @@ it('does not resurrect a session when a 401 invalidates an in-flight restore', a
   await waitFor(() => expect(api.localCodeModel).toHaveBeenCalled());
   await act(async () => {
     window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
-    complete({ configured: true, provider: 'podman-ai-lab', model: 'mistral-local', timeoutSeconds: 60 });
+    complete({ configured: true, provider: 'podman-ai-lab', model: 'mistral-local', timeoutSeconds: 60, readiness: 'available' });
   });
   expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled();

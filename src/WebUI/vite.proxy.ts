@@ -8,7 +8,7 @@ const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|renew|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
-  `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
+  `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|general-conversations(?:/${guidPath}(?:/messages|/plan(?:/(?:generate|revise|approve|reject))?)?)?|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 const MODEL_UPSTREAM_TIMEOUT_MS = 125000;
@@ -224,20 +224,23 @@ async function localRunnerRequest(
   const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
     `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
   const isRead = req.method === 'GET' &&
-    (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|(?:general-)?conversations(?:\/[0-9a-f-]+)?|general-conversations\/[0-9a-f-]+\/plan|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
   const isApprove = req.method === 'POST' &&
     (isGitHubApprove || /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path));
   const isConversationCreate = req.method === 'POST' && path === '/api/local-runner/conversations';
+  const isGeneralCreate = req.method === 'POST' && path === '/api/local-runner/general-conversations';
   const isConversationMessage = req.method === 'POST' &&
-    /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages$/i.test(path);
+    /^\/api\/local-runner\/(?:general-)?conversations\/[0-9a-f-]+\/messages$/i.test(path);
   const isConversationApprove = req.method === 'POST' &&
     /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages\/[0-9a-f-]+\/approve$/i.test(path);
-  const isConversationWrite = isConversationCreate || isConversationMessage || isConversationApprove;
+  const isPlanWrite = req.method === 'POST' &&
+    /^\/api\/local-runner\/general-conversations\/[0-9a-f-]+\/plan\/(?:generate|revise|approve|reject)$/i.test(path);
+  const isConversationWrite = isConversationCreate || isGeneralCreate || isConversationMessage || isConversationApprove;
   const isExecute = req.method === 'POST' &&
     (isRevoke || isGitHubEmptyWrite || /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path));
-  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite)
+  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite && !isPlanWrite)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
   const suppliedAuthorization = header(req, 'authorization');
@@ -291,11 +294,33 @@ async function localRunnerRequest(
     return;
   }
 
+  if (isPlanWrite) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || received.body.length > 12 * 1024)
+      return reject(res, 400, 'Invalid bounded plan request.');
+    const body = parsed as Record<string, unknown>;
+    const revise = path.endsWith('/revise');
+    if (Object.keys(body).length !== (revise ? 2 : 1) ||
+        !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0 ||
+        Number(body.expectedRevision) >= 2147483647 ||
+        (revise && (!Array.isArray(body.tasks) || body.tasks.length < 1 || body.tasks.length > 8 ||
+          body.tasks.some((item: unknown) => !item || typeof item !== 'object' || Array.isArray(item) ||
+            Object.keys(item).length !== 2 || typeof (item as Record<string, unknown>).title !== 'string' ||
+            typeof (item as Record<string, unknown>).description !== 'string'))))
+      return reject(res, 400, 'Invalid bounded plan request.');
+    forward(req, res, target, 'POST', path.slice(4), path.endsWith('/generate')
+      ? timeouts.modelTimeoutMs : timeouts.upstreamTimeoutMs, JSON.stringify(body), authorization);
+    return;
+  }
+
   if (isConversationWrite) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || received.body.length > 12 * 1024)
       return reject(res, 400, 'Invalid bounded conversation request.');
     const body = parsed as Record<string, unknown>;
-    if (isConversationCreate) {
+    if (isGeneralCreate) {
+      if (Object.keys(body).length !== 1 || typeof body.title !== 'string' ||
+          !body.title.trim() || body.title.length > 120 || /[\u0000-\u001f\u007f]/.test(body.title))
+        return reject(res, 400, 'Invalid general conversation title.');
+    } else if (isConversationCreate) {
       if (Object.keys(body).length !== 3 || typeof body.title !== 'string' ||
           body.title.length < 1 || body.title.length > 120 || /[\u0000-\u001f\u007f]/.test(body.title) ||
           typeof body.repositoryId !== 'string' || !/^[a-z0-9-]{1,40}$/.test(body.repositoryId) ||
