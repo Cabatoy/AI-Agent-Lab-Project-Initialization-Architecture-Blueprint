@@ -3,7 +3,7 @@ name: HIC Control Plane and Web UI CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
-    branches: [develop, main]
+    branches: [develop, main, feature/hic-git-plan-decisions]
     paths:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
