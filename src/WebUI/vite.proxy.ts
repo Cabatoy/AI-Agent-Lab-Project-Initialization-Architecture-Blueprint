@@ -8,7 +8,7 @@ const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|renew|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
-  `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|general-conversations(?:/${guidPath}(?:/messages|/plan(?:/(?:generate|revise|approve|reject))?)?)?|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
+  `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|general-conversations(?:/${guidPath}(?:/messages|/plan(?:/(?:generate|revise|approve|reject))?)?)?|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve|git-reject|git-decisions)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 const MODEL_UPSTREAM_TIMEOUT_MS = 125000;
@@ -224,9 +224,9 @@ async function localRunnerRequest(
   const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
     `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
   const isRead = req.method === 'GET' &&
-    (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|(?:general-)?conversations(?:\/[0-9a-f-]+)?|general-conversations\/[0-9a-f-]+\/plan|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|(?:general-)?conversations(?:\/[0-9a-f-]+)?|general-conversations\/[0-9a-f-]+\/plan|tasks\/[0-9a-f-]+\/(?:intent|git-decisions)|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
-    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
+    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve|reject)$/i.test(path);
   const isApprove = req.method === 'POST' &&
     (isGitHubApprove || /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path));
   const isConversationCreate = req.method === 'POST' && path === '/api/local-runner/conversations';

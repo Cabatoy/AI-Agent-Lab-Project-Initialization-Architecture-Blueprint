@@ -7,6 +7,17 @@ export interface GitPlan {
   file: 'message.txt'; content: string; expiresAtUtc: string;
 }
 export interface GitPreview { plan: GitPlan; intentDigestSha256: string }
+export interface GitRejection {
+  decisionId: string; taskId: string; actorId: string; action: 'repository.test-edit';
+  scope: 'disposable-worktree:message.txt:write'; intentDigestSha256: string;
+  decision: 'rejected'; decidedAtUtc: string; runId: null;
+}
+export interface GitDecision {
+  decisionId: string; taskId: string; actorId: string; action: 'repository.test-edit';
+  scope: 'disposable-worktree:message.txt:write'; intentDigestSha256: string;
+  decision: 'approved' | 'rejected'; decidedAtUtc: string; runId: string | null; plan: GitPlan;
+}
+export interface GitDecisionHistory { decisions: GitDecision[]; limit: number; hasMore: boolean }
 export interface GitResult {
   action: 'repository.test-edit'; runId: string; repositoryId: string | null; baseCommit: string | null;
   worktreePath: string | null; branch: string | null; diff: string;
@@ -39,6 +50,16 @@ const run = (v: unknown): v is GitRun => object(v) && guid(v.runId) && guid(v.ta
   plan(v.plan) && (v.result === null || result(v.result)) && Array.isArray(v.events) &&
   v.events.every(e => object(e) && str(e.eventCode) && date(e.recordedAtUtc));
 const approval = (v: unknown): v is { runId: string } => object(v) && guid(v.runId) && v.action === 'repository.test-edit';
+const rejection = (v: unknown): v is GitRejection => object(v) && guid(v.decisionId) && guid(v.taskId) &&
+  guid(v.actorId) && v.action === 'repository.test-edit' && v.scope === 'disposable-worktree:message.txt:write' &&
+  hash(v.intentDigestSha256) && v.decision === 'rejected' && date(v.decidedAtUtc) && v.runId === null;
+const decision = (v: unknown): v is GitDecision => object(v) && guid(v.decisionId) && guid(v.taskId) &&
+  guid(v.actorId) && v.action === 'repository.test-edit' && v.scope === 'disposable-worktree:message.txt:write' &&
+  hash(v.intentDigestSha256) && date(v.decidedAtUtc) && plan(v.plan) &&
+  v.plan.taskId === v.taskId && v.plan.actorId === v.actorId &&
+  (v.decision === 'rejected' && v.runId === null || v.decision === 'approved' && guid(v.runId));
+const history = (v: unknown): v is GitDecisionHistory => object(v) && Array.isArray(v.decisions) &&
+  v.decisions.length <= 50 && v.decisions.every(decision) && v.limit === 50 && typeof v.hasMore === 'boolean';
 
 export const gitApi = {
   repositories: (token: string) => localRunnerRequest('/repositories',
@@ -48,5 +69,9 @@ export const gitApi = {
       { repositoryId: repo.id, baseCommit: repo.baseCommit, file: 'message.txt', content }),
   approve: (taskId: string, value: GitPreview, token: string) =>
     localRunnerRequest(`/tasks/${taskId}/git-approve`, approval, token, 'POST', value, 202),
+  reject: (taskId: string, value: GitPreview, token: string) =>
+    localRunnerRequest(`/tasks/${taskId}/git-reject`, rejection, token, 'POST', value),
+  decisions: (taskId: string, token: string) =>
+    localRunnerRequest(`/tasks/${taskId}/git-decisions`, history, token, 'GET'),
   run: (runId: string, token: string) => localRunnerRequest(`/runs/${runId}`, run, token, 'GET'),
 };

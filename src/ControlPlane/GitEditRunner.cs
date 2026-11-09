@@ -284,13 +284,19 @@ internal static class GitEditEndpoints
     internal static void Map(WebApplication app, string connectionString, LocalOperatorSessions? sessions)
     {
         var store = new LocalHealthRunStore(connectionString);
-        async Task<bool> Ready(CancellationToken cancellationToken)
+        var decisions = new GitPlanDecisionStore(connectionString);
+        Task<bool> Ready(CancellationToken cancellationToken) => decisions.ReadyAsync(cancellationToken);
+        app.MapGet("/local-runner/tasks/{taskId:guid}/git-decisions", async (
+            Guid taskId, HttpContext context, CancellationToken cancellationToken) =>
         {
-            await using var connection = new NpgsqlConnection(connectionString);
-            return await store.IsSchemaReadyAsync(cancellationToken) &&
-                await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
-                    "select exists(select 1 from app_schema_versions where version = 5);", cancellationToken: cancellationToken));
-        }
+            context.Response.Headers.CacheControl = "no-store";
+            var actor = sessions?.Authenticate(context.Request.Headers.Authorization);
+            if (actor is null) return Results.Unauthorized();
+            if (!await Ready(cancellationToken)) return Results.StatusCode(503);
+            var history = await decisions.HistoryAsync(taskId, actor.Value, sessions!,
+                context.Request.Headers.Authorization, cancellationToken);
+            return history is null ? Results.Unauthorized() : Results.Ok(history);
+        });
         app.MapGet("/local-runner/repositories", async (HttpContext context, CancellationToken cancellationToken) =>
         {
             var actor = sessions?.Authenticate(context.Request.Headers.Authorization);
@@ -319,32 +325,56 @@ internal static class GitEditEndpoints
             expiry = new DateTime(expiry.Ticks / 10 * 10, DateTimeKind.Utc);
             var plan = new GitEditPlan(1, taskId, actor.Value, intent.IntentDigestSha256, repo.Id, repo.Path,
                 repo.BaseCommit, request.File, request.Content, expiry);
+            if (!await decisions.IssueAsync(plan, sessions!, context.Request.Headers.Authorization, cancellationToken))
+                return sessions?.Authenticate(context.Request.Headers.Authorization) is null
+                    ? Results.Unauthorized() : Results.Conflict(new { error = "Task changed during preview." });
             return Results.Ok(new { plan, intentDigestSha256 = plan.Digest() });
         });
-        app.MapPost("/local-runner/tasks/{taskId:guid}/git-approve", async (
-            Guid taskId, HttpContext context, CancellationToken cancellationToken) =>
+        async Task<IResult> Decide(Guid taskId, HttpContext context, bool approve, CancellationToken cancellationToken)
         {
+            context.Response.Headers.CacheControl = "no-store";
             var actor = sessions?.Authenticate(context.Request.Headers.Authorization);
             if (actor is null) return Results.Unauthorized();
             if (!await Ready(cancellationToken)) return Results.StatusCode(503);
             var approval = await ReadAsync<GitApproval>(context.Request, cancellationToken);
-            if (approval?.Plan is not { } plan || plan.Revision != 1 || plan.File != "message.txt" ||
-                !GitEditExecutor.ValidContent(plan.Content) ||
-                !LocalHealthRunIntent.Matches(approval.IntentDigestSha256, plan.Digest()))
-                return Results.BadRequest(new { error = "Review the exact bounded plan before approving." });
-            var repo = GitEditExecutor.Configuration(app.Configuration).SingleOrDefault(r => r.Id == plan.RepositoryId);
-            if (repo is null || repo.Path != plan.RepositoryPath || repo.BaseCommit != plan.BaseCommit)
-                return Results.Conflict(new { error = "Repository authorization changed." });
-            await GitEditExecutor.InspectAsync(repo, cancellationToken);
-            var approved = await store.ApproveAsync(taskId, actor.Value, approval.IntentDigestSha256, cancellationToken, plan);
-            return approved.Run is null
-                ? Results.Conflict(new { error = "Plan expired, changed or already decided." })
-                : Results.Accepted($"/local-runner/runs/{approved.Run.RunId}", new
+            if (approval?.Plan is not { } plan || !GitPlanDecisionStore.Valid(plan, approval.IntentDigestSha256))
+                return Results.BadRequest(new { error = "Review the exact bounded plan before deciding." });
+            async Task<bool> AuthorizeRepository()
+            {
+                try
                 {
-                    approved.Run.RunId, approved.Run.TaskId, approved.Run.Action, approved.Run.Scope,
-                    approved.Run.IntentDigestSha256, approved.Run.Status
+                    var repo = GitEditExecutor.Configuration(app.Configuration).SingleOrDefault(r => r.Id == plan.RepositoryId);
+                    if (repo is null || repo.Path != plan.RepositoryPath || repo.BaseCommit != plan.BaseCommit) return false;
+                    await GitEditExecutor.InspectAsync(repo, cancellationToken);
+                    return true;
+                }
+                catch (Exception exception) when (exception is GitEditDeniedException or IOException or UnauthorizedAccessException)
+                {
+                    return false;
+                }
+            }
+            var outcome = await decisions.DecideAsync(taskId, actor.Value, plan, approval.IntentDigestSha256,
+                approve, sessions!, context.Request.Headers.Authorization, cancellationToken, AuthorizeRepository);
+            if (outcome.Code == "unauthorized") return Results.Unauthorized();
+            if (outcome.Decision is null)
+                return Results.Conflict(new { error = "Plan expired, changed, not issued or already decided.", code = outcome.Code });
+            if (!approve) return Results.Ok(new
+            {
+                outcome.Decision.DecisionId, outcome.Decision.TaskId, outcome.Decision.ActorId,
+                action = GitEditPlan.Action, scope = GitEditPlan.Scope,
+                outcome.Decision.IntentDigestSha256, decision = "rejected",
+                outcome.Decision.DecidedAtUtc, runId = (Guid?)null
+            });
+            var run = outcome.Run!;
+            return Results.Accepted($"/local-runner/runs/{run.RunId}", new
+                {
+                    run.RunId, run.TaskId, run.Action, run.Scope, run.IntentDigestSha256, run.Status
                 });
-        });
+        }
+        app.MapPost("/local-runner/tasks/{taskId:guid}/git-approve",
+            (Guid taskId, HttpContext context, CancellationToken ct) => Decide(taskId, context, true, ct));
+        app.MapPost("/local-runner/tasks/{taskId:guid}/git-reject",
+            (Guid taskId, HttpContext context, CancellationToken ct) => Decide(taskId, context, false, ct));
     }
 
     internal sealed record GitApproval(GitEditPlan Plan, string IntentDigestSha256);

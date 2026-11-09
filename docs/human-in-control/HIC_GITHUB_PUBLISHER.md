@@ -62,6 +62,17 @@ incelenir. Bu sınırlı test capability'si genel kod geliştirme değildir.
 Planın ayrı onayı execution veya GitHub publication izni vermez; güvenilir
 izolasyon backend'i doğrulanana kadar repository execution kapalı kalır.
 
+Exact Git planı için **Approve** ve **Reject** ayrı insan kararlarıdır. Ret;
+aktör, plan özeti, kapsam, son geçerlilik zamanı ve içeriğiyle kalıcı olarak
+kaydedilir. Aynı karar güvenli biçimde tekrarlanabilir; karşıt karar reddedilir.
+Yeni preview yeni inceleme gerektirir. **Load Git decision history** seçili
+task için son 50 kararı gösterir; daha eski onaylar mevcut run audit'inde kalır.
+`queued` yalnızca task rezervasyonudur; çalışan bir executor anlamına gelmez.
+
+Bu işlev [010 Git karar migration'ını](../../src/ControlPlane/Migrations/010-git-plan-decisions.sql)
+gerektirir. Startup migration yapmaz; mevcut veya canlı veritabanına ayrı açık
+onay olmadan uygulanmaz. Şema eksikse Git planı işlemleri kapalı kalır.
+
 ### 1. GitHub App ve eksik local ayarlar
 
 App yalnız **Selected repositories → Cabatoy/hic-agent-sandbox** üzerinde kurulu

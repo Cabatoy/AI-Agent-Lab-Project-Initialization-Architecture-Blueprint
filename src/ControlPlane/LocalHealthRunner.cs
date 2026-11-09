@@ -72,6 +72,7 @@ internal sealed class LocalOperatorSessions
     private readonly Guid actorId;
     private readonly Dictionary<string, DateTimeOffset> sessions = new(StringComparer.Ordinal);
     private readonly object sync = new();
+    private readonly SemaphoreSlim decisionCommitGate = new(1, 1);
     private readonly TimeProvider clock;
 
     private LocalOperatorSessions(byte[] bootstrapTokenHash, Guid actorId, TimeProvider clock)
@@ -153,12 +154,43 @@ internal sealed class LocalOperatorSessions
 
     internal bool Revoke(string? authorizationHeader)
     {
+        if (Restore(authorizationHeader) is null) return false;
+        decisionCommitGate.Wait();
+        try { return RemoveSession(authorizationHeader); }
+        finally { decisionCommitGate.Release(); }
+    }
+
+    internal async Task<bool> RevokeAsync(string? authorizationHeader, CancellationToken cancellationToken)
+    {
+        if (Restore(authorizationHeader) is null) return false;
+        await decisionCommitGate.WaitAsync(cancellationToken);
+        try { return RemoveSession(authorizationHeader); }
+        finally { decisionCommitGate.Release(); }
+    }
+
+    private bool RemoveSession(string? authorizationHeader)
+    {
         lock (sync)
         {
             if (Restore(authorizationHeader) is null) return false;
             return sessions.Remove(Convert.ToHexStringLower(SHA256.HashData(
                 Encoding.UTF8.GetBytes(authorizationHeader!["Bearer ".Length..]))));
         }
+    }
+
+    // DB kilidi beklendikten sonra yeniden doğrula. Revoke ve commit sıralanır;
+    // süre, istek başlangıcında değil bu yetkilendirme noktasında değerlendirilir.
+    internal async Task<bool> CommitDecisionAsync(string? authorizationHeader, Guid expectedActor,
+        Func<Task> commit, CancellationToken cancellationToken)
+    {
+        await decisionCommitGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (Authenticate(authorizationHeader) != expectedActor) return false;
+            await commit();
+            return true;
+        }
+        finally { decisionCommitGate.Release(); }
     }
 
     internal int RemainingSeconds(DateTimeOffset expiresAtUtc) =>
@@ -553,12 +585,12 @@ internal static class LocalHealthRunnerEndpoints
                 expiresInSeconds = sessions!.RemainingSeconds(session.Value.ExpiresAtUtc)
             });
         });
-        app.MapPost("/local-runner/session/revoke", (HttpContext context) =>
+        app.MapPost("/local-runner/session/revoke", async (HttpContext context, CancellationToken cancellationToken) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (context.Request.ContentLength is > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
                 return Results.BadRequest();
-            return sessions?.Revoke(context.Request.Headers.Authorization) == true
+            return sessions is not null && await sessions.RevokeAsync(context.Request.Headers.Authorization, cancellationToken)
                 ? Results.Ok(new { revoked = true }) : Results.Unauthorized();
         });
 
