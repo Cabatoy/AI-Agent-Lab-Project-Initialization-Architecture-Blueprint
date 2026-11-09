@@ -115,3 +115,5 @@ jobs:
           echo "PASS: synthetic cgroup CPU/PID/memory stress only."
           echo "NOT CERTIFIED: hostile worktree races, network exfiltration, secrets, artifact export, crash/replay, independent reviewer."
           echo "Executor must remain fail-closed. No task execution was performed."
+
+# HIC evidence-only workflow dispatch registration: synthetic tests, no checkout or secrets.
