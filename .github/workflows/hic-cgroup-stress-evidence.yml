@@ -46,7 +46,8 @@ jobs:
               quota=$(cat /sys/fs/cgroup/cpu.max)
               test "$quota" = "50000 100000"
               before=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
-              timeout 6 sh -c "while :; do :; done" || test "$?" -eq 124
+              end=$(( $(date +%s) + 6 ))
+              while [ "$(date +%s)" -lt "$end" ]; do :; done
               after=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
               echo "CPU quota=$quota nr_throttled_before=$before nr_throttled_after=$after"
               test "$after" -gt "$before"
