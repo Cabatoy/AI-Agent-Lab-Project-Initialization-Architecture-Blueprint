@@ -6,7 +6,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|renew|execute|reconcile|complete-draft))?)`;
+const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|issues/(?:preview|import-preview|import-previews/${guidPath}/confirm)|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|renew|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
   `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|general-conversations(?:/${guidPath}(?:/messages|/plan(?:/(?:generate|revise|approve|reject))?)?)?|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve|git-reject|git-decisions)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -223,6 +223,10 @@ async function localRunnerRequest(
     `^/api/local-runner/github/publications/${guidPath}/(?:approve|reject|renew)$`, 'i').test(path);
   const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
     `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
+  const isIssueConfirm = req.method === 'POST' && new RegExp(
+    `^/api/local-runner/github/issues/import-previews/${guidPath}/confirm$`, 'i').test(path);
+  const isIssuePreview = req.method === 'POST' && path === '/api/local-runner/github/issues/preview';
+  const isIssueImportPreview = req.method === 'POST' && path === '/api/local-runner/github/issues/import-preview';
   const isRead = req.method === 'GET' &&
     (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|(?:general-)?conversations(?:\/[0-9a-f-]+)?|general-conversations\/[0-9a-f-]+\/plan|tasks\/[0-9a-f-]+\/(?:intent|git-decisions)|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
@@ -239,8 +243,8 @@ async function localRunnerRequest(
     /^\/api\/local-runner\/general-conversations\/[0-9a-f-]+\/plan\/(?:generate|revise|approve|reject)$/i.test(path);
   const isConversationWrite = isConversationCreate || isGeneralCreate || isConversationMessage || isConversationApprove;
   const isExecute = req.method === 'POST' &&
-    (isRevoke || isGitHubEmptyWrite || /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path));
-  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite && !isPlanWrite)
+    (isRevoke || isGitHubEmptyWrite || isIssueConfirm || /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path));
+  if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite && !isPlanWrite && !isIssuePreview && !isIssueImportPreview)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
   const suppliedAuthorization = header(req, 'authorization');
@@ -268,7 +272,7 @@ async function localRunnerRequest(
       return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
     const received = await readBody(req, timeouts.bodyTimeoutMs);
     if (!received.ok || received.body.length !== 0) return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
-    forward(req, res, target, 'POST', path.slice(4), isGitHubEmptyWrite
+    forward(req, res, target, 'POST', path.slice(4), isGitHubEmptyWrite || isIssueConfirm
       ? timeouts.githubTimeoutMs : timeouts.executionTimeoutMs, undefined, authorization);
     return;
   }
@@ -291,6 +295,21 @@ async function localRunnerRequest(
       return reject(res, 400, 'Invalid local session request.');
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
       JSON.stringify({ bootstrapToken: (parsed as Record<string, string>).bootstrapToken }));
+    return;
+  }
+
+  if (isIssuePreview || isIssueImportPreview) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+        received.body.length > (isIssuePreview ? 2048 : 16000))
+      return reject(res, 400, 'Invalid bounded issue request.');
+    const body = parsed as Record<string, unknown>;
+    if (Object.keys(body).length !== (isIssuePreview ? 1 : 4) ||
+        typeof body.reference !== 'string' || body.reference.length > 512 ||
+        (isIssueImportPreview && (typeof body.revisionSha256 !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(body.revisionSha256) || typeof body.title !== 'string' ||
+          typeof body.description !== 'string')))
+      return reject(res, 400, 'Invalid bounded issue request.');
+    forward(req, res, target, 'POST', path.slice(4), timeouts.githubTimeoutMs, JSON.stringify(body), authorization);
     return;
   }
 

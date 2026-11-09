@@ -81,6 +81,36 @@ describe('persistent operator cookie boundary', () => {
   beforeEach(() => { received.length = 0; revoked = false; loginMode = 'ok'; });
   afterAll(async () => { await vite.close(); await close(upstream); });
 
+  it('forwards only authenticated bounded issue review and separate confirmation', async () => {
+    const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
+    const base = `${origin}/api/local-runner/github/issues`;
+    const auth = { ...headers(), cookie };
+    const json = { ...auth, 'content-type': 'application/json' };
+    const reference = 'Example/Project/#42';
+    const digest = 'a'.repeat(64);
+    for (const [path, body] of [
+      ['/preview', { reference }],
+      ['/import-preview', { reference, revisionSha256: digest, title: 'Reviewed', description: 'Human scope' }],
+    ] as const) {
+      expect((await fetch(base + path, { method: 'POST', headers: json, body: JSON.stringify(body) })).status).toBe(200);
+      expect(received.at(-1)?.url).toBe('/local-runner/github/issues' + path);
+    }
+    const confirm = `${base}/import-previews/${created.id}/confirm`;
+    expect((await fetch(confirm, { method: 'POST', headers: auth })).status).toBe(200);
+    expect(received.at(-1)?.body).toBe('');
+    const count = received.length;
+    expect((await fetch(base + '/preview', { method: 'POST', headers: { ...json, cookie: '' },
+      body: JSON.stringify({ reference }) })).status).toBe(401);
+    expect((await fetch(base + '/preview', { method: 'POST', headers: { ...json, origin: 'http://attacker.invalid' },
+      body: JSON.stringify({ reference }) })).status).toBe(403);
+    expect((await fetch(base + '/import-preview', { method: 'POST', headers: json,
+      body: JSON.stringify({ reference, revisionSha256: digest, title: 'Reviewed', description: 'Scope', extra: true }) })).status).toBe(400);
+    expect((await fetch(confirm, { method: 'POST', headers: json, body: '{}' })).status).toBe(400);
+    expect((await fetch(base + '/import-previews/not-a-guid/confirm', { method: 'POST', headers: auth })).status).toBe(403);
+    expect((await fetch(base + '/preview', { method: 'GET', headers: auth })).status).toBe(403);
+    expect(received).toHaveLength(count);
+  });
+
   it('keeps the secret HttpOnly and restores the same backend identity without another bootstrap', async () => {
     const response = await login();
     expect(response.status).toBe(200);
