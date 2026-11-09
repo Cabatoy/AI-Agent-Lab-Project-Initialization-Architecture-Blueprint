@@ -31,7 +31,9 @@ listelendiğini gösterir; sonraki üretim isteğinin başarılı olacağını g
 etmez. Erişim hatası veya geçersiz yanıt `unavailable`, listede bulunmayan
 model `model-not-listed` olarak gösterilir. Durum oturum açılırken kontrol
 edilir; **Refresh model status** ile yeniden sorgulanabilir. Kontrol prompt
-veya sır göndermez.
+veya sır göndermez. **Models & Providers** ekranı aynı doğrulanmış operator
+oturumunu ve aynı Control Plane tanısını kullanır. Sağlayıcı yönetimi, model
+seçimi ve maliyet görünürlüğü henüz uygulanmamıştır.
 
 ### 1. GitHub App ve eksik local ayarlar
 

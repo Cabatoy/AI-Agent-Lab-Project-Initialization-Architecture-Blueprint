@@ -7,6 +7,7 @@ import { ModelConversationWorkspace } from './ModelConversationWorkspace';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { PlanningWorkflow } from './PlanningWorkflow';
+import { LocalModelStatus } from './LocalModelStatus';
 import { Status } from './components';
 
 type Page = 'Command Center' | 'Conversations' | 'Planning' | 'Local Runner' | 'Isolated Git' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
@@ -30,6 +31,7 @@ const subtitles: Partial<Record<Page, string>> = {
   Overview: 'Your local software factory, in view.',
   Tasks: 'Inspect task state from the Control Plane.',
   Plans: 'Review available execution plans.',
+  'Models & Providers': 'Inspect the configured local model without sending a prompt.',
 };
 const initial = <T,>(): Resource<T> => ({ data: null, error: null });
 const displayDate = (value: string) => new Date(value).toLocaleString();
@@ -92,7 +94,6 @@ function Detail({ id, onClose }: { id: string, onClose: () => void }) {
 function Planned({ page }: { page: Page }) {
   const content: Record<string, { heading: string; description: string; items: string[] }> = {
     Agents: { heading: 'Agent management is planned', description: 'Agent creation and management will be introduced in a later milestone.', items: ['No persisted agent definitions are available.', 'No agent execution can be started from this dashboard.'] },
-    'Models & Providers': { heading: 'Provider management is planned', description: 'Model selection and capability routing are not connected in this milestone.', items: ['Local Podman LLM providers', 'Optional paid / cloud providers', 'Provider capability routing', 'Token and budget visibility: not available'] },
     Approvals: { heading: 'Approvals are read-only', description: 'The full human approval workflow is not implemented here.', items: ['No approval or rejection actions are available.', 'No authorization or approval registry is implied.'] },
   };
   const info = content[page];
@@ -132,7 +133,7 @@ export default function App() {
       <nav aria-label="Main navigation">{pages.map(item => <button key={item.name} className={`nav-item ${page === item.name ? 'selected' : ''} ${item.name === 'Command Center' ? 'nav-command' : ''}`}
         aria-current={page === item.name ? 'page' : undefined} onClick={() => navigate(item.name)}>
         <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.name}
-        {['Agents', 'Models & Providers', 'Approvals'].includes(item.name) && <span className="nav-soon">SOON</span>}
+        {['Agents', 'Approvals'].includes(item.name) && <span className="nav-soon">SOON</span>}
       </button>)}</nav>
       <div className="sidebar-bottom"><span className="side-dot" /> LOCAL WORKSPACE <p>Read data · Draft tasks · fixed local health</p></div>
     </aside>
@@ -150,6 +151,7 @@ export default function App() {
       {page === 'Isolated Git' && <GitRunnerWorkflow />}
       {page === 'Conversations' && <ModelConversationWorkspace />}
       {page === 'Planning' && <PlanningWorkflow />}
+      {page === 'Models & Providers' && <LocalModelStatus openConversations={() => navigate('Conversations')} />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
       {page === 'Command Center' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Recent tasks</h2></div>
@@ -165,7 +167,7 @@ export default function App() {
             : !Object.keys(counts).length ? <div className="notice">No task statuses to display.</div>
               : <div className="status-list">{Object.entries(counts).map(([status, count]) => <div key={status}><Status value={status} /><strong>{count}</strong></div>)}</div>}</section>
           <section className="panel"><p className="eyebrow">SYSTEM BOUNDARY</p><h2>Operational state</h2>
-            <p className="muted">This dashboard creates Draft tasks and supports the fixed health check and explicitly authorized disposable-repository edit. General task dispatch, Worker execution and deployment remain disabled.</p>
+            <p className="muted">This dashboard creates Draft tasks and supports the fixed health check. Repository execution is disabled until a verified isolation backend is available; historical disposable-repository results are not production isolation. General task dispatch, Worker execution and deployment remain disabled.</p>
             <div className="boundary"><span>API health</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Responding' : 'Unexpected response') : 'Checking'}</strong></div>
             <div className="boundary"><span>Task creation</span><strong>Draft only</strong></div>
             <div className="boundary"><span>Recovery (R3 / R4)</span><strong>Pending</strong></div>
@@ -182,7 +184,7 @@ export default function App() {
           <div className="plan-top"><div><h3>{plan.requestTitle}</h3><span className="identifier">{plan.id}</span></div><Status value={plan.status} /></div>
           <p className="preserve">{plan.planSummary}</p><div className="plan-meta"><span>Project: {plan.projectKey ?? 'Not provided'}</span><span>Created: {displayDate(plan.createdAtUtc)}</span></div>
           {plan.requestDescription && <p className="muted preserve">{plan.requestDescription}</p>}</article>)}</div>}</State></section>}
-      {['Agents', 'Models & Providers', 'Approvals'].includes(page) && <Planned page={page} />}
+      {['Agents', 'Approvals'].includes(page) && <Planned page={page} />}
       <footer>HIC LOCAL DASHBOARD <span>·</span> CONTROL PLANE IS THE SOURCE OF TRUTH</footer>
       </div>
     </main>
