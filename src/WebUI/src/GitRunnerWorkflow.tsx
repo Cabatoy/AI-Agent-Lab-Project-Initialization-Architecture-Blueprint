@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, isExpiredOperatorSession, type Task } from './api';
-import { gitApi, type GitPreview, type GitRepository, type GitRun } from './gitApi';
+import { gitApi, type GitDecisionHistory, type GitPreview, type GitRejection, type GitRepository, type GitRun } from './gitApi';
 import { useOperatorSession } from './useOperatorSession';
 
 export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: string | null }) {
@@ -12,6 +12,8 @@ export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: st
   const [repoId, setRepoId] = useState('');
   const [content, setContent] = useState('Approved HIC test edit.\n');
   const [preview, setPreview] = useState<GitPreview | null>(null);
+  const [rejection, setRejection] = useState<GitRejection | null>(null);
+  const [history, setHistory] = useState<GitDecisionHistory | null>(null);
   const [run, setRun] = useState<GitRun | null>(null);
   const [runId, setRunId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,7 +40,7 @@ export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: st
     }
     finally { setBusy(false); }
   }
-  function invalidate() { setPreview(null); setRun(null); setRunId(''); }
+  function invalidate() { setPreview(null); setRejection(null); setHistory(null); setRun(null); setRunId(''); }
 
   return <section className="local-runner" aria-label="Isolated Git workflow">
     <section className="panel">
@@ -97,11 +99,41 @@ export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: st
         <p>Scope: message.txt only. Repository execution is unavailable until an OS-isolated backend is verified.
           Approval reserves this task but does not execute it. Interrupted runs require manual review, never automatic replay.</p>
         <pre className="preserve">{preview.plan.content}</pre>
-        <button className="primary" disabled={busy || !!run || Date.parse(preview.plan.expiresAtUtc) <= Date.now()}
+        <button className="primary" disabled={busy || !!run || !!rejection || Date.parse(preview.plan.expiresAtUtc) <= Date.now()}
           onClick={() => void perform(async () => {
             const approved = await gitApi.approve(taskId, preview, token);
             setRunId(approved.runId); setRun(await gitApi.run(approved.runId, token));
           })}>Approve exact Git plan</button>
+        <button className="secondary" disabled={busy || !!run || !!rejection || Date.parse(preview.plan.expiresAtUtc) <= Date.now()}
+          onClick={() => void perform(async () => {
+            const result = await gitApi.reject(taskId, preview, token);
+            if (result.taskId !== taskId || result.actorId !== preview.plan.actorId ||
+                result.intentDigestSha256 !== preview.intentDigestSha256)
+              throw new Error('Rejection response did not match the reviewed plan. Check durable decision history.');
+            setRejection(result);
+          })}>Reject exact Git plan</button>
+        {rejection && <p className="notice" role="status">Rejected · {rejection.decidedAtUtc} ·
+          Decision {rejection.decisionId}. This exact plan cannot be approved; a new preview requires a new decision.</p>}
+      </div>}
+      <button className="secondary" disabled={busy || !taskId} onClick={() => void perform(async () => {
+        const result = await gitApi.decisions(taskId, token);
+        if (result.decisions.some(item => item.taskId !== taskId))
+          throw new Error('Decision history did not match the selected task.');
+        setHistory(result);
+      })}>Load Git decision history</button>
+      {history && <div className="detail-block">
+        <h3>Git decision history</h3>
+        {!history.decisions.length && <p>No recorded Git plan decisions for this operator.</p>}
+        {history.decisions.map(item => <article key={item.decisionId}>
+          <p><strong>{item.decision}</strong> · {item.decidedAtUtc} · actor {item.actorId}</p>
+          <p className="mono">Decision: {item.decisionId}<br />SHA-256: {item.intentDigestSha256}<br />
+            Repository: {item.plan.repositoryId} · {item.plan.repositoryPath}<br />
+            Base: {item.plan.baseCommit}<br />File: {item.plan.file}<br />
+            Expires: {item.plan.expiresAtUtc}{item.runId && <><br />Run: {item.runId}</>}</p>
+          <pre className="preserve">{item.plan.content}</pre>
+        </article>)}
+        {history.hasMore && <p>Showing the {history.limit} most recent decisions; older decisions are not shown.</p>}
+        <p>Decisions recorded before this feature remain in their original run audit.</p>
       </div>}
       <label htmlFor="git-run-id">Durable run ID (also usable after restart)</label>
       <input id="git-run-id" className="mono" value={runId} disabled={busy} onChange={e => {
@@ -113,6 +145,9 @@ export function GitRunnerWorkflow({ initialTaskId = null }: { initialTaskId?: st
         <h3>Run status: {run.status}</h3>
         <p>Task authority: Draft (reserved for this local run). Execution outcome is separate, not a Worker task completion.
           One immutable decision per task; use a new Draft task for a different plan.</p>
+        <p><strong>Executor availability:</strong> This UI does not offer repository execution. The updated Control Plane
+          denies it until a verified isolation backend is available; verify the API revision before relying on this restriction.
+          The run status is a durable record, not evidence that an executor is available.</p>
         <p className="mono">Run: {run.runId}<br />Repository: {run.plan.repositoryPath}<br />
           Base: {run.plan.baseCommit}<br />Approved hash: {run.intentDigestSha256}</p>
         {run.status === 'queued' && <p className="notice">Repository execution is disabled until a verified isolation backend is available. This approval has not been executed.</p>}

@@ -350,6 +350,28 @@ describe('local development proxy', () => {
     expect(received).toHaveLength(before);
   });
 
+  it('forwards only authenticated same-origin bounded Git rejection requests', async () => {
+    const path = `/api/local-runner/tasks/${created.id}/git-reject`;
+    const headers = { origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner',
+      authorization: 'Bearer ' + 'S'.repeat(44) };
+    const body = JSON.stringify({ plan: { revision: 1 }, intentDigestSha256: 'a'.repeat(64) });
+    expect((await fetch(`${origin}${path}`, { method: 'POST', headers, body })).status).toBe(201);
+    expect(received).toHaveLength(1);
+    expect(received[0].url).toBe(`/local-runner/tasks/${created.id}/git-reject`);
+    expect(JSON.parse(received[0].body)).toEqual(JSON.parse(body));
+    expect(received[0].headers.authorization).toBe(headers.authorization);
+    expect((await fetch(`${origin}/api/local-runner/tasks/${created.id}/git-decisions`, {
+      headers: { origin, 'x-hic-request': 'local-runner', authorization: headers.authorization },
+    })).status).toBe(200);
+    expect(received[1].url).toBe(`/local-runner/tasks/${created.id}/git-decisions`);
+    expect((await fetch(`${origin}${path}`, { method: 'POST',
+      headers: { ...headers, origin: 'http://attacker.invalid' }, body })).status).toBe(403);
+    expect((await fetch(`${origin}${path}`, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner' }, body })).status).toBe(401);
+    expect((await fetch(`${origin}${path}`, { method: 'GET', headers })).status).toBe(403);
+    expect(received).toHaveLength(2);
+  });
+
   it('proxies bounded conversation, local-model and exact plan-approval endpoints only', async () => {
     const token = 'Bearer ' + 'S'.repeat(44);
     const headers = {

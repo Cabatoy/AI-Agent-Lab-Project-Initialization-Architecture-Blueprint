@@ -7,7 +7,7 @@ import { GitRunnerWorkflow } from './GitRunnerWorkflow';
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
   api: { restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
     createLocalRunnerSession: vi.fn(), tasks: vi.fn(), executeLocalHealthRun: vi.fn() } }));
-vi.mock('./gitApi', () => ({ gitApi: { repositories: vi.fn(), preview: vi.fn(), approve: vi.fn(), run: vi.fn() } }));
+vi.mock('./gitApi', () => ({ gitApi: { repositories: vi.fn(), preview: vi.fn(), approve: vi.fn(), reject: vi.fn(), decisions: vi.fn(), run: vi.fn() } }));
 const taskId = '11234567-89ab-cdef-0123-456789abcdef';
 const plan = { revision: 1, taskId, actorId: taskId, taskDigest: 'a'.repeat(64), repositoryId: 'fixture',
   repositoryPath: 'C:\\fixture', baseCommit: 'b'.repeat(40), file: 'message.txt' as const, content: 'approved\n',
@@ -26,6 +26,11 @@ beforeEach(() => {
   vi.mocked(gitApi.repositories).mockResolvedValue([{ id: 'fixture', path: plan.repositoryPath, baseCommit: plan.baseCommit, available: true }]);
   vi.mocked(gitApi.preview).mockResolvedValue(preview);
   vi.mocked(gitApi.approve).mockResolvedValue({ runId: taskId });
+  vi.mocked(gitApi.reject).mockResolvedValue({ decisionId: taskId, taskId, actorId: taskId,
+    action: 'repository.test-edit', scope: 'disposable-worktree:message.txt:write',
+    intentDigestSha256: preview.intentDigestSha256, decision: 'rejected',
+    decidedAtUtc: plan.expiresAtUtc, runId: null });
+  vi.mocked(gitApi.decisions).mockResolvedValue({ decisions: [], limit: 50, hasMore: false });
   vi.mocked(gitApi.run).mockResolvedValue(queued);
   vi.mocked(api.executeLocalHealthRun).mockResolvedValue({ status: 'completed' });
 });
@@ -100,10 +105,39 @@ it('invalidates preview on material edits without silently approving', async () 
   expect(screen.queryByText('Approve exact Git plan')).not.toBeInTheDocument();
   expect(gitApi.approve).not.toHaveBeenCalled();
 });
+it('records rejection only after a deliberate decision and never approves or executes', async () => {
+  await prepare();
+  expect(gitApi.reject).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('Reject exact Git plan'));
+  await screen.findByText(/This exact plan cannot be approved/);
+  expect(gitApi.reject).toHaveBeenCalledWith(taskId, preview, 's'.repeat(44));
+  expect(screen.getByText('Approve exact Git plan')).toBeDisabled();
+  expect(screen.getByText('Reject exact Git plan')).toBeDisabled();
+  expect(gitApi.approve).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+});
+it('loads the durable exact decision history without executing', async () => {
+  await prepare();
+  vi.mocked(gitApi.decisions).mockResolvedValue({ decisions: [{
+    decisionId: taskId, taskId, actorId: taskId, action: 'repository.test-edit',
+    scope: 'disposable-worktree:message.txt:write', intentDigestSha256: preview.intentDigestSha256,
+    decision: 'rejected', decidedAtUtc: plan.expiresAtUtc, runId: null, plan,
+  }], limit: 50, hasMore: true });
+  fireEvent.click(screen.getByText('Load Git decision history'));
+  await screen.findByText('Git decision history');
+  expect(screen.getByText(/Showing the 50 most recent decisions/)).toBeInTheDocument();
+  expect(screen.getByText('rejected')).toBeInTheDocument();
+  expect(gitApi.decisions).toHaveBeenCalledWith(taskId, 's'.repeat(44));
+  expect(gitApi.approve).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+});
 it('does not execute queued repository runs and offers durable status recovery', async () => {
   await prepare();
   fireEvent.click(screen.getByText('Approve exact Git plan'));
   await screen.findByText('Run status: queued');
+  expect(screen.getByText('Executor availability:')).toBeInTheDocument();
+  expect(screen.getByText(/run status is a durable record, not evidence/)).toBeInTheDocument();
+  expect(screen.getByText(/This approval has not been executed/)).toBeInTheDocument();
   expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
   expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   vi.mocked(gitApi.run).mockResolvedValue({ ...queued, status: 'running' });
