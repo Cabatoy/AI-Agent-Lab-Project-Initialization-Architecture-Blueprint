@@ -1,0 +1,117 @@
+name: HIC Disposable Cgroup Stress Evidence (Synthetic Only)
+
+on:
+  push:
+    branches:
+      - experiment/hic-cgroup-stress-evidence
+    paths:
+      - .github/workflows/hic-cgroup-stress-evidence.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  synthetic-stress:
+    name: Bounded CPU, PID and OOM enforcement probes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Install Podman only if missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v podman >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq podman uidmap slirp4netns fuse-overlayfs
+          fi
+          podman info --format 'rootless={{.Host.Security.Rootless}} cgroupManager={{.Host.CgroupManager}} cgroupVersion={{.Host.CgroupsVersion}}'
+
+      - name: Pull fixed synthetic image, no source checkout or secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          podman pull docker.io/library/alpine:3.20
+          podman image inspect docker.io/library/alpine:3.20 --format 'image={{.Id}}'
+
+      - name: CPU quota must actually throttle busy workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 35s podman run --rm --pull=never \
+            --user 10001:10001 --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --cpus 0.5 \
+            --memory 134217728 --pids-limit 32 \
+            docker.io/library/alpine:3.20 sh -ec '
+              test "$(id -u)" = 10001
+              quota=$(cat /sys/fs/cgroup/cpu.max)
+              test "$quota" = "50000 100000"
+              before=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
+              timeout 6 sh -c "while :; do :; done" || test "$?" -eq 124
+              after=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
+              echo "CPU quota=$quota nr_throttled_before=$before nr_throttled_after=$after"
+              test "$after" -gt "$before"
+              echo "PASS: observed CPU quota throttling"
+            '
+
+      - name: PID ceiling must reject excess child processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 35s podman run --rm --pull=never \
+            --user 10001:10001 --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 16 \
+            --memory 134217728 --cpus 0.5 \
+            docker.io/library/alpine:3.20 sh -c '
+              test "$(cat /sys/fs/cgroup/pids.max)" = 16 || exit 2
+              i=0
+              child_pids=""
+              while [ "$i" -lt 45 ]; do
+                sleep 7 &
+                pid=$!
+                child_pids="$child_pids $pid"
+                i=$((i+1))
+              done
+              for pid in $child_pids; do kill "$pid" 2>/dev/null || true; done
+              wait 2>/dev/null || true
+              events=$(awk "/^max / {print \$2}" /sys/fs/cgroup/pids.events)
+              echo "PID max=16 pids.events:max=$events"
+              test "$events" -gt 0
+              echo "PASS: observed PID limit rejection"
+            '
+
+      - name: Memory overuse must cause container OOM, not runner OOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="hic-oom-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          trap 'podman rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          set +e
+          timeout 45s podman run --name "$name" --pull=never \
+            --user 10001:10001 --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 67108864 --memory-swap 67108864 \
+            --pids-limit 16 --cpus 0.5 \
+            docker.io/library/alpine:3.20 sh -ec '
+              test "$(cat /sys/fs/cgroup/memory.max)" = 67108864
+              awk '\''BEGIN {
+                chunk = "x"
+                for (i = 0; i < 20; i++) chunk = chunk chunk
+                for (i = 0; i < 256; i++) a[i] = chunk i
+                print "ERROR: allocation unexpectedly succeeded"
+                exit 99
+              }'\''
+            '
+          rc=$?
+          set -e
+          oom=$(podman inspect "$name" --format '{{.State.OOMKilled}}')
+          echo "Memory probe container_exit=$rc oom_killed=$oom"
+          test "$rc" -eq 137
+          test "$oom" = true
+          echo "PASS: container-local OOM kill observed"
+
+      - name: Explicit evidence boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PASS: synthetic cgroup CPU/PID/memory stress only."
+          echo "NOT CERTIFIED: hostile worktree races, network exfiltration, secrets, artifact export, crash/replay, independent reviewer."
+          echo "Executor must remain fail-closed. No task execution was performed."
