@@ -143,6 +143,25 @@ public sealed class QuarantinedArtifactsTests
         Code("UNSAFE_FILESYSTEM_BACKEND", QuarantinedArtifacts.ImportFromUntrustedFilesystem);
 
     [Fact]
+    public void DiffPreviewIsBoundedAndChecksBothContentDigests()
+    {
+        var candidate = Import(Input(), File());
+        var diff = CandidateDiff.Preview(candidate, "message.txt", Source, CanonicalJson.Hash(Source));
+        Assert.Equal("original", diff.RemovedText);
+        Assert.Equal("candidate", diff.AddedText);
+        Assert.Equal(candidate.Files[0].Sha256, diff.CandidateSha256);
+        Code("CONTENT_MISMATCH", () => CandidateDiff.Preview(candidate, "message.txt", Source, new string('f', 64)));
+        Code("PATH_NOT_ALLOWED", () => CandidateDiff.Preview(candidate, "other.txt", Source, CanonicalJson.Hash(Source)));
+        var binary = new byte[] { 0xff };
+        Code("DIFF_ENCODING", () => CandidateDiff.Preview(candidate, "message.txt", binary, CanonicalJson.Hash(binary)));
+        var large = new byte[CandidateDiff.MaxInputBytes + 1];
+        Code("DIFF_SIZE", () => CandidateDiff.Preview(candidate, "message.txt", large, CanonicalJson.Hash(large)));
+        var changed = new byte[CandidateDiff.MaxChangedBytes + 1];
+        Array.Fill(changed, (byte)'x');
+        Code("DIFF_SIZE", () => CandidateDiff.Preview(candidate, "message.txt", changed, CanonicalJson.Hash(changed)));
+    }
+
+    [Fact]
     public void DisposableTrustedFixtureDetectsAlterationBeforeReimport()
     {
         var candidate = Import(Input(), File());

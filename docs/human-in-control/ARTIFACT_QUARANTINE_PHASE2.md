@@ -35,15 +35,20 @@ Test yalnız testin oluşturduğu geçici dizinde hash adlı dosyaya yazar,
 değiştirilmiş byte'ı yeniden import eder ve reddi gözlemler. Bu bir
 production storage backend'i, dosyanın fiziksel değişmezliği veya filesystem
 yarışlarına karşı kanıt değildir. Uygulama tarafından güvenli content-addressed
-disk staging ve gerçek bounded diff henüz uygulanmadı. Timeout, cancellation,
-log limitleri, source tree doğrulaması ve kalıcı handoff da kapsam dışıdır.
+disk staging henüz uygulanmadı. `CandidateDiff.Preview` yalnız caller'ın
+bağımsız doğruladığı kaynak hash'iyle eşleşen byte'ları karşılaştırır; UTF-8
+ve 64 KiB girdi, toplam 8 KiB değişiklik sınırı uygular. Tek bir bounded
+değişiklik aralığı sunar; kapsamlı patch, sanitizasyon veya onay değildir.
+İçeriği hassas veri içerebileceğinden loglanmamalıdır. Timeout, cancellation,
+log limitleri, source tree doğrulaması ve kalıcı handoff kapsam dışıdır.
 
 | Güvenlik kapısı | Durum | Kanıt / sınır |
 |---|---|---|
 | Boyut, digest, path, mod, duplicate, scope | PASS | Sentetik unit testleri; içerik kopyası ve bağımsız SHA kontrolü |
 | Başka run/karar/digest ile acceptance replay | PASS (saf çekirdek) | Eşleşme testleri; durable replay kontrolü değildir |
 | Hostile dizinden okuma | PASS (fail-closed) | `UNSAFE_FILESYSTEM_BACKEND`; dosya açılmaz |
-| Kalıcı content-addressed staging ve diff | NOT TESTED | Production backend uygulanmadı; yalnız test fixture yazımı |
+| Bounded diff önizlemesi | PASS | Bellekte UTF-8, digest ve boyut sınırları; patch veya onay değildir |
+| Kalıcı content-addressed staging | NOT TESTED | Production backend uygulanmadı; yalnız test fixture yazımı |
 | Symlink/reparse, mount, cross-device ve rename yarışları | NOT TESTED | Gerçek OS yarışları çalıştırılmadı; pre-check güvenlik kanıtı değildir |
 | Ağ, sırlar, mount ve kaynak izolasyonu | NOT TESTED | Disposable izole runner üzerinde henüz doğrulanmadı |
 | Gerçek karar, audit, publisher ve retry | NOT TESTED | Entegrasyon yok; hiçbir yayın denenmedi |
