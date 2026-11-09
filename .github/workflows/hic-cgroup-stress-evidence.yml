@@ -89,29 +89,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          name="hic-oom-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          trap 'podman rm -f "$name" >/dev/null 2>&1 || true' EXIT
-          set +e
-          timeout 45s podman run --name "$name" --pull=never \
+          # Force an anonymous-memory OOM in a subprocess so the container's
+          # supervising shell can read authoritative kernel memory.events.
+          timeout 45s podman run --rm --pull=never \
             --user 10001:10001 --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 67108864 --memory-swap 67108864 \
-            --tmpfs /alloc:rw,size=134217728,mode=1777 \
             --pids-limit 16 --cpus 0.5 \
             docker.io/library/alpine:3.20 sh -ec '
               test "$(cat /sys/fs/cgroup/memory.max)" = 67108864
               echo "MEMORY_LIMIT_CONFIRMED=67108864"
-              # The private, bounded tmpfs charges resident pages to this container cgroup.
-              dd if=/dev/zero of=/alloc/stress bs=1048576 count=96 status=none
-              echo "ERROR: 96 MiB tmpfs write unexpectedly succeeded"
-              exit 99
+              before=$(awk "/^oom_kill / {print \$2}" /sys/fs/cgroup/memory.events)
+              awk "BEGIN {
+                chunk = \"x\"
+                for (i = 0; i < 20; i++) chunk = chunk chunk
+                for (i = 0; i < 256; i++) a[i] = chunk i
+                print \"ERROR: memory stress allocation unexpectedly succeeded\"
+                exit 99
+              }" &
+              child=$!
+              set +e
+              wait "$child"
+              child_rc=$?
+              set -e
+              after=$(awk "/^oom_kill / {print \$2}" /sys/fs/cgroup/memory.events)
+              echo "Memory probe child_exit=$child_rc kernel_oom_kill_before=$before kernel_oom_kill_after=$after"
+              test "$child_rc" -eq 137
+              test "$after" -gt "$before"
+              echo "PASS: kernel cgroup OOM kill observed with surviving supervisor"
             '
-          rc=$?
-          set -e
-          oom=$(podman inspect "$name" --format '{{.State.OOMKilled}}')
-          echo "Memory probe container_exit=$rc oom_killed=$oom"
-          test "$rc" -eq 137
-          test "$oom" = true
-          echo "PASS: container-local OOM kill observed"
 
       - name: Explicit evidence boundary
         shell: bash
