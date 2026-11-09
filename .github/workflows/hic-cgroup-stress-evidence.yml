@@ -58,27 +58,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout 35s podman run --rm --pull=never \
+          set +e
+          result=$(timeout 35s podman run --rm --pull=never \
             --user 10001:10001 --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 16 \
             --memory 134217728 --cpus 0.5 \
             docker.io/library/alpine:3.20 sh -c '
-              test "$(cat /sys/fs/cgroup/pids.max)" = 16 || exit 2
+              test "$(cat /sys/fs/cgroup/pids.max)" = 16 || exit 88
+              echo "PID_LIMIT_CONFIRMED=16"
               i=0
-              child_pids=""
               while [ "$i" -lt 45 ]; do
                 sleep 7 &
-                pid=$!
-                child_pids="$child_pids $pid"
                 i=$((i+1))
               done
-              for pid in $child_pids; do kill "$pid" 2>/dev/null || true; done
-              wait 2>/dev/null || true
-              events=$(awk "/^max / {print \$2}" /sys/fs/cgroup/pids.events)
-              echo "PID max=16 pids.events:max=$events"
-              test "$events" -gt 0
-              echo "PASS: observed PID limit rejection"
-            '
+              echo "ERROR: PID exhaustion unexpectedly allowed"
+              exit 89
+            ' 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$result"
+          echo "PID probe container_exit=$rc"
+          # BusyBox ash itself may terminate on failed fork, before it can read pids.events.
+          # Require both the observed cgroup limit and the kernel fork-denial diagnostic.
+          test "$rc" -eq 2
+          grep -Fqx 'PID_LIMIT_CONFIRMED=16' <<< "$result" || grep -Fq 'PID_LIMIT_CONFIRMED=16' <<< "$result"
+          grep -Fq "can't fork: Resource temporarily unavailable" <<< "$result"
+          echo "PASS: cgroup PID ceiling caused an observable fork denial"
 
       - name: Memory overuse must cause container OOM, not runner OOM
         shell: bash
@@ -90,16 +95,15 @@ jobs:
           timeout 45s podman run --name "$name" --pull=never \
             --user 10001:10001 --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 67108864 --memory-swap 67108864 \
+            --tmpfs /alloc:rw,size=134217728,mode=1777 \
             --pids-limit 16 --cpus 0.5 \
             docker.io/library/alpine:3.20 sh -ec '
               test "$(cat /sys/fs/cgroup/memory.max)" = 67108864
-              awk '\''BEGIN {
-                chunk = "x"
-                for (i = 0; i < 20; i++) chunk = chunk chunk
-                for (i = 0; i < 256; i++) a[i] = chunk i
-                print "ERROR: allocation unexpectedly succeeded"
-                exit 99
-              }'\''
+              echo "MEMORY_LIMIT_CONFIRMED=67108864"
+              # The private, bounded tmpfs charges resident pages to this container cgroup.
+              dd if=/dev/zero of=/alloc/stress bs=1048576 count=96 status=none
+              echo "ERROR: 96 MiB tmpfs write unexpectedly succeeded"
+              exit 99
             '
           rc=$?
           set -e
