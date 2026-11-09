@@ -215,6 +215,12 @@ $virgin.machine='running'
 $virgin.discovery='unverified'
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Unverified discovery must fail closed.' }
 $virgin.discovery='verified'
+$virgin.containers=@('unrelated-postgres')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'An unrelated container found during the locked recheck must block bootstrap.' }
+$virgin.containers=@()
+$virgin.volumes=@('unrelated-persistent-data')
+if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'An unrelated persistent volume found during the locked recheck must block bootstrap.' }
+$virgin.volumes=@()
 $virgin.containers=@('agentlab-postgres')
 if ((Get-HicManagedDecision $virgin).action -ne 'skip') { throw 'Legacy R2 container must prevent fresh installation.' }
 $virgin.containers=@()

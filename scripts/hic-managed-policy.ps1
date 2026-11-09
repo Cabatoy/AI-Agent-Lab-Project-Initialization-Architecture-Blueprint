@@ -27,6 +27,9 @@ function Get-HicManagedDecision {
         }
         return [pscustomobject]@{ action = 'resume'; reason = 'Managed resources present; validate immutable container IDs and volumes before start.' }
     }
+    if ($names.Count -gt 0 -or $volumes.Count -gt 0) {
+        return [pscustomobject]@{ action = 'skip'; reason = 'Unrecognized containers or volumes appeared; refusing a fresh managed bootstrap.' }
+    }
     if ($Snapshot.controlPlanePortState -ne 'free') {
         return [pscustomobject]@{ action = 'skip'; reason = 'Configured Control Plane port is occupied or unknown; will not replace listener.' }
     }
