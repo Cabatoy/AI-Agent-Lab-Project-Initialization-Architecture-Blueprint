@@ -45,9 +45,9 @@ jobs:
               test "$(id -u)" = 10001
               quota=$(cat /sys/fs/cgroup/cpu.max)
               test "$quota" = "50000 100000"
-              before=$(awk "/^nr_throttled / {print \\$2}" /sys/fs/cgroup/cpu.stat)
+              before=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
               timeout 6 sh -c "while :; do :; done" || test "$?" -eq 124
-              after=$(awk "/^nr_throttled / {print \\$2}" /sys/fs/cgroup/cpu.stat)
+              after=$(awk "/^nr_throttled / {print \$2}" /sys/fs/cgroup/cpu.stat)
               echo "CPU quota=$quota nr_throttled_before=$before nr_throttled_after=$after"
               test "$after" -gt "$before"
               echo "PASS: observed CPU quota throttling"
@@ -73,7 +73,7 @@ jobs:
               done
               for pid in $child_pids; do kill "$pid" 2>/dev/null || true; done
               wait 2>/dev/null || true
-              events=$(awk "/^max / {print \\$2}" /sys/fs/cgroup/pids.events)
+              events=$(awk "/^max / {print \$2}" /sys/fs/cgroup/pids.events)
               echo "PID max=16 pids.events:max=$events"
               test "$events" -gt 0
               echo "PASS: observed PID limit rejection"
