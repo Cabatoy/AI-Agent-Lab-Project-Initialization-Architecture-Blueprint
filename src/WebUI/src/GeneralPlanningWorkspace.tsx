@@ -36,7 +36,7 @@ export function GeneralPlanningWorkspace({ openConversations, onTasksCreated, on
     {!token && !session.restoring && <p className="notice">Authenticate and create a general conversation first.{' '}
       <button className="text-button" onClick={openConversations}>Open Conversations</button></p>}
     {token && <>
-      <GitHubIssuePreview key={token} token={token} />
+      <GitHubIssuePreview key={token} token={token} onTasksCreated={onTasksCreated} onViewTask={onViewTask} />
       {!saved.length && <p className="notice">No saved general conversations.{' '}
         <button className="text-button" onClick={openConversations}>Open Conversations</button></p>}
       {!!saved.length && <div className="command-form">

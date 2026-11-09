@@ -70,7 +70,7 @@ ProjectConversationEndpoints.Map(app, postgresConnectionString, localOperatorSes
 GeneralConversationEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 GeneralPlanEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 GitHubPublisherEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
-GitHubIssuePreview.Map(app, localOperatorSessions);
+GitHubIssuePreview.Map(app, localOperatorSessions, postgresConnectionString);
 
 app.MapGet("/tasks", async () =>
 {

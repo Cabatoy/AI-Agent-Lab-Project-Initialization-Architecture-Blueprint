@@ -24,7 +24,7 @@ public sealed class GitHubIssuePreviewTests
         await using var app = builder.Build();
         var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var sessions = LocalOperatorSessions.Create(bootstrap, Guid.NewGuid().ToString())!;
-        GitHubIssuePreview.Map(app, sessions, () => destination, _ => Task.FromResult(
+        GitHubIssuePreview.Map(app, sessions, destination: () => destination, open: _ => Task.FromResult(
             new GitHubApi("synthetic", destination, new FakeHandler(request =>
             {
                 Assert.Equal(HttpMethod.Get, request.Method);
@@ -73,7 +73,7 @@ public sealed class GitHubIssuePreviewTests
         var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var sessions = LocalOperatorSessions.Create(bootstrap, Guid.NewGuid().ToString())!;
         var session = sessions.IssueSessionToken(bootstrap);
-        GitHubIssuePreview.Map(app, sessions, () => destination, _ => Task.FromResult(
+        GitHubIssuePreview.Map(app, sessions, destination: () => destination, open: _ => Task.FromResult(
             new GitHubApi("synthetic", destination, new FakeHandler(request =>
             {
                 var issue = request.RequestUri!.AbsolutePath.EndsWith("/issues/42", StringComparison.Ordinal);
