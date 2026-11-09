@@ -36,6 +36,8 @@ yeni revision ayrı inceleme ve onay gerektirir. Revoked/expired operator
 oturumu commit noktasında tekrar doğrulanır. Import hiçbir run veya GitHub
 yayını oluşturmaz ve metni modele otomatik göndermez. GitHub'daki son okuma
 ile yerel transaction commit'i atomik değildir; issue bu aralıkta değişebilir.
+UI proxy yalnız bu üç issue endpoint'ini, aynı origin ve operator oturumu
+kontrolleriyle iletir; confirm boş gövde dışında girdi kabul etmez.
 
 Manuel `011-github-issue-import.sql` migration'ı yalnız yedek ve ayrı açık
 onayla uygulanabilir; startup sırasında çalıştırılmaz. Migration yoksa import
