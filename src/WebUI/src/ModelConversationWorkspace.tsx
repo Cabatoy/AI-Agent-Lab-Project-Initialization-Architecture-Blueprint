@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GitHubPublisherPanel } from './GitHubPublisherPanel';
+import { GeneralConversationWorkspace } from './GeneralConversationWorkspace';
 import { useOperatorSession } from './useOperatorSession';
 import {
   api,
@@ -122,6 +123,7 @@ export function ModelConversationWorkspace() {
       {token && <GitHubPublisherPanel token={token} />}
     </section>
 
+    {token && <GeneralConversationWorkspace token={token} />}
     {token && <div className="overview-grid">
       <section className="panel command-form">
         <div className="panel-heading"><div><p className="eyebrow">NEW CONVERSATION / IMPORT AUTHORIZED CHECKOUT</p>

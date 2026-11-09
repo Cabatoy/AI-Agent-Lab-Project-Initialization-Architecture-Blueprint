@@ -396,6 +396,27 @@ describe('local development proxy', () => {
     expect(received).toHaveLength(5);
   });
 
+  it('proxies only authenticated bounded general-conversation requests', async () => {
+    const id = '11234567-89ab-cdef-0123-456789abcdef';
+    const headers = { origin, 'content-type': 'application/json', 'x-hic-request': 'local-runner',
+      authorization: 'Bearer ' + 'S'.repeat(44) };
+    expect((await fetch(`${origin}/api/local-runner/general-conversations`, {
+      method: 'POST', headers, body: JSON.stringify({ title: 'Ideas' }),
+    })).status).toBe(201);
+    expect((await fetch(`${origin}/api/local-runner/general-conversations/${id}/messages`, {
+      method: 'POST', headers, body: JSON.stringify({ clientMessageId: id, content: 'Hello' }),
+    })).status).toBe(201);
+    expect((await fetch(`${origin}/api/local-runner/general-conversations`, {
+      method: 'POST', headers, body: JSON.stringify({ title: 'Ideas', command: 'not allowed' }),
+    })).status).toBe(400);
+    expect((await fetch(`${origin}/api/local-runner/general-conversations/${id}/execute`, {
+      method: 'POST', headers, body: '{}',
+    })).status).toBe(403);
+    expect(received.map(item => item.url)).toEqual([
+      '/local-runner/general-conversations', `/local-runner/general-conversations/${id}/messages`,
+    ]);
+  });
+
   it('forwards one validated POST with a re-serialized body and no client credentials', async () => {
     const response = await post(JSON.stringify({ description: 'Exact\n  request text  ', title: 'Title' }),
       { cookie: 'session=private', 'x-forwarded-for': '10.0.0.1', 'content-type': 'application/json; charset=utf-8' });

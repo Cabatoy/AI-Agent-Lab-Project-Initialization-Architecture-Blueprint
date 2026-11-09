@@ -117,6 +117,15 @@ export interface ModelConversationMessage {
   proposal: ModelCodeEditProposal | null;
   createdAtUtc: string;
 }
+export interface GeneralConversationSummary {
+  conversationId: string;
+  title: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+}
+export interface GeneralConversation extends GeneralConversationSummary {
+  messages: ModelConversationMessage[];
+}
 export interface ModelCodeEditResult {
   action: 'repository.model-code-edit';
   runId: string;
@@ -262,6 +271,11 @@ const modelConversationMessage: Guard<ModelConversationMessage> = (v): v is Mode
   object(v) && guid(v.messageId) && (v.role === 'user' || v.role === 'assistant') &&
   str(v.content) && v.content.length <= 12000 && nullable(v.provider) && nullable(v.modelName) &&
   str(v.status) && (v.proposal === null || modelCodeEditProposal(v.proposal)) && date(v.createdAtUtc);
+const generalSummary: Guard<GeneralConversationSummary> = (v): v is GeneralConversationSummary =>
+  object(v) && guid(v.conversationId) && str(v.title) && date(v.createdAtUtc) && date(v.updatedAtUtc);
+const generalConversation: Guard<GeneralConversation> = (v): v is GeneralConversation =>
+  generalSummary(v) && object(v) && list(modelConversationMessage)(v.messages) &&
+  v.messages.every(message => message.proposal === null);
 const modelCodeEditResult: Guard<ModelCodeEditResult> = (v): v is ModelCodeEditResult =>
   object(v) && v.action === 'repository.model-code-edit' && guid(v.runId) &&
   (v.conversationId === null || guid(v.conversationId)) && nullable(v.repositoryId) &&
@@ -529,6 +543,20 @@ export const api = {
     localRunnerRequest('/repositories', list(modelRepository), token, 'GET'),
   modelConversations: (token: string) =>
     localRunnerRequest('/conversations', list(modelConversationSummary), token, 'GET'),
+  generalConversations: (token: string) =>
+    localRunnerRequest('/general-conversations', list(generalSummary), token, 'GET'),
+  generalConversation: (id: string, token: string) => {
+    if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
+    return localRunnerRequest(`/general-conversations/${id}`, generalConversation, token, 'GET');
+  },
+  createGeneralConversation: (title: string, token: string) =>
+    localRunnerRequest('/general-conversations', generalConversation, token, 'POST', { title }, 201),
+  sendGeneralMessage: (id: string, clientMessageId: string, content: string, token: string) => {
+    if (!guid(id) || !guid(clientMessageId) || !content.trim() || content.length > 4000)
+      return Promise.reject(new ApiError('invalid', 'Invalid bounded conversation message.'));
+    return localRunnerRequest(`/general-conversations/${id}/messages`, generalConversation, token,
+      'POST', { clientMessageId, content }, 200, 125000);
+  },
   modelConversation: (conversationId: string, token: string) => {
     if (!guid(conversationId)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
     return localRunnerRequest(`/conversations/${conversationId}`, modelConversation, token, 'GET');

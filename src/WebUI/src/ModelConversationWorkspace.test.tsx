@@ -10,6 +10,7 @@ vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof impor
   restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
   createLocalRunnerSession: vi.fn(), localCodeModel: vi.fn(), modelRepositories: vi.fn(),
   modelConversations: vi.fn(), modelConversation: vi.fn(), createModelConversation: vi.fn(),
+  generalConversations: vi.fn(),
   sendModelMessage: vi.fn(), approveModelCodeEdit: vi.fn(), executeLocalHealthRun: vi.fn(),
 } }));
 
@@ -55,6 +56,7 @@ beforeEach(() => {
     files: ['src/Value.cs'], available: true,
   }]);
   vi.mocked(api.modelConversations).mockResolvedValue([]);
+  vi.mocked(api.generalConversations).mockResolvedValue([]);
   vi.mocked(api.modelConversation).mockResolvedValue(emptyConversation);
   vi.mocked(api.createModelConversation).mockResolvedValue(emptyConversation);
   vi.mocked(api.sendModelMessage).mockResolvedValue(generated);

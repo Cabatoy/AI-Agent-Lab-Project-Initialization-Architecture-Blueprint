@@ -35,6 +35,20 @@ veya sır göndermez. **Models & Providers** ekranı aynı doğrulanmış operat
 oturumunu ve aynı Control Plane tanısını kullanır. Sağlayıcı yönetimi, model
 seçimi ve maliyet görünürlüğü henüz uygulanmamıştır.
 
+### Genel konuşmalar
+
+Genel konuşmalar repository, dosya veya task oluşturulmasını gerektirmez.
+Mesajlar operator kimliğiyle sınırlandırılır; model yalnızca son konuşma
+bağlamını alır ve araç, dosya, yürütme veya yayın yetkisi verilmez. Kesilmiş
+bir model yanıtında kaydedilmiş kullanıcı mesajı korunur; geçmiş gözden
+geçirilmeden aynı istek yeniden çalıştırılmaz.
+
+Bu işlev `007-general-conversations.sql` şemasını gerektirir. Migration
+otomatik çalıştırılmaz; yalnızca hedef veritabanı ve yedekleme açıkça
+onaylandıktan sonra uygulanabilir. Mevcut preview snapshot veritabanına bu
+değişiklik uygulanmamıştır. Yapılandırılmış planı onayla Draft task oluşturma
+henüz bu genel konuşma özelliğinde uygulanmamıştır.
+
 ### 1. GitHub App ve eksik local ayarlar
 
 App yalnız **Selected repositories → Cabatoy/hic-agent-sandbox** üzerinde kurulu
