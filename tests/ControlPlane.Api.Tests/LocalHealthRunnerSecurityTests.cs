@@ -95,7 +95,7 @@ public sealed class LocalHealthRunnerSecurityTests
     [PostgresFact]
     public async Task SessionEndpoints_RestoreAndRevokeWithoutChangingExistingApprovals()
     {
-        await WithHealthDatabase(async (store, db, id) =>
+        await WithHealthDatabase(async (cs, store, db, id) =>
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
@@ -105,7 +105,7 @@ public sealed class LocalHealthRunnerSecurityTests
             var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var clock = new SessionClock();
             var sessions = LocalOperatorSessions.Create(bootstrap, actor.ToString(), clock)!;
-            LocalHealthRunnerEndpoints.Map(app, db.ConnectionString, null!, sessions);
+            LocalHealthRunnerEndpoints.Map(app, cs, null!, sessions);
             await app.StartAsync();
             try
             {
@@ -157,7 +157,7 @@ public sealed class LocalHealthRunnerSecurityTests
     [PostgresFact]
     public async Task DurableApproval_ActorIsolationSingleClaimAndReplayRejection()
     {
-        await WithHealthDatabase(async (store, db, id) =>
+        await WithHealthDatabase(async (_, store, db, id) =>
         {
             var actor = Guid.NewGuid();
             var intent = await store.GetIntentAsync(id, CancellationToken.None);
@@ -188,7 +188,7 @@ public sealed class LocalHealthRunnerSecurityTests
     [PostgresFact]
     public async Task ChangedTaskInvalidatesApproval_AndAuditFailureRollsBackClaim()
     {
-        await WithHealthDatabase(async (store, db, id) =>
+        await WithHealthDatabase(async (_, store, db, id) =>
         {
             var actor = Guid.NewGuid();
             var intent = await store.GetIntentAsync(id, CancellationToken.None);
@@ -204,7 +204,7 @@ public sealed class LocalHealthRunnerSecurityTests
         });
     }
 
-    private static Task WithHealthDatabase(Func<LocalHealthRunStore, NpgsqlConnection, Guid, Task> test) =>
+    private static Task WithHealthDatabase(Func<string, LocalHealthRunStore, NpgsqlConnection, Guid, Task> test) =>
         TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
             var root = new DirectoryInfo(AppContext.BaseDirectory);
@@ -217,7 +217,7 @@ public sealed class LocalHealthRunnerSecurityTests
                     "Migrations", "004-local-health-runner.sql")), transaction: setup);
                 await setup.CommitAsync();
             }
-            try { await test(new LocalHealthRunStore(cs), db, id); }
+            try { await test(cs, new LocalHealthRunStore(cs), db, id); }
             finally
             {
                 // The outer fixture guards the dedicated database and unique schema identity.

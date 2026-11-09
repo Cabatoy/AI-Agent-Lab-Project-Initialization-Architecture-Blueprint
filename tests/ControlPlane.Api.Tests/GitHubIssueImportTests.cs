@@ -15,6 +15,50 @@ using Microsoft.Extensions.Logging;
 public sealed class GitHubIssueImportTests
 {
     [PostgresFact]
+    public async Task MissingImportMigration_FailsClosedWithoutFetchingOrWriting()
+    {
+        await GitEditRunnerTests.Database(async (cs, db, _) =>
+        {
+            var destination = new GitHubDestination(123, "Example", "Project", "main");
+            var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var sessions = LocalOperatorSessions.Create(bootstrap, Guid.NewGuid().ToString())!;
+            var reads = 0;
+            var builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            await using var app = builder.Build();
+            GitHubIssuePreview.Map(app, sessions, cs, () => destination, _ =>
+            {
+                reads++;
+                return Task.FromResult(new GitHubApi("synthetic", destination,
+                    new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
+            });
+            await app.StartAsync();
+            try
+            {
+                var address = app.Services.GetRequiredService<IServer>().Features
+                    .Get<IServerAddressesFeature>()!.Addresses.Single();
+                using var client = new HttpClient { BaseAddress = new Uri(address) };
+                client.DefaultRequestHeaders.Authorization = new("Bearer", sessions.IssueSessionToken(bootstrap));
+                using var request = new StringContent(
+                    """{"reference":"Example/Project/#42","revisionSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","title":"Draft","description":"Reviewed scope"}""",
+                    Encoding.UTF8, "application/json");
+                var response = await client.PostAsync("/local-runner/github/issues/import-preview", request);
+
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+                Assert.Equal(0, reads);
+                Assert.False(await db.ExecuteScalarAsync<bool>(
+                    "select exists(select 1 from app_schema_versions where version=11)"));
+                Assert.Null(await db.ExecuteScalarAsync<string>(
+                    "select to_regclass('hic_issue_imports')::text"));
+                Assert.Equal(1, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                Assert.Equal(0, await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_runs"));
+            }
+            finally { await app.StopAsync(); }
+        });
+    }
+
+    [PostgresFact]
     public async Task ConfirmIsAtomicDeduplicatedAndActorScoped()
     {
         await GitEditRunnerTests.Database(async (cs, db, _) =>
@@ -176,5 +220,7 @@ public sealed class GitHubIssueImportTests
         Assert.NotNull(root);
         await db.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(root.FullName, "src", "ControlPlane",
             "Migrations", "011-github-issue-import.sql")));
+        Assert.True(await db.ExecuteScalarAsync<bool>(
+            "select exists(select 1 from app_schema_versions where version=11)"));
     }
 }
