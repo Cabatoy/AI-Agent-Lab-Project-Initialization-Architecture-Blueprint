@@ -68,6 +68,7 @@ LocalHealthRunnerEndpoints.Map(app, postgresConnectionString, redisDb, localOper
 GitEditEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 ProjectConversationEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 GeneralConversationEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
+GeneralPlanEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 GitHubPublisherEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 
 app.MapGet("/tasks", async () =>

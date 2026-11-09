@@ -406,6 +406,12 @@ describe('local development proxy', () => {
     expect((await fetch(`${origin}/api/local-runner/general-conversations/${id}/messages`, {
       method: 'POST', headers, body: JSON.stringify({ clientMessageId: id, content: 'Hello' }),
     })).status).toBe(201);
+    expect((await fetch(`${origin}/api/local-runner/general-conversations/${id}/plan/generate`, {
+      method: 'POST', headers, body: JSON.stringify({ expectedRevision: 0 }),
+    })).status).toBe(201);
+    expect((await fetch(`${origin}/api/local-runner/general-conversations/${id}/plan/approve`, {
+      method: 'POST', headers, body: JSON.stringify({ expectedRevision: 1, command: 'not allowed' }),
+    })).status).toBe(400);
     expect((await fetch(`${origin}/api/local-runner/general-conversations`, {
       method: 'POST', headers, body: JSON.stringify({ title: 'Ideas', command: 'not allowed' }),
     })).status).toBe(400);
@@ -414,6 +420,7 @@ describe('local development proxy', () => {
     })).status).toBe(403);
     expect(received.map(item => item.url)).toEqual([
       '/local-runner/general-conversations', `/local-runner/general-conversations/${id}/messages`,
+      `/local-runner/general-conversations/${id}/plan/generate`,
     ]);
   });
 

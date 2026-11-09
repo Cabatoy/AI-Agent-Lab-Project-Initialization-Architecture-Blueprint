@@ -15,7 +15,9 @@ const errorText = (reason: unknown) => reason instanceof Error ? reason.message 
 const stamp = (value: string) => new Date(value).toLocaleString();
 const emptyModel: LocalCodeModelInfo = { configured: false, provider: 'disabled', model: '', timeoutSeconds: 60, readiness: 'not-configured' };
 
-export function ModelConversationWorkspace() {
+export function ModelConversationWorkspace({ onTasksCreated = () => {}, onViewTask = () => {} }: {
+  onTasksCreated?: () => void; onViewTask?: (id: string) => void;
+}) {
   const [bootstrap, setBootstrap] = useState('');
   const [token, setToken] = useState('');
   const [model, setModel] = useState<LocalCodeModelInfo>(emptyModel);
@@ -123,7 +125,7 @@ export function ModelConversationWorkspace() {
       {token && <GitHubPublisherPanel token={token} />}
     </section>
 
-    {token && <GeneralConversationWorkspace token={token} />}
+    {token && <GeneralConversationWorkspace token={token} onTasksCreated={onTasksCreated} onViewTask={onViewTask} />}
     {token && <div className="overview-grid">
       <section className="panel command-form">
         <div className="panel-heading"><div><p className="eyebrow">NEW CONVERSATION / IMPORT AUTHORIZED CHECKOUT</p>

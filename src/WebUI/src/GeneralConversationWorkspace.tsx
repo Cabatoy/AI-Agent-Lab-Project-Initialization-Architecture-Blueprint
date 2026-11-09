@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api, isExpiredOperatorSession, type GeneralConversation, type GeneralConversationSummary } from './api';
+import { GeneralPlanReview } from './GeneralPlanReview';
 
-export function GeneralConversationWorkspace({ token }: { token: string }) {
+export function GeneralConversationWorkspace({ token, onTasksCreated, onViewTask }: {
+  token: string; onTasksCreated: () => void; onViewTask: (id: string) => void;
+}) {
   const [saved, setSaved] = useState<GeneralConversationSummary[]>([]);
   const [current, setCurrent] = useState<GeneralConversation | null>(null);
   const [title, setTitle] = useState('');
@@ -38,7 +41,7 @@ export function GeneralConversationWorkspace({ token }: { token: string }) {
     <p className="eyebrow">GENERAL CONVERSATIONS · NO REPOSITORY REQUIRED</p>
     <h2>General conversation</h2>
     <p className="muted small">Discuss ideas without selecting a repository. The model has no tools;
-      conversation does not authorize task execution or publication. Structured plan-to-Draft review is not yet available.</p>
+      conversation does not authorize task execution or publication.</p>
     {loading && <p role="status">Loading general conversations…</p>}
     {error && <p role="alert" className="notice error">{error} {unavailable && <>
       If the general conversation schema is not installed, this feature requires an explicitly approved additive
@@ -87,6 +90,9 @@ export function GeneralConversationWorkspace({ token }: { token: string }) {
             }
           })}>Send general message</button>
         </div>
+        <GeneralPlanReview key={current.conversationId} conversationId={current.conversationId} token={token}
+          hasMessages={current.messages.some(message => message.role === 'user')}
+          onTasksCreated={onTasksCreated} onViewTask={onViewTask} />
       </div>}
     </>}
     {busy && <p role="status">Working with the local Control Plane…</p>}

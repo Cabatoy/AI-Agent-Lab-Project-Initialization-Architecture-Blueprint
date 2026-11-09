@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { api, type GeneralConversation } from './api';
+import { api, ApiError, type GeneralConversation } from './api';
 import { GeneralConversationWorkspace } from './GeneralConversationWorkspace';
 
 vi.mock('./api', async importOriginal => ({
   ...await importOriginal<typeof import('./api')>(),
   api: { generalConversations: vi.fn(), generalConversation: vi.fn(),
-    createGeneralConversation: vi.fn(), sendGeneralMessage: vi.fn() },
+    createGeneralConversation: vi.fn(), sendGeneralMessage: vi.fn(), generalPlan: vi.fn() },
 }));
 const id = '11234567-89ab-cdef-0123-456789abcdef';
 const now = new Date().toISOString();
@@ -21,12 +21,13 @@ beforeEach(() => {
   vi.mocked(api.createGeneralConversation).mockResolvedValue(empty);
   vi.mocked(api.sendGeneralMessage).mockResolvedValue(reply);
   vi.mocked(api.generalConversation).mockResolvedValue(reply);
+  vi.mocked(api.generalPlan).mockRejectedValue(new ApiError('http', 'Not found', 404));
   vi.stubGlobal('crypto', { randomUUID: () => id });
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
 it('creates, messages and reopens a general conversation without repository selection', async () => {
-  render(<GeneralConversationWorkspace token="cookie-session" />);
+  render(<GeneralConversationWorkspace token="cookie-session" onTasksCreated={vi.fn()} onViewTask={vi.fn()} />);
   await screen.findByText('No general conversations yet.');
   fireEvent.change(screen.getByLabelText('General conversation title'), { target: { value: 'Ideas' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create general conversation' }));
@@ -41,7 +42,7 @@ it('creates, messages and reopens a general conversation without repository sele
 
 it('reports missing schema without claiming a conversation was created', async () => {
   vi.mocked(api.generalConversations).mockRejectedValue(new Error('Schema unavailable'));
-  render(<GeneralConversationWorkspace token="cookie-session" />);
+  render(<GeneralConversationWorkspace token="cookie-session" onTasksCreated={vi.fn()} onViewTask={vi.fn()} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Schema unavailable');
   expect(screen.queryByRole('button', { name: 'Create general conversation' })).not.toBeInTheDocument();
 });

@@ -43,11 +43,17 @@ bağlamını alır ve araç, dosya, yürütme veya yayın yetkisi verilmez. Kesi
 bir model yanıtında kaydedilmiş kullanıcı mesajı korunur; geçmiş gözden
 geçirilmeden aynı istek yeniden çalıştırılmaz.
 
-Bu işlev `007-general-conversations.sql` şemasını gerektirir. Migration
+Bu işlev `008-general-conversations.sql`, plan incelemesi de
+`009-general-plan-review.sql` şemasını gerektirir; GitHub Publisher v7 bu
+şemalardan önce uygulanmalıdır. Migration
 otomatik çalıştırılmaz; yalnızca hedef veritabanı ve yedekleme açıkça
 onaylandıktan sonra uygulanabilir. Mevcut preview snapshot veritabanına bu
-değişiklik uygulanmamıştır. Yapılandırılmış planı onayla Draft task oluşturma
-henüz bu genel konuşma özelliğinde uygulanmamıştır.
+değişiklik uygulanmamıştır. Modelin yapılandırılmış önerisi güvenilmezdir;
+operatör kaydedilmiş sürümü düzenleyip ayrıca gözden geçirerek yalnızca Draft
+task oluşturulmasını onaylar veya sürümü reddeder. Reddedilen sürüm onaylanamaz;
+yeniden düzenleme ya da yeni model önerisi ayrı sürüm oluşturur. Bu onay Worker dispatch, kod yürütme, araç,
+GitHub veya deployment yetkisi vermez. Her genel konuşmada en fazla bir plan
+sürümü için Draft task oluşturulur; yeniden deneme aynı task kimliklerini döndürür.
 
 ### 1. GitHub App ve eksik local ayarlar
 

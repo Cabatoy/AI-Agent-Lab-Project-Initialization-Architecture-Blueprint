@@ -126,6 +126,16 @@ export interface GeneralConversationSummary {
 export interface GeneralConversation extends GeneralConversationSummary {
   messages: ModelConversationMessage[];
 }
+export interface GeneralPlanTask { title: string; description: string }
+export interface GeneralPlan {
+  revision: number;
+  source: 'model' | 'human';
+  createdAtUtc: string;
+  tasks: GeneralPlanTask[];
+  approved: boolean;
+  rejected: boolean;
+  taskIds: string[];
+}
 export interface ModelCodeEditResult {
   action: 'repository.model-code-edit';
   runId: string;
@@ -276,6 +286,12 @@ const generalSummary: Guard<GeneralConversationSummary> = (v): v is GeneralConve
 const generalConversation: Guard<GeneralConversation> = (v): v is GeneralConversation =>
   generalSummary(v) && object(v) && list(modelConversationMessage)(v.messages) &&
   v.messages.every(message => message.proposal === null);
+const generalPlan: Guard<GeneralPlan> = (v): v is GeneralPlan =>
+  object(v) && Number.isSafeInteger(v.revision) && Number(v.revision) > 0 &&
+  (v.source === 'model' || v.source === 'human') && date(v.createdAtUtc) &&
+  Array.isArray(v.tasks) && v.tasks.length > 0 && v.tasks.length <= 8 &&
+  v.tasks.every(item => object(item) && str(item.title) && str(item.description)) &&
+  typeof v.approved === 'boolean' && typeof v.rejected === 'boolean' && list(guid)(v.taskIds);
 const modelCodeEditResult: Guard<ModelCodeEditResult> = (v): v is ModelCodeEditResult =>
   object(v) && v.action === 'repository.model-code-edit' && guid(v.runId) &&
   (v.conversationId === null || guid(v.conversationId)) && nullable(v.repositoryId) &&
@@ -557,6 +573,22 @@ export const api = {
     return localRunnerRequest(`/general-conversations/${id}/messages`, generalConversation, token,
       'POST', { clientMessageId, content }, 200, 125000);
   },
+  generalPlan: (id: string, token: string) => {
+    if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
+    return localRunnerRequest(`/general-conversations/${id}/plan`, generalPlan, token, 'GET');
+  },
+  generateGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/generate`, generalPlan, token,
+      'POST', { expectedRevision }, 200, 125000),
+  reviseGeneralPlan: (id: string, expectedRevision: number, tasks: GeneralPlanTask[], token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/revise`, generalPlan, token,
+      'POST', { expectedRevision, tasks }),
+  approveGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/approve`, generalPlan, token,
+      'POST', { expectedRevision }),
+  rejectGeneralPlan: (id: string, expectedRevision: number, token: string) =>
+    localRunnerRequest(`/general-conversations/${id}/plan/reject`, generalPlan, token,
+      'POST', { expectedRevision }),
   modelConversation: (conversationId: string, token: string) => {
     if (!guid(conversationId)) return Promise.reject(new ApiError('invalid', 'Invalid conversation identifier.'));
     return localRunnerRequest(`/conversations/${conversationId}`, modelConversation, token, 'GET');

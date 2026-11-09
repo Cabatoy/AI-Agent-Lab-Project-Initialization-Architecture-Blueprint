@@ -23,7 +23,7 @@ internal static class GeneralConversationEndpoints
         {
             await using var connection = new NpgsqlConnection(connectionString);
             return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
-                "select exists(select 1 from app_schema_versions where version=7);",
+                "select exists(select 1 from app_schema_versions where version=8);",
                 cancellationToken: cancellationToken));
         }
 
@@ -129,7 +129,7 @@ internal static class GeneralConversationEndpoints
         });
     }
 
-    private static async Task<GeneralConversation?> Read(NpgsqlConnection db, Guid id, Guid actor, CancellationToken ct)
+    internal static async Task<GeneralConversation?> Read(NpgsqlConnection db, Guid id, Guid actor, CancellationToken ct)
     {
         var row = await db.QuerySingleOrDefaultAsync<GeneralConversationSummary>(new CommandDefinition(@"
             select conversation_id as ConversationId, title, created_at_utc as CreatedAtUtc,

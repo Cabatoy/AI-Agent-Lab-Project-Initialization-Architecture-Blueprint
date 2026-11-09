@@ -1,11 +1,11 @@
 -- Manual, additive migration. Never applied by Control Plane startup.
 DO $guard$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM app_schema_versions WHERE version = 6) THEN
-    RAISE EXCEPTION 'General conversations require schema v6';
+  IF NOT EXISTS (SELECT 1 FROM app_schema_versions WHERE version = 7) THEN
+    RAISE EXCEPTION 'General conversations require GitHub publisher schema v7';
   END IF;
-  IF EXISTS (SELECT 1 FROM app_schema_versions WHERE version = 7) THEN
-    RAISE EXCEPTION 'General conversation schema v7 already applied; refusing re-run';
+  IF EXISTS (SELECT 1 FROM app_schema_versions WHERE version = 8) THEN
+    RAISE EXCEPTION 'General conversation schema v8 already applied; refusing re-run';
   END IF;
 END
 $guard$;
@@ -42,4 +42,4 @@ CREATE UNIQUE INDEX ux_hic_general_single_reply
   ON hic_general_messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL;
 CREATE INDEX ix_hic_general_messages_conversation ON hic_general_messages(conversation_id, sequence);
 
-INSERT INTO app_schema_versions(version) VALUES (7);
+INSERT INTO app_schema_versions(version) VALUES (8);

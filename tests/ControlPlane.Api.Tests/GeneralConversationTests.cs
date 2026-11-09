@@ -35,9 +35,13 @@ public sealed class GeneralConversationTests
             modelApp.MapPost("/v1/chat/completions", async (HttpRequest request) =>
             {
                 using var reader = new StreamReader(request.Body);
-                requests.Add(await reader.ReadToEndAsync());
+                var json = await reader.ReadToEndAsync();
+                requests.Add(json);
                 if (block) { entered.TrySetResult(); await release.Task; }
-                return Results.Json(new { choices = new[] { new { message = new { content = "A real fixture reply." } } } });
+                var answer = json.Contains("response_format", StringComparison.Ordinal)
+                    ? """{"tasks":[{"title":"Design","description":"Review the design."},{"title":"Test","description":"Define tests."}]}"""
+                    : "A real fixture reply.";
+                return Results.Json(new { choices = new[] { new { message = new { content = answer } } } });
             });
             await modelApp.StartAsync();
             var modelAddress = modelApp.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
@@ -51,6 +55,7 @@ public sealed class GeneralConversationTests
             var sessions = LocalOperatorSessions.Create(bootstrap, actor.ToString())!;
             var token = sessions.IssueSessionToken(bootstrap)!;
             GeneralConversationEndpoints.Map(app, cs, sessions);
+            GeneralPlanEndpoints.Map(app, cs, sessions);
             await app.StartAsync();
             try
             {
@@ -63,7 +68,14 @@ public sealed class GeneralConversationTests
                 while (root is not null && !File.Exists(Path.Combine(root.FullName, "HumanInControl.sln"))) root = root.Parent;
                 Assert.NotNull(root);
                 await db.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(root.FullName, "src", "ControlPlane",
-                    "Migrations", "007-general-conversations.sql")));
+                    "Migrations", "007-github-publisher.sql")));
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/local-runner/general-conversations")).StatusCode);
+                await db.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(root.FullName, "src", "ControlPlane",
+                    "Migrations", "008-general-conversations.sql")));
+                await db.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(root.FullName, "src", "ControlPlane",
+                    "Migrations", "009-general-plan-review.sql")));
+                await db.ExecuteAsync(@"alter table tasks add column attempt_count integer not null default 0,
+                    add column result text, add column error_message text, add column created_at_utc timestamptz not null default now()");
                 var beforeTasks = await db.ExecuteScalarAsync<int>("select count(*)::int from tasks");
                 var created = await Post(client, "/local-runner/general-conversations", new { title = "General" });
                 Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -99,7 +111,45 @@ public sealed class GeneralConversationTests
                 }
                 finally { release.TrySetResult(); }
                 Assert.Equal(HttpStatusCode.OK, (await first).StatusCode);
+                block = false;
                 Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                var generated = await Post(client, $"/local-runner/general-conversations/{id}/plan/generate",
+                    new { expectedRevision = 0 });
+                Assert.Equal(HttpStatusCode.OK, generated.StatusCode);
+                var plan = await generated.Content.ReadFromJsonAsync<GeneralPlan>();
+                Assert.Equal(1, plan!.Revision);
+                Assert.False(plan.Approved);
+                Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                var rejected = await Post(client, $"/local-runner/general-conversations/{id}/plan/reject",
+                    new { expectedRevision = 1 });
+                Assert.True((await rejected.Content.ReadFromJsonAsync<GeneralPlan>())!.Rejected);
+                Assert.Equal(HttpStatusCode.Conflict, (await Post(client,
+                    $"/local-runner/general-conversations/{id}/plan/approve", new { expectedRevision = 1 })).StatusCode);
+                Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                var revised = await Post(client, $"/local-runner/general-conversations/{id}/plan/revise",
+                    new { expectedRevision = 1, tasks = new[] { new { title = "Reviewed", description = "Human edited." } } });
+                Assert.Equal(HttpStatusCode.OK, revised.StatusCode);
+                Assert.Equal(2, (await revised.Content.ReadFromJsonAsync<GeneralPlan>())!.Revision);
+                Assert.Equal(HttpStatusCode.Conflict, (await Post(client,
+                    $"/local-runner/general-conversations/{id}/plan/approve", new { expectedRevision = 1 })).StatusCode);
+                await db.ExecuteAsync("alter table tasks add constraint reject_reviewed_fixture check (title <> 'Reviewed')");
+                Assert.Equal(HttpStatusCode.InternalServerError, (await Post(client,
+                    $"/local-runner/general-conversations/{id}/plan/approve", new { expectedRevision = 2 })).StatusCode);
+                Assert.Equal(0, await db.ExecuteScalarAsync<int>("select count(*)::int from hic_general_plan_approvals"));
+                Assert.Equal(beforeTasks, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                await db.ExecuteAsync("alter table tasks drop constraint reject_reviewed_fixture");
+                var approved = await Post(client, $"/local-runner/general-conversations/{id}/plan/approve", new { expectedRevision = 2 });
+                Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+                var final = await approved.Content.ReadFromJsonAsync<GeneralPlan>();
+                Assert.True(final!.Approved);
+                Assert.Single(final.TaskIds);
+                Assert.Equal("Draft", await db.ExecuteScalarAsync<string>("select status from tasks where id=@id", new { id = final.TaskIds[0] }));
+                Assert.Equal(beforeTasks + 1, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                Assert.Equal(HttpStatusCode.OK, (await Post(client,
+                    $"/local-runner/general-conversations/{id}/plan/approve", new { expectedRevision = 2 })).StatusCode);
+                Assert.Equal(beforeTasks + 1, await db.ExecuteScalarAsync<int>("select count(*)::int from tasks"));
+                Assert.Equal(HttpStatusCode.Conflict, (await Post(client,
+                    $"/local-runner/general-conversations/{id}/plan/generate", new { expectedRevision = 2 })).StatusCode);
                 var other = Guid.NewGuid();
                 await db.ExecuteAsync(@"insert into hic_general_conversations
                     values(@id,@actor,'Other',now(),now())", new { id = other, actor = Guid.NewGuid() });
@@ -110,6 +160,14 @@ public sealed class GeneralConversationTests
             finally { await app.StopAsync(); await modelApp.StopAsync(); }
         });
     }
+
+    [Theory]
+    [InlineData("""{"tasks":[{"title":"x","description":"y","command":"whoami"}]}""")]
+    [InlineData("""{"tasks":[] }""")]
+    [InlineData("""{"tasks":[{"title":"x","description":"y"}],"extra":true}""")]
+    [InlineData("invalid")]
+    public void PlanParser_RejectsUntrustedShapes(string json) =>
+        Assert.False(GeneralPlanEndpoints.TryParseTasks(json, out _));
 
     private static Task<HttpResponseMessage> Post<T>(HttpClient client, string path, T body) =>
         client.PostAsync(path, new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"));

@@ -8,6 +8,7 @@ import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { PlanningWorkflow } from './PlanningWorkflow';
 import { LocalModelStatus } from './LocalModelStatus';
+import { GeneralPlanningWorkspace } from './GeneralPlanningWorkspace';
 import { Status } from './components';
 
 type Page = 'Command Center' | 'Conversations' | 'Planning' | 'Local Runner' | 'Isolated Git' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
@@ -27,7 +28,7 @@ const subtitles: Partial<Record<Page, string>> = {
   'Local Runner': 'Approve one exact, read-only local system health action and review its durable result.',
   'Isolated Git': 'Approve one bounded disposable-repository edit and inspect its actual diff and test result.',
   Conversations: 'Talk to the configured local model and review conversations and prior plans.',
-  Planning: 'Select the configured repository and review a local, versioned plan preview.',
+  Planning: 'Review model-generated conversation plans or the separate local repository preview.',
   Overview: 'Your local software factory, in view.',
   Tasks: 'Inspect task state from the Control Plane.',
   Plans: 'Review available execution plans.',
@@ -149,8 +150,12 @@ export default function App() {
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
       {page === 'Local Runner' && <LocalRunnerWorkflow />}
       {page === 'Isolated Git' && <GitRunnerWorkflow />}
-      {page === 'Conversations' && <ModelConversationWorkspace />}
-      {page === 'Planning' && <PlanningWorkflow />}
+      {page === 'Conversations' && <ModelConversationWorkspace onTasksCreated={() => void refresh()} onViewTask={selectTask} />}
+      {page === 'Planning' && <>
+        <GeneralPlanningWorkspace openConversations={() => navigate('Conversations')}
+          onTasksCreated={() => void refresh()} onViewTask={selectTask} />
+        <PlanningWorkflow />
+      </>}
       {page === 'Models & Providers' && <LocalModelStatus openConversations={() => navigate('Conversations')} />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
