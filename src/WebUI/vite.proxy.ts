@@ -1,12 +1,14 @@
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
 import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, validateCreateTask } from './src/limits';
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
 const guidPath = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const githubPaths = `github/(?:status|repository|bootstraps|bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}(?:/(?:approve|reject|renew|execute|reconcile|complete-draft))?)`;
 const localRunnerPath = new RegExp(
-  `^/api/local-runner/(?:session|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
+  `^/api/local-runner/(?:${githubPaths}|session(?:/revoke)?|capabilities|model|repositories|conversations(?:/${guidPath}(?:/messages(?:/${guidPath}/approve)?)?)?|tasks/${guidPath}/(?:intent|approve|git-preview|git-approve)|runs/${guidPath}(?:/execute)?)$`, 'i');
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 const MODEL_UPSTREAM_TIMEOUT_MS = 125000;
@@ -41,16 +43,69 @@ const header = (req: http.IncomingMessage, name: string) => {
   return Array.isArray(value) ? value.join(',') : value;
 };
 
+function cookieName(req: http.IncomingMessage, target: URL) {
+  return `hic_operator_${req.socket.localPort}_${createHash('sha256').update(target.origin).digest('hex').slice(0, 16)}`;
+}
+
+function operatorCookie(req: http.IncomingMessage, target: URL, value: string, maxAge: number) {
+  return `${cookieName(req, target)}=${value}; Path=/api/local-runner; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
+}
+
+function cookieAuthorization(req: http.IncomingMessage, target: URL) {
+  const prefix = `${cookieName(req, target)}=`;
+  const matches = (header(req, 'cookie') ?? '').split(';').map(part => part.trim()).filter(part => part.startsWith(prefix));
+  if (matches.length !== 1) return undefined;
+  const value = matches[0].slice(prefix.length);
+  return /^[A-Za-z0-9+/]{43}=$/.test(value) ? `Bearer ${value}` : undefined;
+}
+
 function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string) {
   let timedOut = false;
   let connected = false;
   const headers: http.OutgoingHttpHeaders = { accept: 'application/json' };
   if (authorization) headers.authorization = authorization;
+  const browserLogin = method === 'POST' && path === '/local-runner/session';
+  if (browserLogin) headers['x-hic-session-mode'] = 'browser';
   if (body !== undefined) {
     headers['content-type'] = 'application/json; charset=utf-8';
     headers['content-length'] = Buffer.byteLength(body);
   }
   const upstream = http.request({ hostname: target.hostname, port: target.port || 80, path, method, headers }, (response) => {
+    if (path.startsWith('/local-runner/') &&
+        (response.statusCode === 401 || path === '/local-runner/session/revoke' && response.statusCode === 200)) {
+      res.setHeader('Set-Cookie', operatorCookie(req, target, '', 0));
+    }
+    if (browserLogin && response.statusCode === 200) {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 16384) { response.destroy(); reject(res, 502, 'Invalid session response.'); }
+        else chunks.push(chunk);
+      });
+      response.on('end', () => {
+        if (res.headersSent) return;
+        try {
+          const session = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          if (!/^[A-Za-z0-9+/]{43}=$/.test(session.accessToken) ||
+              !Number.isSafeInteger(session.expiresInSeconds) ||
+              session.expiresInSeconds <= 0 || session.expiresInSeconds > 28800) throw new Error();
+          const remaining = Math.floor(Math.min(session.expiresInSeconds,
+            (Date.parse(session.expiresAtUtc) - Date.now()) / 1000));
+          if (!Number.isSafeInteger(remaining) || remaining <= 0) throw new Error();
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+            'Set-Cookie': operatorCookie(req, target, session.accessToken, remaining),
+          }).end(JSON.stringify({
+            accessToken: 'cookie-session', expiresInSeconds: remaining, expiresAtUtc: session.expiresAtUtc,
+          }));
+        } catch { reject(res, 502, 'Invalid session response.'); }
+      });
+      response.on('error', () => reject(res, 502, 'Session response interrupted.'));
+      return;
+    }
     res.writeHead(response.statusCode ?? 502, {
       'Content-Type': response.headers['content-type'] ?? 'application/octet-stream',
       'Cache-Control': 'no-store',
@@ -160,13 +215,20 @@ async function localRunnerRequest(
       header(req, 'x-hic-request') !== 'local-runner') {
     return reject(res, 403, 'Local runner request was rejected.', true);
   }
-  const isSession = path === '/api/local-runner/session';
+  const isSession = req.method === 'POST' && path === '/api/local-runner/session';
+  const isRevoke = req.method === 'POST' && path === '/api/local-runner/session/revoke';
+  const isGitHubRead = req.method === 'GET' && new RegExp(
+    `^/api/local-runner/github/(?:status|repository|bootstraps|publications/${guidPath})$`, 'i').test(path);
+  const isGitHubApprove = req.method === 'POST' && new RegExp(
+    `^/api/local-runner/github/publications/${guidPath}/(?:approve|reject|renew)$`, 'i').test(path);
+  const isGitHubEmptyWrite = req.method === 'POST' && new RegExp(
+    `^/api/local-runner/github/(?:bootstrap-preview|runs/${guidPath}/preview|publications/${guidPath}/(?:execute|reconcile|complete-draft))$`, 'i').test(path);
   const isRead = req.method === 'GET' &&
-    (/^\/api\/local-runner\/(?:capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (isGitHubRead || /^\/api\/local-runner\/(?:session|capabilities|model|repositories|conversations|conversations\/[0-9a-f-]+|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
   const isGitPlan = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/git-(?:preview|approve)$/i.test(path);
   const isApprove = req.method === 'POST' &&
-    /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
+    (isGitHubApprove || /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path));
   const isConversationCreate = req.method === 'POST' && path === '/api/local-runner/conversations';
   const isConversationMessage = req.method === 'POST' &&
     /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages$/i.test(path);
@@ -174,19 +236,25 @@ async function localRunnerRequest(
     /^\/api\/local-runner\/conversations\/[0-9a-f-]+\/messages\/[0-9a-f-]+\/approve$/i.test(path);
   const isConversationWrite = isConversationCreate || isConversationMessage || isConversationApprove;
   const isExecute = req.method === 'POST' &&
-    /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path);
+    (isRevoke || isGitHubEmptyWrite || /^\/api\/local-runner\/runs\/[0-9a-f-]+\/execute$/i.test(path));
   if (!isSession && !isRead && !isApprove && !isExecute && !isGitPlan && !isConversationWrite)
     return reject(res, 403, 'Local runner endpoint is not allowlisted.', true);
 
-  const authorization = header(req, 'authorization');
-  if ((isSession && authorization !== undefined) ||
-      (!isSession && !validRunnerAuthorization(authorization))) {
+  const suppliedAuthorization = header(req, 'authorization');
+  const authorization = suppliedAuthorization ?? cookieAuthorization(req, target);
+  if ((isSession && suppliedAuthorization !== undefined) ||
+      (!isSession && suppliedAuthorization !== undefined && !validRunnerAuthorization(suppliedAuthorization))) {
     return reject(res, 403, 'Local runner credentials were rejected.', true);
+  }
+  if (!isSession && !validRunnerAuthorization(authorization)) {
+    res.setHeader('Set-Cookie', operatorCookie(req, target, '', 0));
+    return reject(res, 401, 'Operator session is missing or expired.', true);
   }
   if (isRead) {
     if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
       return reject(res, 400, 'Read requests must not include a body.', true);
-    forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs, undefined, authorization);
+    forward(req, res, target, 'GET', path.slice(4), isGitHubRead
+      ? timeouts.githubTimeoutMs : timeouts.upstreamTimeoutMs, undefined, authorization);
     return;
   }
 
@@ -197,7 +265,8 @@ async function localRunnerRequest(
       return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
     const received = await readBody(req, timeouts.bodyTimeoutMs);
     if (!received.ok || received.body.length !== 0) return reject(res, 400, 'The allowlisted action does not accept arguments.', true);
-    forward(req, res, target, 'POST', path.slice(4), timeouts.executionTimeoutMs, undefined, authorization);
+    forward(req, res, target, 'POST', path.slice(4), isGitHubEmptyWrite
+      ? timeouts.githubTimeoutMs : timeouts.executionTimeoutMs, undefined, authorization);
     return;
   }
 
@@ -261,7 +330,8 @@ async function localRunnerRequest(
       typeof (parsed as Record<string, unknown>).intentDigestSha256 !== 'string' ||
       !/^[0-9a-f]{64}$/.test((parsed as Record<string, string>).intentDigestSha256))
     return reject(res, 400, 'Invalid approval intent.');
-  forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+  forward(req, res, target, 'POST', path.slice(4), isGitHubApprove
+    ? timeouts.githubTimeoutMs : timeouts.upstreamTimeoutMs,
     JSON.stringify({ intentDigestSha256: (parsed as Record<string, string>).intentDigestSha256 }), authorization);
 }
 
@@ -270,6 +340,7 @@ export interface ProxyOptions {
   bodyTimeoutMs?: number;
   modelTimeoutMs?: number;
   executionTimeoutMs?: number;
+  githubTimeoutMs?: number;
 }
 
 export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugin {
@@ -279,6 +350,7 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
     bodyTimeoutMs: options.bodyTimeoutMs ?? BODY_TIMEOUT_MS,
     modelTimeoutMs: options.modelTimeoutMs ?? MODEL_UPSTREAM_TIMEOUT_MS,
     executionTimeoutMs: options.executionTimeoutMs ?? 115000,
+    githubTimeoutMs: options.githubTimeoutMs ?? 180000,
   };
   return {
     name: 'hic-local-api',

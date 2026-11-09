@@ -6,7 +6,11 @@ import { UNSENT_DRAFT_KEY } from './unsentDraft';
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn(), inspectNativeWorkspace: vi.fn() } };
+  return { ...actual, api: {
+    health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(),
+    localDiagnostics: vi.fn(), inspectNativeWorkspace: vi.fn(),
+    restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
+  } };
 });
 const item = {
   id: '01234567-89ab-cdef-0123-456789abcdef', title: 'Actual task', description: 'Actual description',
@@ -15,6 +19,8 @@ const item = {
 };
 beforeEach(() => {
   window.localStorage.clear();
+  vi.mocked(api.restoreLocalRunnerSession).mockRejectedValue({ status: 401 });
+  vi.mocked(api.revokeLocalRunnerSession).mockResolvedValue({ revoked: true });
   vi.mocked(api.health).mockResolvedValue({ status: 'ok', service: 'control-plane' });
   vi.mocked(api.tasks).mockResolvedValue([]);
   vi.mocked(api.plans).mockResolvedValue([]);

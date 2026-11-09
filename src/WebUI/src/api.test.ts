@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError } from './api';
+import { api, ApiError, OPERATOR_SESSION_ENDED } from './api';
 import { deriveTitle } from './limits';
 
 const task = {
@@ -12,6 +12,57 @@ const plan = {
   status: 'Proposed', planSummary: 'Summary', createdAtUtc: task.createdAtUtc, updatedAtUtc: task.updatedAtUtc,
 };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+describe('persistent operator session client', () => {
+  it('uses same-origin HttpOnly cookie transport without a bearer secret in JavaScript', async () => {
+    const restored = { actorId: task.id, expiresInSeconds: 28800,
+      expiresAtUtc: new Date(Date.now() + 28800000).toISOString() };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ accessToken: 'cookie-session', ...restored }))
+      .mockResolvedValueOnce(Response.json(restored))
+      .mockResolvedValueOnce(Response.json({ revoked: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const session = await api.createLocalRunnerSession('synthetic-bootstrap');
+    expect(session.accessToken).toBe('cookie-session');
+    expect(await api.restoreLocalRunnerSession()).toEqual(restored);
+    await api.revokeLocalRunnerSession();
+    expect(fetchMock.mock.calls.map(call => [call[0], call[1].method])).toEqual([
+      ['/api/local-runner/session', 'POST'],
+      ['/api/local-runner/session', 'GET'],
+      ['/api/local-runner/session/revoke', 'POST'],
+    ]);
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options.credentials).toBe('same-origin');
+      expect(options.headers.Authorization).toBeUndefined();
+      expect(options.headers['X-HIC-Request']).toBe('local-runner');
+      expect(options.cache).toBe('no-store');
+    }
+    expect(fetchMock.mock.calls[1][1].body).toBeUndefined();
+    expect(fetchMock.mock.calls[2][1].body).toBeUndefined();
+  });
+
+  it('notifies mounted workspaces about protected 401, without retry or automatic bootstrap', async () => {
+    const ended = vi.fn();
+    window.addEventListener(OPERATOR_SESSION_ENDED, ended);
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(api.restoreLocalRunnerSession()).rejects.toMatchObject({ status: 401, sessionEnded: true });
+      expect(ended).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(api.createLocalRunnerSession('invalid-bootstrap')).rejects.toMatchObject({ status: 401, sessionEnded: false });
+      expect(ended).toHaveBeenCalledTimes(1);
+    } finally { window.removeEventListener(OPERATOR_SESSION_ENDED, ended); }
+  });
+
+  it('rejects malformed restore metadata and cookie session contracts', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ actorId: task.id, expiresInSeconds: 0, expiresAtUtc: 'bad' }))
+      .mockResolvedValueOnce(Response.json({ accessToken: 'cookie-session', expiresInSeconds: 28800, expiresAtUtc: 'bad' })));
+    await expect(api.restoreLocalRunnerSession()).rejects.toMatchObject({ kind: 'invalid' });
+    await expect(api.createLocalRunnerSession('synthetic')).rejects.toMatchObject({ kind: 'invalid' });
+  });
+});
 
 describe('native host read-only action', () => {
   const result = {
@@ -179,7 +230,7 @@ describe('Draft task creation', () => {
       expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${sessionToken}`);
       expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ intentDigestSha256: 'a'.repeat(64) });
       expect(fetchMock.mock.calls[3][1].body).toBeUndefined();
-      expect(fetchMock.mock.calls.every(call => call[1].credentials === 'omit' &&
+      expect(fetchMock.mock.calls.every(call => call[1].credentials === 'same-origin' &&
         call[1].headers['X-HIC-Request'] === 'local-runner')).toBe(true);
     });
 

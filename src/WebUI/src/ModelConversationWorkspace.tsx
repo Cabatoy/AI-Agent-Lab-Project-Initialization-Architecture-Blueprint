@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { GitHubPublisherPanel } from './GitHubPublisherPanel';
+import { useOperatorSession } from './useOperatorSession';
 import {
   api,
+  isExpiredOperatorSession,
   type LocalCodeModelInfo,
   type ModelConversation,
   type ModelConversationSummary,
@@ -23,7 +26,6 @@ export function ModelConversationWorkspace() {
   const [title, setTitle] = useState('');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [attemptedRunIds, setAttemptedRunIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const repository = repositories.find(item => item.id === selectedRepository);
   const authorizedFiles = useMemo(() => repository?.files.filter(file => file.endsWith('.cs') && file !== '.hic-disposable') ?? [],
@@ -33,11 +35,24 @@ export function ModelConversationWorkspace() {
     if (!authorizedFiles.includes(selectedFile)) setSelectedFile(authorizedFiles[0] ?? '');
   }, [authorizedFiles, selectedFile]);
 
+  function clearSession() {
+    setToken(''); setBootstrap(''); setError(null);
+    setModel(emptyModel); setRepositories([]); setConversations([]);
+    setConversation(null); setInput('');
+    setSelectedRepository(''); setSelectedFile(''); setTitle('');
+  }
+
+  const operator = useOperatorSession(loadWorkspace, clearSession, reason => setError(errorText(reason)));
+
   async function perform(action: () => Promise<void>) {
     setBusy(true);
     setError(null);
     try { await action(); }
-    catch (reason) { setError(errorText(reason)); }
+    catch (reason) {
+      if (isExpiredOperatorSession(reason)) {
+        clearSession();
+      } else setError(errorText(reason));
+    }
     finally { setBusy(false); }
   }
 
@@ -45,61 +60,61 @@ export function ModelConversationWorkspace() {
     if (!id || !token) return;
     const updated = await api.modelConversation(id, token);
     setConversation(updated);
-    setAttemptedRunIds(previous => previous.filter(runId =>
-      updated.runs.some(run => run.runId === runId && run.status === 'queued')));
   }
 
-  async function loadWorkspace(accessToken: string) {
+  async function loadWorkspace(accessToken: string, active = () => true) {
     const [modelInfo, repos, saved] = await Promise.all([
       api.localCodeModel(accessToken),
       api.modelRepositories(accessToken),
       api.modelConversations(accessToken),
     ]);
+    const current = saved.length ? await api.modelConversation(saved[0].conversationId, accessToken) : null;
+    if (!active()) return;
     setToken(accessToken);
     setModel(modelInfo);
     setRepositories(repos);
     setConversations(saved);
-    if (saved.length) {
-      const current = await api.modelConversation(saved[0].conversationId, accessToken);
-      setConversation(current);
-    } else {
-      setConversation(null);
-    }
+    setConversation(current);
   }
 
   return <section className="local-runner" aria-label="HIC conversation workspace">
     <section className="panel">
       <p className="eyebrow">CONVERSATION · LOCAL MODEL · HUMAN-APPROVED EDIT</p>
       <h2>Project conversation</h2>
-      <p className="muted">Real local model calls, durable conversation history and one explicitly approved C# file replacement
-        in an isolated worktree. No shell, commit, push, merge, deployment or paid-provider fallback.</p>
+      <p className="muted">Real local model calls and durable conversation history. This interface does not offer
+        repository execution. The updated Control Plane denies it until an OS-isolated backend is verified;
+        an older running Control Plane may not enforce this restriction. Do not execute or publish repository changes
+        through an older instance. Previous sandbox results are historical evidence, not production isolation.</p>
       {!token ? <div className="command-form">
         <label htmlFor="conversation-bootstrap">Local operator bootstrap token</label>
         <input id="conversation-bootstrap" className="command-title" type="password" autoComplete="off"
-          value={bootstrap} disabled={busy} onChange={event => setBootstrap(event.target.value)} />
-        <button className="primary" disabled={busy || !bootstrap} onClick={() => void perform(async () => {
+          value={bootstrap} disabled={busy || operator.restoring} onChange={event => setBootstrap(event.target.value)} />
+        <button className="primary" disabled={busy || operator.restoring || !bootstrap} onClick={() => void perform(async () => {
           const session = await api.createLocalRunnerSession(bootstrap);
           setBootstrap('');
           await loadWorkspace(session.accessToken);
+          operator.authenticated(session);
         })}>Open conversation workspace</button>
+        <p className="muted small">Reload or reopen this same UI address to restore an unexpired session.
+          After expiry, use the configured bootstrap login or have the operator explicitly run
+          scripts/hic-open-operator.ps1 for this visible browser at #operator-access.
+          The helper fills this existing login without manual token copying; it never grants approval.</p>
       </div> : <div className="notice">
-        Operator session · memory only · 15 minutes · Model: {model.configured ? `${model.provider} / ${model.model}` : 'not configured'}
-        <button className="text-button" disabled={busy} onClick={() => {
-          setToken('');
-          setModel(emptyModel);
-          setRepositories([]);
-          setConversations([]);
-          setConversation(null);
-          setAttemptedRunIds([]);
-        }}>End session</button>
+        Operator session · HttpOnly cookie · 8-hour absolute expiry · Model: {model.configured ? `${model.provider} / ${model.model}` : 'not configured'}
+        <button className="text-button" disabled={busy} onClick={() => void perform(async () => {
+          await operator.logout(token);
+        })}>End session</button>
       </div>}
+      {operator.restoring && <p role="status">Restoring operator session…</p>}
+      {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
       {token && <p className={model.configured ? 'notice' : 'notice error'} role={model.configured ? 'status' : 'alert'}>
         {model.configured
-          ? `Requests use only the configured local model; model timeout ${model.timeoutSeconds}s.`
+          ? `Local model is configured; connectivity is checked when a message is sent. Model timeout ${model.timeoutSeconds}s.`
           : 'Local model is unavailable or not configured. Messages are retained, but no model response or plan will be fabricated.'}
       </p>}
       {error && <p className="notice error" role="alert">{error} For an interrupted write, refresh this conversation before sending again.</p>}
       {busy && <p role="status">Working with the local Control Plane…</p>}
+      {token && <GitHubPublisherPanel token={token} />}
     </section>
 
     {token && <div className="overview-grid">
@@ -107,7 +122,7 @@ export function ModelConversationWorkspace() {
         <div className="panel-heading"><div><p className="eyebrow">NEW CONVERSATION / IMPORT AUTHORIZED CHECKOUT</p>
           <h2>Start a conversation</h2></div></div>
         <p className="muted small">Start a project discussion against a server-authorized local checkout and configured C# file.
-          Repository creation, arbitrary URLs and GitHub publishing are not enabled in Issue #49.</p>
+          Arbitrary URLs are not permitted. An empty GitHub destination requires separate bootstrap approval.</p>
         <label htmlFor="conversation-title">Conversation title</label>
         <input id="conversation-title" className="command-title" maxLength={120} value={title}
           disabled={busy} onChange={event => setTitle(event.target.value)} placeholder="Project or change request" />
@@ -146,7 +161,6 @@ export function ModelConversationWorkspace() {
           className={`task-link ${conversation?.conversationId === item.conversationId ? 'selected' : ''}`}
           disabled={busy} onClick={() => void perform(async () => {
             setConversation(await api.modelConversation(item.conversationId, token));
-            setAttemptedRunIds([]);
           })}>
           {item.title}<span className="identifier">{item.repositoryId} · {item.file} · {stamp(item.updatedAtUtc)}</span>
         </button>)}
@@ -202,7 +216,7 @@ export function ModelConversationWorkspace() {
             throw reason;
           }
         })}>Send message</button>
-        <p className="muted small">Model output and repository text are untrusted. Only a validated proposal plus this separate human approval can start the bounded local edit.</p>
+        <p className="muted small">Model output and repository text are untrusted. Approval records the exact plan but cannot enable repository execution without a verified isolation backend.</p>
       </div>
     </section>}
 
@@ -211,12 +225,7 @@ export function ModelConversationWorkspace() {
         <h2>Code edit · {run.status}</h2></div><span className="outline-badge">{run.action}</span></div>
       <p className="mono">Run: {run.runId}<br />Task: {run.taskId}<br />Scope: {run.scope}<br />
         Approved digest: {run.intentDigestSha256}</p>
-      {run.status === 'queued' && !attemptedRunIds.includes(run.runId) && <button className="primary" disabled={busy}
-        onClick={() => void perform(async () => {
-          setAttemptedRunIds(previous => [...previous, run.runId]);
-          await api.executeLocalHealthRun(run.runId, token, 120000);
-          await refreshConversation();
-        })}>Execute approved isolated edit</button>}
+      {run.status === 'queued' && <p className="notice">Repository execution is disabled until a verified isolation backend is available. This approval has not been executed.</p>}
       {run.status === 'running' && <p className="notice">Execution claim is durable. An interrupted run is not automatically replayed; refresh to reconcile its recorded status.</p>}
       {run.result && <div className="detail-block">
         <h3>Bounded validation: {run.result.testCode}</h3>
@@ -224,6 +233,10 @@ export function ModelConversationWorkspace() {
         <p className="mono">File: {run.result.file}<br />Worktree: {run.result.worktreePath}<br />Branch: {run.result.branch}</p>
         <h3>Actual worktree diff</h3><pre className="preserve">{run.result.diff || 'No diff was released.'}</pre>
       </div>}
+      {run.status === 'completed' && run.result?.sourceUnchanged &&
+        run.result.testCode === 'passed:isolated-csharp-compile-and-scope' &&
+        <GitHubPublisherPanel token={token} runId={run.runId}
+          saved={conversation.publications} onChanged={() => refreshConversation()} />}
       <h3>Durable audit</h3><ol>{run.events.map((event, index) =>
         <li key={`${event.eventCode}-${index}`}>{event.eventCode} · {stamp(event.recordedAtUtc)}</li>)}</ol>
     </section>)}

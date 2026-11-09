@@ -1,4 +1,5 @@
 import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, type CreateTaskInput, validateCreateTask } from './limits';
+import { publication, type GitHubPublication } from './githubApi';
 
 export type { CreateTaskInput } from './limits';
 export interface Health { status: string; service: string }
@@ -21,6 +22,14 @@ export interface LocalDiagnosticSnapshot {
 }
 export interface LocalRunnerSession {
   accessToken: string;
+  expiresInSeconds: number;
+  expiresAtUtc?: string;
+}
+export const COOKIE_SESSION = 'cookie-session';
+export const OPERATOR_SESSION_ENDED = 'hic-operator-session-ended';
+export interface RestoredOperatorSession {
+  actorId: string;
+  expiresAtUtc: string;
   expiresInSeconds: number;
 }
 export interface LocalRunnerCapability {
@@ -144,6 +153,7 @@ export interface ModelConversation {
   updatedAtUtc: string;
   messages: ModelConversationMessage[];
   runs: ModelConversationRun[];
+  publications?: GitHubPublication[];
 }
 export interface ModelConversationSummary {
   conversationId: string;
@@ -202,8 +212,9 @@ const localDiagnostics: Guard<LocalDiagnosticSnapshot> = (v): v is LocalDiagnost
   v.controlPlane === 'ok' && (v.postgres === 'ok' || v.postgres === 'unavailable') &&
   (v.redis === 'ok' || v.redis === 'unavailable') && v.worker === 'not-checked';
 const localRunnerSession: Guard<LocalRunnerSession> = (v): v is LocalRunnerSession =>
-  object(v) && str(v.accessToken) && v.accessToken.length >= 40 && v.accessToken.length <= 64 &&
-  Number.isSafeInteger(v.expiresInSeconds) && Number(v.expiresInSeconds) > 0;
+  object(v) && str(v.accessToken) && (v.accessToken === COOKIE_SESSION || v.accessToken.length >= 40 && v.accessToken.length <= 64) &&
+  Number.isSafeInteger(v.expiresInSeconds) && Number(v.expiresInSeconds) > 0 &&
+  (v.expiresAtUtc === undefined || date(v.expiresAtUtc));
 const localRunnerCapability: Guard<LocalRunnerCapability> = (v): v is LocalRunnerCapability =>
   object(v) && guid(v.actorId) && v.action === 'system.health' &&
   v.scope === 'control-plane:health:read' && v.worker === 'not-used' && v.provider === 'not-used';
@@ -266,7 +277,8 @@ const modelConversation: Guard<ModelConversation> = (v): v is ModelConversation 
   object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
   str(v.repositoryId) && str(v.repositoryPath) && str(v.baseCommit) &&
   str(v.file) && date(v.createdAtUtc) && date(v.updatedAtUtc) &&
-  list(modelConversationMessage)(v.messages) && list(modelConversationRun)(v.runs);
+  list(modelConversationMessage)(v.messages) && list(modelConversationRun)(v.runs) &&
+  (v.publications === undefined || list(publication)(v.publications));
 const modelConversationSummary: Guard<ModelConversationSummary> = (v): v is ModelConversationSummary =>
   object(v) && guid(v.conversationId) && guid(v.taskId) && str(v.title) &&
   str(v.repositoryId) && str(v.baseCommit) && str(v.file) && date(v.updatedAtUtc);
@@ -284,10 +296,16 @@ const plan: Guard<Plan> = (v): v is Plan => object(v) && guid(v.id) && nullable(
 export class ApiError extends Error {
   constructor(public kind: 'network' | 'timeout' | 'http' | 'invalid', message: string, public status?: number,
     /** True when a write may have reached the Control Plane even though no confirmation was received. */
-    public outcomeUnknown = false) {
+    public outcomeUnknown = false,
+    public sessionEnded = false) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+export function isExpiredOperatorSession(reason: unknown): boolean {
+  return typeof reason === 'object' && reason !== null && 'status' in reason && reason.status === 401 &&
+    (!('sessionEnded' in reason) || reason.sessionEnded !== false);
 }
 
 const UNKNOWN_OUTCOME = 'The Control Plane did not confirm the request. The task may or may not have been created — check the Tasks list before submitting again.';
@@ -398,11 +416,11 @@ export async function localRunnerRequest<T>(
     let response: Response;
     try {
       response = await fetch(`/api/local-runner${path}`, {
-        method, signal: controller.signal, cache: 'no-store', credentials: 'omit',
+        method, signal: controller.signal, cache: 'no-store', credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
           'X-HIC-Request': 'local-runner',
-          Authorization: `Bearer ${token}`,
+          ...(token === COOKIE_SESSION ? {} : { Authorization: `Bearer ${token}` }),
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -412,11 +430,12 @@ export async function localRunnerRequest<T>(
         'The local runner did not confirm the request.', undefined, method === 'POST');
     }
     if (response.status !== expectedStatus) {
+      if (response.status === 401) window.dispatchEvent(new Event(OPERATOR_SESSION_ENDED));
       const message = response.status === 401 ? 'The local runner session is invalid or expired.'
         : response.status === 503 ? 'The local runner is not registered or its approved schema is unavailable.'
           : response.status === 409 ? 'The task or approved run is no longer eligible.'
             : `The local runner returned HTTP ${response.status}.`;
-      throw new ApiError('http', message, response.status, method === 'POST' && response.status >= 500);
+      throw new ApiError('http', message, response.status, method === 'POST' && response.status >= 500, response.status === 401);
     }
     let data: unknown;
     try { data = await response.json(); }
@@ -433,7 +452,7 @@ async function createLocalRunnerSession(bootstrapToken: string): Promise<LocalRu
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch('/api/local-runner/session', {
-      method: 'POST', signal: controller.signal, cache: 'no-store', credentials: 'omit',
+      method: 'POST', signal: controller.signal, cache: 'no-store', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-HIC-Request': 'local-runner' },
       body: JSON.stringify({ bootstrapToken }),
     }).catch(() => { throw new ApiError(controller.signal.aborted ? 'timeout' : 'network', 'Local runner registration is unavailable.'); });
@@ -476,6 +495,13 @@ async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspace
 export const api = {
   inspectNativeWorkspace,
   createLocalRunnerSession,
+  restoreLocalRunnerSession: () => localRunnerRequest('/session',
+    (v): v is RestoredOperatorSession => object(v) && guid(v.actorId) && date(v.expiresAtUtc) &&
+      Number.isSafeInteger(v.expiresInSeconds) && Number(v.expiresInSeconds) > 0,
+    COOKIE_SESSION, 'GET'),
+  revokeLocalRunnerSession: (token = COOKIE_SESSION) =>
+    localRunnerRequest('/session/revoke', (v): v is { revoked: true } => object(v) && v.revoked === true,
+      token, 'POST'),
   localRunnerCapabilities: (token: string) =>
     localRunnerRequest('/capabilities', localRunnerCapability, token, 'GET'),
   localHealthIntent: (taskId: string, token: string) => {

@@ -35,6 +35,150 @@ async function startProxy(target: string, options?: ProxyOptions) {
 
 const close = (server: http.Server) => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); });
 
+describe('persistent operator cookie boundary', () => {
+  let upstream: http.Server;
+  let vite: ViteDevServer;
+  let origin: string;
+  let target: string;
+  const token = 'S'.repeat(43) + '=';
+  const received: Recorded[] = [];
+  let revoked = false;
+  let loginMode = 'ok';
+  const headers = () => ({ origin, 'x-hic-request': 'local-runner' });
+  const login = () => fetch(`${origin}/api/local-runner/session`, {
+    method: 'POST', headers: { ...headers(), 'content-type': 'application/json' },
+    body: JSON.stringify({ bootstrapToken: 'R'.repeat(43) + '=' }),
+  });
+  beforeAll(async () => {
+    upstream = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        received.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
+        if (req.method === 'POST' && req.url === '/local-runner/session') {
+          if (loginMode === 'rejected') { res.writeHead(401).end(); return; }
+          revoked = false;
+          res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+            accessToken: loginMode === 'malformed' ? 'not-a-token' : token,
+            expiresInSeconds: 28800,
+            expiresAtUtc: new Date(Date.now() + (loginMode === 'expired' ? -1000 : 28800000)).toISOString(),
+          }));
+          return;
+        }
+        if (req.headers.authorization !== `Bearer ${token}` || revoked) { res.writeHead(401).end(); return; }
+        if (req.url === '/local-runner/session/revoke') {
+          revoked = true; res.writeHead(200, { 'content-type': 'application/json' }).end('{"revoked":true}'); return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+          actorId: created.id, expiresInSeconds: 27000,
+          expiresAtUtc: new Date(Date.now() + 27000000).toISOString(),
+        }));
+      });
+    });
+    target = `http://127.0.0.1:${await listen(upstream)}`;
+    ({ vite, origin } = await startProxy(target));
+  });
+  beforeEach(() => { received.length = 0; revoked = false; loginMode = 'ok'; });
+  afterAll(async () => { await vite.close(); await close(upstream); });
+
+  it('keeps the secret HttpOnly and restores the same backend identity without another bootstrap', async () => {
+    const response = await login();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.accessToken).toBe('cookie-session');
+    expect(JSON.stringify(body)).not.toContain(token);
+    const setCookie = response.headers.get('set-cookie')!;
+    expect(setCookie).toContain('HttpOnly; SameSite=Strict; Max-Age=');
+    expect(setCookie).toContain('Path=/api/local-runner');
+    expect(setCookie).not.toContain('Domain=');
+    const maxAge = Number(/Max-Age=(\d+)/.exec(setCookie)![1]);
+    expect(maxAge).toBeGreaterThanOrEqual(28795);
+    expect(maxAge).toBeLessThanOrEqual(28800);
+    const cookie = setCookie.split(';')[0];
+    for (let reopen = 0; reopen < 3; reopen++) {
+      const restored = await fetch(`${origin}/api/local-runner/session`, {
+        headers: { 'sec-fetch-site': 'same-origin', 'x-hic-request': 'local-runner', cookie },
+      });
+      expect(restored.status).toBe(200);
+      expect((await restored.json()).actorId).toBe(created.id);
+      expect(restored.headers.get('set-cookie')).toBeNull();
+    }
+    expect(received.filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(received[0].headers['x-hic-session-mode']).toBe('browser');
+    for (const request of received.slice(1)) {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      expect(request.headers.cookie).toBeUndefined();
+    }
+  });
+
+  it('revokes server-side, clears the cookie and rejects replay and expiry', async () => {
+    const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
+    const ended = await fetch(`${origin}/api/local-runner/session/revoke`, {
+      method: 'POST', headers: { ...headers(), cookie },
+    });
+    expect(ended.status).toBe(200);
+    expect(ended.headers.get('set-cookie')).toContain('Max-Age=0');
+    const replay = await fetch(`${origin}/api/local-runner/session`, { headers: { ...headers(), cookie } });
+    expect(replay.status).toBe(401);
+    expect(replay.headers.get('set-cookie')).toContain('Max-Age=0');
+    const missing = await fetch(`${origin}/api/local-runner/session`, { headers: headers() });
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(received.map(request => request.url)).toEqual([
+      '/local-runner/session', '/local-runner/session/revoke', '/local-runner/session',
+    ]);
+  });
+
+  it('does not send a cookie across frontend or upstream runtime boundaries', async () => {
+    const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
+    const peers = [
+      await startProxy(target),
+      await startProxy('http://127.0.0.1:1'),
+    ];
+    try {
+      for (const peer of peers) {
+        const response = await fetch(`${peer.origin}/api/local-runner/session`, {
+          headers: { origin: peer.origin, 'x-hic-request': 'local-runner', cookie },
+        });
+        expect(response.status).toBe(401);
+        expect(response.headers.get('set-cookie')!.split('=')[0]).not.toBe(cookie.split('=')[0]);
+      }
+      expect(received).toHaveLength(1);
+    } finally { await Promise.all(peers.map(peer => peer.vite.close())); }
+  });
+
+  it('rejects cookie-authenticated CSRF, navigation, duplicate cookies and revoke arguments', async () => {
+    const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
+    for (const overrides of [
+      { origin: 'http://attacker.invalid' }, { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' }, { 'x-hic-request': '' }, { origin: '' },
+    ]) {
+      const response = await fetch(`${origin}/api/local-runner/session/revoke`, {
+        method: 'POST', headers: { ...headers(), cookie, ...overrides },
+      });
+      expect(response.status).toBe(403);
+    }
+    expect((await fetch(`${origin}/api/local-runner/session`, { headers: { cookie } })).status).toBe(403);
+    expect((await fetch(`${origin}/api/local-runner/session`, {
+      headers: { ...headers(), cookie: `${cookie}; ${cookie}` },
+    })).status).toBe(401);
+    expect((await fetch(`${origin}/api/local-runner/session/revoke`, {
+      method: 'POST', headers: { ...headers(), cookie, 'content-type': 'application/json' }, body: '{}',
+    })).status).toBe(400);
+    expect(received).toHaveLength(1);
+  });
+
+  it('never creates a cookie from rejected, expired or malformed issuance', async () => {
+    for (const mode of ['rejected', 'expired', 'malformed']) {
+      loginMode = mode;
+      const response = await login();
+      expect(response.status).toBe(mode === 'rejected' ? 401 : 502);
+      expect(response.headers.get('set-cookie') ?? '').not.toContain(token);
+      expect(await response.text()).not.toContain(token);
+    }
+  });
+});
+
 describe('local development proxy', () => {
   let upstream: http.Server;
   let vite: ViteDevServer;
@@ -65,7 +209,7 @@ describe('local development proxy', () => {
     });
     const port = await listen(upstream);
     ({ vite, origin, port: proxyPort } = await startProxy(`http://127.0.0.1:${port}`, {
-      upstreamTimeoutMs: 300, bodyTimeoutMs: 300, modelTimeoutMs: 300, executionTimeoutMs: 300,
+      upstreamTimeoutMs: 300, bodyTimeoutMs: 300, modelTimeoutMs: 300, executionTimeoutMs: 300, githubTimeoutMs: 300,
     }));
   });
   beforeEach(() => { received.length = 0; mode = 'ok'; });
@@ -81,6 +225,60 @@ describe('local development proxy', () => {
     }
     expect(received.map(r => `${r.method} ${r.url}`)).toEqual(
       ['/health', '/health', '/tasks', '/tasks', '/plans', '/plans', '/diagnostics/local', '/diagnostics/local', `/tasks/${created.id}`, `/tasks/${created.id}`].map(p => `GET ${p}`));
+  });
+
+  it('forwards only authenticated exact GitHub publication routes and bounded digest approvals', async () => {
+    const token = 'Bearer ' + 'S'.repeat(44);
+    const headers = { origin, 'x-hic-request': 'local-runner', authorization: token, cookie: 'private=1' };
+    for (const path of ['status', 'repository', 'bootstraps', `publications/${created.id}`]) {
+      expect((await fetch(`${origin}/api/local-runner/github/${path}`, { headers })).status).toBe(200);
+    }
+    for (const path of ['bootstrap-preview', `runs/${created.id}/preview`,
+      ...['execute', 'reconcile', 'complete-draft'].map(action => `publications/${created.id}/${action}`)]) {
+      expect((await fetch(`${origin}/api/local-runner/github/${path}`, { method: 'POST', headers })).status).toBe(201);
+    }
+    for (const action of ['approve', 'reject', 'renew']) {
+      expect((await fetch(`${origin}/api/local-runner/github/publications/${created.id}/${action}`, {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ intentDigestSha256: 'a'.repeat(64) }),
+      })).status).toBe(201);
+    }
+    for (const recorded of received) {
+      expect(recorded.headers.authorization).toBe(token);
+      expect(recorded.headers.cookie).toBeUndefined();
+    }
+    const before = received.length;
+    for (const [method, path, body] of [
+      ['POST', `publications/${created.id}/approve`, JSON.stringify({ intentDigestSha256: 'a'.repeat(64), repository: 'other' })],
+      ['POST', `publications/${created.id}/execute`, '{"force":true}'],
+      ['GET', 'status?repository=other', undefined],
+      ['PUT', `publications/${created.id}/execute`, undefined],
+      ['POST', `publications/${created.id}/merge`, undefined],
+    ]) {
+      const response = await fetch(`${origin}/api/local-runner/github/${path}`, {
+        method, headers: { ...headers, ...(body ? { 'content-type': 'application/json' } : {}) }, body,
+      });
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    }
+    expect((await fetch(`${origin}/api/local-runner/github/status`, {
+      headers: { origin, 'x-hic-request': 'local-runner' },
+    })).status).toBe(401);
+    expect((await fetch(`${origin}/api/local-runner/github/status`, {
+      headers: { ...headers, origin: 'http://attacker.invalid' },
+    })).status).toBe(403);
+    expect(received).toHaveLength(before);
+  });
+
+  it('reports an interrupted GitHub approval as unknown instead of implying success', async () => {
+    mode = 'hang';
+    const response = await fetch(`${origin}/api/local-runner/github/publications/${created.id}/approve`, {
+      method: 'POST', headers: { origin, 'x-hic-request': 'local-runner',
+        authorization: 'Bearer ' + 'S'.repeat(44), 'content-type': 'application/json' },
+      body: JSON.stringify({ intentDigestSha256: 'a'.repeat(64) }),
+    });
+    expect(response.status).toBe(504);
+    expect(response.headers.get('X-HIC-Proxy-Error')).toBe('timeout');
+    expect(received).toHaveLength(1);
   });
 
   it('allows only GET reads and POST /api/tasks', async () => {

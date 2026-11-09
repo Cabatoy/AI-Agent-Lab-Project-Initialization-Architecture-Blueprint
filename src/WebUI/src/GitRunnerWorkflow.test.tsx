@@ -4,7 +4,9 @@ import { api } from './api';
 import { gitApi, type GitRun } from './gitApi';
 import { GitRunnerWorkflow } from './GitRunnerWorkflow';
 
-vi.mock('./api', () => ({ api: { createLocalRunnerSession: vi.fn(), tasks: vi.fn(), executeLocalHealthRun: vi.fn() } }));
+vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
+  api: { restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
+    createLocalRunnerSession: vi.fn(), tasks: vi.fn(), executeLocalHealthRun: vi.fn() } }));
 vi.mock('./gitApi', () => ({ gitApi: { repositories: vi.fn(), preview: vi.fn(), approve: vi.fn(), run: vi.fn() } }));
 const taskId = '11234567-89ab-cdef-0123-456789abcdef';
 const plan = { revision: 1, taskId, actorId: taskId, taskDigest: 'a'.repeat(64), repositoryId: 'fixture',
@@ -16,6 +18,8 @@ const queued: GitRun = { runId: taskId, taskId, action: 'repository.test-edit',
   status: 'queued', plan, result: null, events: [] };
 
 beforeEach(() => {
+  vi.mocked(api.restoreLocalRunnerSession).mockRejectedValue({ status: 401 });
+  vi.mocked(api.revokeLocalRunnerSession).mockResolvedValue({ revoked: true });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 's'.repeat(44), expiresInSeconds: 900 });
   vi.mocked(api.tasks).mockResolvedValue([{ id: taskId, title: 'Fixture edit', description: '', status: 'Draft',
     attemptCount: 0, result: null, errorMessage: null, createdAtUtc: plan.expiresAtUtc, updatedAtUtc: plan.expiresAtUtc }]);
@@ -28,6 +32,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 async function prepare() {
   render(<GitRunnerWorkflow />);
+  await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'test' } });
   fireEvent.click(screen.getByText('Authenticate Git operator'));
   await screen.findByText('Repository, task and bounded scope');
@@ -36,7 +41,22 @@ async function prepare() {
   fireEvent.click(screen.getByText('Preview exact Git plan'));
   await screen.findByText('Plan revision 1');
 }
-it('requires exact approval before execution and displays durable provenance, diff and test outcome', async () => {
+it('restores the shared operator cookie without granting or replaying Git approval', async () => {
+  vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+    actorId: taskId, expiresInSeconds: 3600, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(),
+  });
+  render(<GitRunnerWorkflow />);
+  await screen.findByText('Repository, task and bounded scope');
+  expect(gitApi.repositories).toHaveBeenCalledWith('cookie-session');
+  expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
+  expect(gitApi.preview).not.toHaveBeenCalled();
+  expect(gitApi.approve).not.toHaveBeenCalled();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('End Git session'));
+  await screen.findByText(/Signed out/);
+  expect(api.revokeLocalRunnerSession).toHaveBeenCalledWith('cookie-session');
+});
+it('records exact approval without executing and displays historical provenance and diff', async () => {
   await prepare();
   expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('Approve exact Git plan'));
@@ -46,9 +66,11 @@ it('requires exact approval before execution and displays durable provenance, di
     result: { action: 'repository.test-edit', runId: taskId, repositoryId: 'fixture', baseCommit: plan.baseCommit,
       worktreePath: 'C:\\runs\\fixture', branch: 'hic-run-test', diff: '+approved', testCode: 'passed:exact-content-and-scope',
       sourceUnchanged: true, checkedAtUtc: plan.expiresAtUtc }, events: [{ eventCode: 'completed', recordedAtUtc: plan.expiresAtUtc }] });
-  fireEvent.click(screen.getByText('Execute approved isolated edit'));
+  expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Refresh Git run status'));
   await screen.findByText('Run status: completed');
   expect(screen.getByText('+approved')).toBeInTheDocument();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
 });
 it('invalidates preview on material edits without silently approving', async () => {
@@ -57,14 +79,12 @@ it('invalidates preview on material edits without silently approving', async () 
   expect(screen.queryByText('Approve exact Git plan')).not.toBeInTheDocument();
   expect(gitApi.approve).not.toHaveBeenCalled();
 });
-it('does not retry an interrupted execution and offers durable status recovery', async () => {
+it('does not execute queued repository runs and offers durable status recovery', async () => {
   await prepare();
   fireEvent.click(screen.getByText('Approve exact Git plan'));
   await screen.findByText('Run status: queued');
-  vi.mocked(api.executeLocalHealthRun).mockRejectedValue(new Error('Interrupted'));
-  fireEvent.click(screen.getByText('Execute approved isolated edit'));
-  await screen.findByRole('alert');
-  expect(api.executeLocalHealthRun).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   vi.mocked(gitApi.run).mockResolvedValue({ ...queued, status: 'running' });
   fireEvent.click(screen.getByText('Refresh Git run status'));
   await waitFor(() => expect(screen.getByText('Run status: running')).toBeInTheDocument());

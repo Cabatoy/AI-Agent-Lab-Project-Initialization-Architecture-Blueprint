@@ -73,7 +73,8 @@ internal sealed record ModelConversation(
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
     IReadOnlyList<ModelConversationMessage> Messages,
-    IReadOnlyList<object> Runs);
+    IReadOnlyList<object> Runs,
+    IReadOnlyList<object> Publications);
 internal sealed record ModelConversationSummary(
     Guid ConversationId,
     Guid TaskId,
@@ -344,6 +345,9 @@ internal static class ModelCodeEditExecutor
                 CreateNoWindow = true
             };
             start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+            foreach (var key in start.Environment.Keys.Where(key =>
+                key.StartsWith("HIC_GITHUB_", StringComparison.OrdinalIgnoreCase)).ToArray())
+                start.Environment.Remove(key);
             start.Environment["DOTNET_NOLOGO"] = "1";
             start.ArgumentList.Add("build");
             start.ArgumentList.Add("Validation.csproj");
@@ -624,7 +628,8 @@ internal static class ProjectConversationEndpoints
         var runs = await ReadConversationRunsAsync(connectionString, id, actor, cancellationToken);
         return new(conversation.ConversationId, conversation.TaskId, conversation.Title,
             conversation.RepositoryId, conversation.RepositoryPath, conversation.BaseCommit, conversation.File,
-            conversation.CreatedAtUtc, conversation.UpdatedAtUtc, messages, runs);
+            conversation.CreatedAtUtc, conversation.UpdatedAtUtc, messages, runs,
+            await new GitHubPublicationStore(connectionString).ConversationAsync(id, actor, cancellationToken));
     }
 
     private static async Task<StoredConversation?> ReadStoredConversationAsync(

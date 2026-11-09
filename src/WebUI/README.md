@@ -19,6 +19,21 @@ tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
 
+### GitHub Publisher — ayrı onay
+
+Conversation workspace'i, testleri geçmiş izole kod run'ının altında ayrı
+GitHub publication preview/onay/execute ve salt okunur reconciliation gösterir.
+Boş repo bootstrap'ı ayrı bir operatör onayıdır. Aynı conversation'da gerçek
+remote SHA ve draft PR sonucu reload sonrasında okunur. GitHub credentials
+yalnız Control Plane'e aittir; Vite veya tarayıcıya aktarılmaz.
+[App kurulumu ve izole test rehberi](../../docs/human-in-control/HIC_GITHUB_PUBLISHER.md).
+
+Proxy yalnız `/local-runner/github/status`, `repository`, `bootstraps`, exact
+publication/run GUID yollarını ve belirtilen POST action'larını iletir.
+Query, arbitrary GitHub URL/ref, PATCH/PUT/DELETE, body alanlarıyla scope genişletme,
+cross-origin veya unauthenticated istekler reddedilir. GitHub işlemlerinin
+upstream timeout'u 180 saniyedir; kesinti başarı sayılmaz ve reconciliation gerekir.
+
 ### Önkoşullar ve çalıştırma
 
 - Node.js 20.19+ veya 22.12+ ve npm.

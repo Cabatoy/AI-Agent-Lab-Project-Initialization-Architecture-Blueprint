@@ -72,14 +72,16 @@ internal sealed class LocalOperatorSessions
     private readonly Guid actorId;
     private readonly Dictionary<string, DateTimeOffset> sessions = new(StringComparer.Ordinal);
     private readonly object sync = new();
+    private readonly TimeProvider clock;
 
-    private LocalOperatorSessions(byte[] bootstrapTokenHash, Guid actorId)
+    private LocalOperatorSessions(byte[] bootstrapTokenHash, Guid actorId, TimeProvider clock)
     {
         this.bootstrapTokenHash = bootstrapTokenHash;
         this.actorId = actorId;
+        this.clock = clock;
     }
 
-    internal static LocalOperatorSessions? Create(string? bootstrapToken, string? actorIdText)
+    internal static LocalOperatorSessions? Create(string? bootstrapToken, string? actorIdText, TimeProvider? clock = null)
     {
         if (!Guid.TryParse(actorIdText, out var actorId) || actorId == Guid.Empty ||
             bootstrapToken is null || !Regex.IsMatch(bootstrapToken, "^[A-Za-z0-9+/]{43}=$", RegexOptions.CultureInvariant))
@@ -96,10 +98,10 @@ internal sealed class LocalOperatorSessions
 
         var hash = SHA256.HashData(token);
         CryptographicOperations.ZeroMemory(token);
-        return new LocalOperatorSessions(hash, actorId);
+        return new LocalOperatorSessions(hash, actorId, clock ?? TimeProvider.System);
     }
 
-    internal string? IssueSessionToken(string? suppliedBootstrapToken)
+    internal string? IssueSessionToken(string? suppliedBootstrapToken, bool browserSession = false)
     {
         if (suppliedBootstrapToken is null ||
             !Regex.IsMatch(suppliedBootstrapToken, "^[A-Za-z0-9+/]{43}=$", RegexOptions.CultureInvariant))
@@ -121,15 +123,18 @@ internal sealed class LocalOperatorSessions
         var session = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         lock (sync)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             RemoveExpiredSessions(now);
             sessions[Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(session)))] =
-                now.Add(SessionLifetime);
+                now.Add(browserSession ? TimeSpan.FromHours(8) : SessionLifetime);
         }
         return session;
     }
 
     internal Guid? Authenticate(string? authorizationHeader)
+        => Restore(authorizationHeader)?.ActorId;
+
+    internal (Guid ActorId, DateTimeOffset ExpiresAtUtc)? Restore(string? authorizationHeader)
     {
         const string prefix = "Bearer ";
         if (authorizationHeader is null || !authorizationHeader.StartsWith(prefix, StringComparison.Ordinal))
@@ -140,11 +145,24 @@ internal sealed class LocalOperatorSessions
         var sessionHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(session)));
         lock (sync)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             RemoveExpiredSessions(now);
-            return sessions.TryGetValue(sessionHash, out var expiresAt) && now < expiresAt ? actorId : null;
+            return sessions.TryGetValue(sessionHash, out var expiresAt) && now < expiresAt ? (actorId, expiresAt) : null;
         }
     }
+
+    internal bool Revoke(string? authorizationHeader)
+    {
+        lock (sync)
+        {
+            if (Restore(authorizationHeader) is null) return false;
+            return sessions.Remove(Convert.ToHexStringLower(SHA256.HashData(
+                Encoding.UTF8.GetBytes(authorizationHeader!["Bearer ".Length..]))));
+        }
+    }
+
+    internal int RemainingSeconds(DateTimeOffset expiresAtUtc) =>
+        (int)Math.Ceiling((expiresAtUtc - clock.GetUtcNow()).TotalSeconds);
 
     private void RemoveExpiredSessions(DateTimeOffset now)
     {
@@ -195,6 +213,23 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             "select exists(select 1 from native_health_runs where task_id = @taskId);",
             new { taskId }, cancellationToken: cancellationToken));
         return reserved ? null : ToIntent(task);
+    }
+
+    internal async Task<bool> ModelRunStillCurrentAsync(
+        Guid runId, ModelCodeEditPlan plan, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(postgresConnectionString);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            select exists(
+                select 1 from native_health_runs r
+                join tasks t on t.id=r.task_id
+                join hic_project_conversations c on c.conversation_id=r.conversation_id
+                where r.run_id=@runId and r.task_id=@TaskId and r.actor_id=@ActorId
+                    and r.task_updated_at_utc=t.updated_at_utc and t.status='Draft'
+                    and c.actor_id=@ActorId and c.task_id=@TaskId and c.conversation_id=@ConversationId
+                    and c.repository_id=@RepositoryId and c.base_commit=@BaseCommit and c.file_path=@File);
+            """, new { runId, plan.TaskId, plan.ActorId, plan.ConversationId,
+            plan.RepositoryId, plan.BaseCommit, plan.File }, cancellationToken: cancellationToken));
     }
 
     internal async Task<(string Code, LocalHealthRun? Run)> ApproveAsync(
@@ -288,7 +323,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
     }
 
     internal async Task<LocalHealthClaimOutcome> ClaimAsync(
-        Guid runId, Guid actorId, CancellationToken cancellationToken)
+        Guid runId, Guid actorId, CancellationToken cancellationToken, string? allowedAction = null)
     {
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
@@ -305,6 +340,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             new { runId }, transaction, cancellationToken: cancellationToken));
         if (run is null) return new("not-found");
         if (run.ActorId != actorId) return new("actor-mismatch");
+        if (allowedAction is not null && run.Action != allowedAction) return new("isolation-required");
         if (run.Status != "queued")
         {
             await InsertEventAsync(connection, transaction, runId, actorId, "rejected", cancellationToken);
@@ -488,15 +524,42 @@ internal static class LocalHealthRunnerEndpoints
         var store = new LocalHealthRunStore(postgresConnectionString);
         app.MapPost("/local-runner/session", async (HttpContext context, CancellationToken cancellationToken) =>
         {
+            context.Response.Headers.CacheControl = "no-store";
             if (sessions is null) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
             if (!await store.IsSchemaReadyAsync(cancellationToken))
                 return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
             var token = await ReadBootstrapTokenAsync(context.Request, cancellationToken);
             if (token is null) return Results.BadRequest(new { error = "Invalid session request." });
-            var session = sessions.IssueSessionToken(token);
-            return session is null
-                ? Results.Unauthorized()
-                : Results.Ok(new { accessToken = session, expiresInSeconds = 900 });
+            var browserSession = context.Request.Headers["X-HIC-Session-Mode"] == "browser";
+            var session = sessions.IssueSessionToken(token, browserSession);
+            if (session is null) return Results.Unauthorized();
+            var restored = sessions.Restore("Bearer " + session)!.Value;
+            return Results.Ok(new
+            {
+                accessToken = session,
+                expiresInSeconds = sessions.RemainingSeconds(restored.ExpiresAtUtc),
+                expiresAtUtc = restored.ExpiresAtUtc
+            });
+        });
+
+        app.MapGet("/local-runner/session", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var session = sessions?.Restore(context.Request.Headers.Authorization);
+            return session is null ? Results.Unauthorized() : Results.Ok(new
+            {
+                actorId = session.Value.ActorId,
+                expiresAtUtc = session.Value.ExpiresAtUtc,
+                expiresInSeconds = sessions!.RemainingSeconds(session.Value.ExpiresAtUtc)
+            });
+        });
+        app.MapPost("/local-runner/session/revoke", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (context.Request.ContentLength is > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
+                return Results.BadRequest();
+            return sessions?.Revoke(context.Request.Headers.Authorization) == true
+                ? Results.Ok(new { revoked = true }) : Results.Unauthorized();
         });
 
         app.MapGet("/local-runner/capabilities", async (HttpContext context, CancellationToken cancellationToken) =>
@@ -569,31 +632,13 @@ internal static class LocalHealthRunnerEndpoints
                 context.Request.Headers.TransferEncoding.Count > 0)
                 return Results.BadRequest(new { error = "This action accepts no arguments." });
 
-            var claim = await store.ClaimAsync(runId, actorId.Value, cancellationToken);
-            if (claim.Code == "not-found") return Results.NotFound();
+            var claim = await store.ClaimAsync(runId, actorId.Value, cancellationToken, LocalHealthRunIntent.Action);
+            if (claim.Code is "not-found" or "actor-mismatch") return Results.NotFound();
+            if (claim.Code == "isolation-required")
+                return Results.Conflict(new { error = "Repository execution is disabled: a verified isolation backend is not available." });
             if (claim.Code != "claimed")
                 return Results.Conflict(new { error = $"Local run not eligible: {claim.Code}." });
 
-            if (claim.Run!.Action == GitEditPlan.Action)
-            {
-                var plan = await store.GetPlanAsync(runId, CancellationToken.None);
-                var gitResult = await GitEditExecutor.ExecuteAsync(
-                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
-                if (!await store.CompleteGitAsync(runId, actorId.Value, gitResult, CancellationToken.None))
-                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
-                return Results.Ok(new { runId, status = gitResult.SourceUnchanged &&
-                    gitResult.TestCode == "passed:exact-content-and-scope" ? "completed" : "failed" });
-            }
-            if (claim.Run.Action == ModelCodeEditPlan.Action)
-            {
-                var plan = await store.GetModelCodePlanAsync(runId, CancellationToken.None);
-                var codeResult = await ModelCodeEditExecutor.ExecuteAsync(
-                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
-                if (!await store.CompleteModelCodeAsync(runId, actorId.Value, codeResult, CancellationToken.None))
-                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
-                return Results.Ok(new { runId, status = codeResult.SourceUnchanged &&
-                    codeResult.TestCode == "passed:isolated-csharp-compile-and-scope" ? "completed" : "failed" });
-            }
             var result = await LocalDiagnostics.InspectAsync(postgresConnectionString, redisDb,
                 CancellationToken.None);
             if (!await store.CompleteAsync(runId, actorId.Value, result, CancellationToken.None))

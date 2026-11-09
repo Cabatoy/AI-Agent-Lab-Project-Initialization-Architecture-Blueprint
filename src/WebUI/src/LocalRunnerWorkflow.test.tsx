@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
 
-vi.mock('./api', () => ({
+vi.mock('./api', async importOriginal => ({
+  ...await importOriginal<typeof import('./api')>(),
   api: {
+    restoreLocalRunnerSession: vi.fn(), revokeLocalRunnerSession: vi.fn(),
     createLocalRunnerSession: vi.fn(),
     localRunnerCapabilities: vi.fn(),
     tasks: vi.fn(),
@@ -74,6 +76,8 @@ const completed = {
 const invalidated = { ...queued, status: 'invalidated' as const, completedAtUtc: '2026-11-08T10:00:01Z' };
 
 beforeEach(() => {
+  vi.mocked(api.restoreLocalRunnerSession).mockRejectedValue({ status: 401 });
+  vi.mocked(api.revokeLocalRunnerSession).mockResolvedValue({ revoked: true });
   vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: 'S'.repeat(44), expiresInSeconds: 900 });
   vi.mocked(api.localRunnerCapabilities).mockResolvedValue({
     actorId: '21234567-89ab-cdef-0123-456789abcdef',
@@ -99,9 +103,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('Local Runner workflow', () => {
+  it('restores the same operator without selecting, approving or executing a task', async () => {
+    vi.mocked(api.restoreLocalRunnerSession).mockResolvedValue({
+      actorId: task.id, expiresInSeconds: 3600, expiresAtUtc: new Date(Date.now() + 3600000).toISOString(),
+    });
+    render(<LocalRunnerWorkflow />);
+    await screen.findByText('Review before approval');
+    expect(api.localRunnerCapabilities).toHaveBeenCalledWith('cookie-session');
+    expect(api.createLocalRunnerSession).not.toHaveBeenCalled();
+    expect(api.localHealthIntent).not.toHaveBeenCalled();
+    expect(api.approveLocalHealthRun).not.toHaveBeenCalled();
+    expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('End local session'));
+    await screen.findByText(/Signed out/);
+    expect(api.revokeLocalRunnerSession).toHaveBeenCalledWith('cookie-session');
+  });
   it('does not execute before authentication, task selection and explicit intent approval', async () => {
     render(<LocalRunnerWorkflow />);
     expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
 
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
       target: { value: 'R'.repeat(44) },
@@ -138,6 +158,7 @@ describe('Local Runner workflow', () => {
   it('shows a real conflict instead of retrying an already claimed run', async () => {
     vi.mocked(api.localHealthRun).mockReset().mockResolvedValue(completed);
     render(<LocalRunnerWorkflow />);
+    await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
       target: { value: 'R'.repeat(44) },
     });
@@ -158,6 +179,7 @@ describe('Local Runner workflow', () => {
       .mockResolvedValueOnce(invalidated);
     vi.mocked(api.executeLocalHealthRun).mockRejectedValueOnce(new Error('The task or approved run is no longer eligible.'));
     render(<LocalRunnerWorkflow />);
+    await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
       target: { value: 'R'.repeat(44) },
     });

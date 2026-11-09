@@ -25,7 +25,7 @@ const subtitles: Partial<Record<Page, string>> = {
   'Command Center': 'Describe work in natural language and save it as a Draft task.',
   'Local Runner': 'Approve one exact, read-only local system health action and review its durable result.',
   'Isolated Git': 'Approve one bounded disposable-repository edit and inspect its actual diff and test result.',
-  Conversations: 'Talk to the configured local model, review a versioned plan and approve one isolated code edit.',
+  Conversations: 'Talk to the configured local model and review conversations and prior plans.',
   Planning: 'Select the configured repository and review a local, versioned plan preview.',
   Overview: 'Your local software factory, in view.',
   Tasks: 'Inspect task state from the Control Plane.',
@@ -102,7 +102,7 @@ function Planned({ page }: { page: Page }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('Overview');
+  const [page, setPage] = useState<Page>(() => window.location.hash === '#operator-access' ? 'Conversations' : 'Overview');
   const [health, setHealth] = useState<Resource<Health>>(initial);
   const [tasks, setTasks] = useState<Resource<Task[]>>(initial);
   const [plans, setPlans] = useState<Resource<Plan[]>>(initial);
