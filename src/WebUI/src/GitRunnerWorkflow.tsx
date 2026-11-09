@@ -14,7 +14,6 @@ export function GitRunnerWorkflow() {
   const [preview, setPreview] = useState<GitPreview | null>(null);
   const [run, setRun] = useState<GitRun | null>(null);
   const [runId, setRunId] = useState('');
-  const [attemptedRunId, setAttemptedRunId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repository = repositories.find(r => r.id === repoId);
@@ -25,7 +24,7 @@ export function GitRunnerWorkflow() {
   }, () => {
     setToken(''); setBootstrap(''); setRepositories([]); setTasks([]); invalidate();
     setTaskId(''); setRepoId(''); setContent('Approved HIC test edit.\n');
-    setAttemptedRunId(''); setError(null);
+    setError(null);
   }, reason => setError(reason instanceof Error ? reason.message : 'Operator session restore failed.'));
 
   async function perform(action: () => Promise<void>) {
@@ -43,8 +42,9 @@ export function GitRunnerWorkflow() {
     <section className="panel">
       <p className="eyebrow">HUMAN-CONTROLLED · DISPOSABLE REPOSITORY ONLY</p>
       <h2>Approve an isolated Git edit</h2>
-      <p className="muted">One deterministic message.txt replacement in a dedicated worktree. No shell, model,
-        Worker, task commit, push, merge or deployment. Source checkout files remain unchanged.</p>
+      <p className="muted">This interface does not offer repository execution. The updated Control Plane denies it
+        until an OS-isolated backend is verified; an older running Control Plane may not enforce this restriction.
+        Existing approvals and historical results remain visible.</p>
       {!token ? <div className="command-form">
         <label htmlFor="git-bootstrap">Local operator bootstrap token</label>
         <input id="git-bootstrap" className="command-title" type="password" autoComplete="off" value={bootstrap}
@@ -89,8 +89,8 @@ export function GitRunnerWorkflow() {
         <h3>Plan revision {preview.plan.revision}</h3>
         <p>Actor: {preview.plan.actorId}<br />Expires: {preview.plan.expiresAtUtc}</p>
         <p className="mono">SHA-256: {preview.intentDigestSha256}</p>
-        <p>Scope: message.txt only. Dependencies: validate base → isolated worktree → exact content/scope test.
-          Acceptance: bounded diff, exact content and unchanged source. Risk: interrupted runs require manual review, never automatic replay.</p>
+        <p>Scope: message.txt only. Repository execution is unavailable until an OS-isolated backend is verified.
+          Approval reserves this task but does not execute it. Interrupted runs require manual review, never automatic replay.</p>
         <pre className="preserve">{preview.plan.content}</pre>
         <button className="primary" disabled={busy || !!run || Date.parse(preview.plan.expiresAtUtc) <= Date.now()}
           onClick={() => void perform(async () => {
@@ -110,12 +110,7 @@ export function GitRunnerWorkflow() {
           One immutable decision per task; use a new Draft task for a different plan.</p>
         <p className="mono">Run: {run.runId}<br />Repository: {run.plan.repositoryPath}<br />
           Base: {run.plan.baseCommit}<br />Approved hash: {run.intentDigestSha256}</p>
-        {run.status === 'queued' && attemptedRunId !== run.runId && <button className="primary" disabled={busy}
-          onClick={() => void perform(async () => {
-            setAttemptedRunId(run.runId);
-            await api.executeLocalHealthRun(run.runId, token);
-            setRun(await gitApi.run(run.runId, token));
-          })}>Execute approved isolated edit</button>}
+        {run.status === 'queued' && <p className="notice">Repository execution is disabled until a verified isolation backend is available. This approval has not been executed.</p>}
         {run.status === 'running' && <p className="notice">Claim is durable. After a crash this run stays running/unknown;
           it cannot be replayed. Inspect its retained worktree before any future recovery decision.</p>}
         {run.result && <>

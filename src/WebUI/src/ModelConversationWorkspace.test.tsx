@@ -66,7 +66,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
-it('creates a durable conversation, displays a model proposal, requires approval and reports execution results', async () => {
+it('creates a durable conversation, displays a proposal and preserves historical results without executing', async () => {
   render(<ModelConversationWorkspace />);
   await waitFor(() => expect(screen.getByLabelText('Local operator bootstrap token')).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'bootstrap' } });
@@ -107,9 +107,10 @@ it('creates a durable conversation, displays a model proposal, requires approval
     }, events: [{ eventCode: 'approved', recordedAtUtc: now }, { eventCode: 'completed', recordedAtUtc: now }] }],
   };
   vi.mocked(api.modelConversation).mockResolvedValueOnce(completed);
-  fireEvent.click(screen.getByText('Execute approved isolated edit'));
+  expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Refresh history and run status'));
   await screen.findByText('Bounded validation: passed:isolated-csharp-compile-and-scope');
-  expect(api.executeLocalHealthRun).toHaveBeenCalledWith(id, 's'.repeat(44), 120000);
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   expect(screen.getByText('+public static class Value')).toBeInTheDocument();
   expect(screen.getByText(/completed ·/)).toBeInTheDocument();
 });

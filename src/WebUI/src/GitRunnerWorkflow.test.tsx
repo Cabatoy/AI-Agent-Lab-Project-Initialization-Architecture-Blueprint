@@ -56,7 +56,7 @@ it('restores the shared operator cookie without granting or replaying Git approv
   await screen.findByText(/Signed out/);
   expect(api.revokeLocalRunnerSession).toHaveBeenCalledWith('cookie-session');
 });
-it('requires exact approval before execution and displays durable provenance, diff and test outcome', async () => {
+it('records exact approval without executing and displays historical provenance and diff', async () => {
   await prepare();
   expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('Approve exact Git plan'));
@@ -66,9 +66,11 @@ it('requires exact approval before execution and displays durable provenance, di
     result: { action: 'repository.test-edit', runId: taskId, repositoryId: 'fixture', baseCommit: plan.baseCommit,
       worktreePath: 'C:\\runs\\fixture', branch: 'hic-run-test', diff: '+approved', testCode: 'passed:exact-content-and-scope',
       sourceUnchanged: true, checkedAtUtc: plan.expiresAtUtc }, events: [{ eventCode: 'completed', recordedAtUtc: plan.expiresAtUtc }] });
-  fireEvent.click(screen.getByText('Execute approved isolated edit'));
+  expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Refresh Git run status'));
   await screen.findByText('Run status: completed');
   expect(screen.getByText('+approved')).toBeInTheDocument();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
 });
 it('invalidates preview on material edits without silently approving', async () => {
@@ -77,14 +79,12 @@ it('invalidates preview on material edits without silently approving', async () 
   expect(screen.queryByText('Approve exact Git plan')).not.toBeInTheDocument();
   expect(gitApi.approve).not.toHaveBeenCalled();
 });
-it('does not retry an interrupted execution and offers durable status recovery', async () => {
+it('does not execute queued repository runs and offers durable status recovery', async () => {
   await prepare();
   fireEvent.click(screen.getByText('Approve exact Git plan'));
   await screen.findByText('Run status: queued');
-  vi.mocked(api.executeLocalHealthRun).mockRejectedValue(new Error('Interrupted'));
-  fireEvent.click(screen.getByText('Execute approved isolated edit'));
-  await screen.findByRole('alert');
-  expect(api.executeLocalHealthRun).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('Execute approved isolated edit')).not.toBeInTheDocument();
+  expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   vi.mocked(gitApi.run).mockResolvedValue({ ...queued, status: 'running' });
   fireEvent.click(screen.getByText('Refresh Git run status'));
   await waitFor(() => expect(screen.getByText('Run status: running')).toBeInTheDocument());

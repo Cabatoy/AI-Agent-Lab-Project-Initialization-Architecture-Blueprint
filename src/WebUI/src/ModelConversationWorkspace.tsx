@@ -26,7 +26,6 @@ export function ModelConversationWorkspace() {
   const [title, setTitle] = useState('');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [attemptedRunIds, setAttemptedRunIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const repository = repositories.find(item => item.id === selectedRepository);
   const authorizedFiles = useMemo(() => repository?.files.filter(file => file.endsWith('.cs') && file !== '.hic-disposable') ?? [],
@@ -39,7 +38,7 @@ export function ModelConversationWorkspace() {
   function clearSession() {
     setToken(''); setBootstrap(''); setError(null);
     setModel(emptyModel); setRepositories([]); setConversations([]);
-    setConversation(null); setAttemptedRunIds([]); setInput('');
+    setConversation(null); setInput('');
     setSelectedRepository(''); setSelectedFile(''); setTitle('');
   }
 
@@ -61,8 +60,6 @@ export function ModelConversationWorkspace() {
     if (!id || !token) return;
     const updated = await api.modelConversation(id, token);
     setConversation(updated);
-    setAttemptedRunIds(previous => previous.filter(runId =>
-      updated.runs.some(run => run.runId === runId && run.status === 'queued')));
   }
 
   async function loadWorkspace(accessToken: string, active = () => true) {
@@ -84,9 +81,10 @@ export function ModelConversationWorkspace() {
     <section className="panel">
       <p className="eyebrow">CONVERSATION · LOCAL MODEL · HUMAN-APPROVED EDIT</p>
       <h2>Project conversation</h2>
-      <p className="muted">Real local model calls, durable conversation history and one explicitly approved C# file replacement
-        in an isolated worktree. GitHub publication needs a separate repository-scoped approval.
-        No shell, merge, deployment or paid-provider fallback.</p>
+      <p className="muted">Real local model calls and durable conversation history. This interface does not offer
+        repository execution. The updated Control Plane denies it until an OS-isolated backend is verified;
+        an older running Control Plane may not enforce this restriction. Do not execute or publish repository changes
+        through an older instance. Previous sandbox results are historical evidence, not production isolation.</p>
       {!token ? <div className="command-form">
         <label htmlFor="conversation-bootstrap">Local operator bootstrap token</label>
         <input id="conversation-bootstrap" className="command-title" type="password" autoComplete="off"
@@ -111,7 +109,7 @@ export function ModelConversationWorkspace() {
       {operator.notice && <p className="notice" role="status">{operator.notice}</p>}
       {token && <p className={model.configured ? 'notice' : 'notice error'} role={model.configured ? 'status' : 'alert'}>
         {model.configured
-          ? `Requests use only the configured local model; model timeout ${model.timeoutSeconds}s.`
+          ? `Local model is configured; connectivity is checked when a message is sent. Model timeout ${model.timeoutSeconds}s.`
           : 'Local model is unavailable or not configured. Messages are retained, but no model response or plan will be fabricated.'}
       </p>}
       {error && <p className="notice error" role="alert">{error} For an interrupted write, refresh this conversation before sending again.</p>}
@@ -163,7 +161,6 @@ export function ModelConversationWorkspace() {
           className={`task-link ${conversation?.conversationId === item.conversationId ? 'selected' : ''}`}
           disabled={busy} onClick={() => void perform(async () => {
             setConversation(await api.modelConversation(item.conversationId, token));
-            setAttemptedRunIds([]);
           })}>
           {item.title}<span className="identifier">{item.repositoryId} · {item.file} · {stamp(item.updatedAtUtc)}</span>
         </button>)}
@@ -219,7 +216,7 @@ export function ModelConversationWorkspace() {
             throw reason;
           }
         })}>Send message</button>
-        <p className="muted small">Model output and repository text are untrusted. Only a validated proposal plus this separate human approval can start the bounded local edit.</p>
+        <p className="muted small">Model output and repository text are untrusted. Approval records the exact plan but cannot enable repository execution without a verified isolation backend.</p>
       </div>
     </section>}
 
@@ -228,12 +225,7 @@ export function ModelConversationWorkspace() {
         <h2>Code edit · {run.status}</h2></div><span className="outline-badge">{run.action}</span></div>
       <p className="mono">Run: {run.runId}<br />Task: {run.taskId}<br />Scope: {run.scope}<br />
         Approved digest: {run.intentDigestSha256}</p>
-      {run.status === 'queued' && !attemptedRunIds.includes(run.runId) && <button className="primary" disabled={busy}
-        onClick={() => void perform(async () => {
-          setAttemptedRunIds(previous => [...previous, run.runId]);
-          await api.executeLocalHealthRun(run.runId, token, 120000);
-          await refreshConversation();
-        })}>Execute approved isolated edit</button>}
+      {run.status === 'queued' && <p className="notice">Repository execution is disabled until a verified isolation backend is available. This approval has not been executed.</p>}
       {run.status === 'running' && <p className="notice">Execution claim is durable. An interrupted run is not automatically replayed; refresh to reconcile its recorded status.</p>}
       {run.result && <div className="detail-block">
         <h3>Bounded validation: {run.result.testCode}</h3>

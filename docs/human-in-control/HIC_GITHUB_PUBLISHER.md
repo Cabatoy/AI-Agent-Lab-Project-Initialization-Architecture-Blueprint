@@ -1,5 +1,13 @@
 # HIC GitHub Publisher — Issue #52
 
+> **Yerel önizleme güvenlik durumu:** Bu kaynak sürümünde Control Plane,
+> doğrulanmış OS izolasyonu bulunana kadar repository çalıştırma isteklerini
+> claim etmeden reddeder. Zaten çalışan eski bir API bu korumayı içermeyebilir;
+> yalnız arayüzdeki düğmenin kaldırılması eski API'yi güvenli hale getirmez.
+> Önceden üretilmiş host worktree içeriğinin yayınlanması da aynı dosya sistemi
+> riskini taşır; izolasyon ve artifact doğrulaması tamamlanana kadar yeni GitHub
+> yayınları yapmayın. Geçmiş sandbox sonucu yalnız tarihsel kanıttır.
+
 ## Yönetici Özeti
 
 Mevcut model önerisi → ayrı kod onayı → izole worktree → sınırlı C# derlemesi

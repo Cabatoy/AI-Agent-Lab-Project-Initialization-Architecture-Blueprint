@@ -21,6 +21,47 @@ public sealed class LocalHealthRunnerSecurityTests
         public override DateTimeOffset GetUtcNow() => Now;
     }
 
+    [PostgresFact]
+    public async Task RepositoryExecution_IsDeniedBeforeClaimAndPreservesApproval()
+    {
+        await GitEditRunnerTests.Database(async (cs, db, taskId) =>
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            await using var app = builder.Build();
+            var actor = Guid.NewGuid();
+            var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var sessions = LocalOperatorSessions.Create(bootstrap, actor.ToString())!;
+            var token = sessions.IssueSessionToken(bootstrap)!;
+            LocalHealthRunnerEndpoints.Map(app, cs, null!, sessions);
+            var store = new LocalHealthRunStore(cs);
+            var intent = (await store.GetIntentAsync(taskId, CancellationToken.None))!;
+            var expiry = DateTime.UtcNow.AddMinutes(4);
+            expiry = new DateTime(expiry.Ticks / 10 * 10, DateTimeKind.Utc);
+            var plan = new GitEditPlan(1, taskId, actor, intent.IntentDigestSha256, "fixture",
+                Path.GetTempPath(), new string('b', 40), "message.txt", "approved\n", expiry);
+            var approval = await store.ApproveAsync(taskId, actor, plan.Digest(), CancellationToken.None, plan);
+            Assert.Equal("accepted", approval.Code);
+            var runId = approval.Run!.RunId;
+            var eventsBefore = await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit");
+            await app.StartAsync();
+            try
+            {
+                var address = app.Services.GetRequiredService<IServer>().Features
+                    .Get<IServerAddressesFeature>()!.Addresses.Single();
+                using var client = new HttpClient { BaseAddress = new Uri(address) };
+                client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+                var result = await client.PostAsync($"/local-runner/runs/{runId}/execute", null);
+                Assert.Equal(HttpStatusCode.Conflict, result.StatusCode);
+                Assert.Contains("isolation backend", await result.Content.ReadAsStringAsync());
+                Assert.Equal("queued", (await store.GetAsync(runId, actor, CancellationToken.None))!.Run.Status);
+                Assert.Equal(eventsBefore, await db.ExecuteScalarAsync<int>("select count(*)::int from native_health_run_audit"));
+            }
+            finally { await app.StopAsync(); }
+        });
+    }
+
     [Fact]
     public void Sessions_HaveDistinctAbsoluteLifetimesAndDeterministicRevocation()
     {

@@ -176,6 +176,14 @@ public sealed class ModelCodeEditTests
             Assert.Equal(1, await database.ExecuteScalarAsync<int>(
                 "select count(*)::int from native_health_runs where conversation_id=@conversationId and plan_json is not null",
                 new { conversationId }));
+            Assert.Equal("actor-mismatch", (await store.ClaimAsync(approval.Run.RunId, Guid.NewGuid(),
+                CancellationToken.None, LocalHealthRunIntent.Action)).Code);
+            Assert.Equal("isolation-required", (await store.ClaimAsync(approval.Run.RunId, actorId,
+                CancellationToken.None, LocalHealthRunIntent.Action)).Code);
+            Assert.Equal("queued", (await store.GetAsync(approval.Run.RunId, actorId, CancellationToken.None))!.Run.Status);
+            Assert.Equal(2, await database.ExecuteScalarAsync<int>(
+                "select count(*)::int from native_health_run_audit where run_id=@runId",
+                new { runId = approval.Run.RunId }));
             Assert.Equal("claimed", (await store.ClaimAsync(approval.Run.RunId, actorId, CancellationToken.None)).Code);
             Assert.Equal(plan.Digest(), (await store.GetModelCodePlanAsync(approval.Run.RunId, CancellationToken.None))!.Digest());
             var result = new ModelCodeEditResult(ModelCodeEditPlan.Action, approval.Run.RunId, conversationId,

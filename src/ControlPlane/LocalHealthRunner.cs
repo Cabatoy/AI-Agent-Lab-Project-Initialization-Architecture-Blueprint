@@ -323,7 +323,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
     }
 
     internal async Task<LocalHealthClaimOutcome> ClaimAsync(
-        Guid runId, Guid actorId, CancellationToken cancellationToken)
+        Guid runId, Guid actorId, CancellationToken cancellationToken, string? allowedAction = null)
     {
         await using var connection = new NpgsqlConnection(postgresConnectionString);
         await connection.OpenAsync(cancellationToken);
@@ -340,6 +340,7 @@ internal sealed class LocalHealthRunStore(string postgresConnectionString)
             new { runId }, transaction, cancellationToken: cancellationToken));
         if (run is null) return new("not-found");
         if (run.ActorId != actorId) return new("actor-mismatch");
+        if (allowedAction is not null && run.Action != allowedAction) return new("isolation-required");
         if (run.Status != "queued")
         {
             await InsertEventAsync(connection, transaction, runId, actorId, "rejected", cancellationToken);
@@ -631,31 +632,13 @@ internal static class LocalHealthRunnerEndpoints
                 context.Request.Headers.TransferEncoding.Count > 0)
                 return Results.BadRequest(new { error = "This action accepts no arguments." });
 
-            var claim = await store.ClaimAsync(runId, actorId.Value, cancellationToken);
-            if (claim.Code == "not-found") return Results.NotFound();
+            var claim = await store.ClaimAsync(runId, actorId.Value, cancellationToken, LocalHealthRunIntent.Action);
+            if (claim.Code is "not-found" or "actor-mismatch") return Results.NotFound();
+            if (claim.Code == "isolation-required")
+                return Results.Conflict(new { error = "Repository execution is disabled: a verified isolation backend is not available." });
             if (claim.Code != "claimed")
                 return Results.Conflict(new { error = $"Local run not eligible: {claim.Code}." });
 
-            if (claim.Run!.Action == GitEditPlan.Action)
-            {
-                var plan = await store.GetPlanAsync(runId, CancellationToken.None);
-                var gitResult = await GitEditExecutor.ExecuteAsync(
-                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
-                if (!await store.CompleteGitAsync(runId, actorId.Value, gitResult, CancellationToken.None))
-                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
-                return Results.Ok(new { runId, status = gitResult.SourceUnchanged &&
-                    gitResult.TestCode == "passed:exact-content-and-scope" ? "completed" : "failed" });
-            }
-            if (claim.Run.Action == ModelCodeEditPlan.Action)
-            {
-                var plan = await store.GetModelCodePlanAsync(runId, CancellationToken.None);
-                var codeResult = await ModelCodeEditExecutor.ExecuteAsync(
-                    app.Configuration, runId, plan, app.Logger, CancellationToken.None);
-                if (!await store.CompleteModelCodeAsync(runId, actorId.Value, codeResult, CancellationToken.None))
-                    return Results.Conflict(new { error = "Local run result was not durably recorded." });
-                return Results.Ok(new { runId, status = codeResult.SourceUnchanged &&
-                    codeResult.TestCode == "passed:isolated-csharp-compile-and-scope" ? "completed" : "failed" });
-            }
             var result = await LocalDiagnostics.InspectAsync(postgresConnectionString, redisDb,
                 CancellationToken.None);
             if (!await store.CompleteAsync(runId, actorId.Value, result, CancellationToken.None))
