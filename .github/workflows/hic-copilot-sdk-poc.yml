@@ -2,7 +2,7 @@ name: HIC Copilot SDK PoC (offline)
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, feature/issue-88-copilot-sdk-poc]
     paths:
       - 'tools/dev-handoff/copilot-sdk-poc/**'
       - '.github/workflows/hic-copilot-sdk-poc.yml'
@@ -21,6 +21,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Confirm checkout is the exact PR head
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node -e "const { execFileSync } = require('node:child_process'); if (execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== process.env.EXPECTED_HEAD_SHA) process.exit(1); console.log('Checked out exact PR head')"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

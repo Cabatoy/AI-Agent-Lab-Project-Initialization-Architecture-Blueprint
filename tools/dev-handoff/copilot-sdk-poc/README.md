@@ -1,6 +1,6 @@
 # HIC developer-only Copilot SDK PoC
 
-This package is an isolated S0/S1 feasibility slice for Issue #88. It is not
+This package is an isolated S0/S1 and S2-readiness slice for Issues #88/#90. It is not
 part of the HIC product, solution, release, UI, Worker, executor, or a customer
 workflow. It cannot control or resume the active VS Code Copilot Fusion chat;
 the SDK creates its own Copilot CLI agent session.
@@ -28,10 +28,15 @@ The installed .NET SDK is also compatible with the documented .NET SDK option,
 but Node/TypeScript was selected because this environment already provides a
 supported Node runtime and the SDK package ships its CLI runtime.
 
-The installed `copilot` command is only a VS Code shim in this environment; it
-does not establish that the Copilot CLI is installed or authenticated. No
-credential was read, copied, installed, or emitted. The VS Code editor or its
-extension sign-in must not be treated as proof of CLI/SDK authentication.
+The installed `copilot` command was only a VS Code shim in the S0 environment;
+it did not establish that a supported SDK-bundled runtime was invoked or
+authenticated. The npm package metadata reports bundled Copilot runtime
+**1.0.108**, so global CLI absence is not evidence that the SDK cannot run.
+This branch does not execute that runtime or invoke any CLI command. The
+non-secret `npm run preflight` reports only whether a `copilot` executable name
+is present on `PATH`; it does not print the path, run a version/auth command,
+or inspect any other environment variable, token store, keychain, or credential
+file. An editor Copilot sign-in is not proof of SDK/CLI authentication.
 
 ## Authentication, quota, and billing
 
@@ -67,10 +72,37 @@ The concrete transport therefore creates a session with:
 - a permission callback that rejects every request; and
 - `skipCustomInstructions: true`, to avoid importing repository instructions.
 
-These are defense-in-depth SDK settings, **not an OS sandbox**. A Git
-worktree alone does not isolate the host filesystem, network, inherited
-environment, or credentials. This PoC has no exact-SHA verifier implementation
-or sandbox implementation; both remain separate S2 prerequisites.
+These are defense-in-depth SDK settings, **not an OS sandbox**. The optional
+`ReadOnlyGitExactHeadVerifier` implementation performs read-only local checks:
+
+- requires the exact allowlisted repository origin, a linked (non-primary)
+  Git worktree, the reviewed branch and full `HEAD` SHA;
+- rejects a dirty or ignored-file-containing worktree, unregistered/locked
+  worktrees, path escapes, symlink/reparse paths, and non-regular or
+  non-Markdown files outside `docs/` and `docs-md/`;
+- compares the committed tree, index, and filesystem by Git blob hashes instead
+  of invoking `git status`; it disables optional Git locks/global config and
+  passes only executable-resolution/system variables to Git subprocesses. A
+  checkout whose filesystem bytes differ from Git blobs (for example due to
+  line-ending conversion) is rejected rather than normalized;
+- enforces per-command timeout and cancellation and requires the review task
+  digest to be signed by a configured trusted Ed25519 public key. No trusted key
+  is configured in this PoC, so the real verifier fails closed until an
+  independently managed key/approval process is provided.
+
+The verifier runs before session creation and again immediately before task
+submission. It is not a filesystem lock: another process can still change a
+worktree after a read-only check. Tests keep the SDK transport fake. Existing
+adapter unit tests use a fake `ExactHeadVerifier`; the concrete verifier is
+explicitly injectable and is never the default. Local `HEAD` is not proof that
+GitHub CI checked that commit.
+
+GitHub check status has a separate `GitHubExactHeadStatusProvider` contract and
+schema (`github-check-runs-read-only`). It accepts only the allowlisted
+repository and full SHA, validates each returned check-run `head_sha` against
+that SHA, and returns `unknown` when no checks exist. Its API dependency is
+injected; no GitHub API call or credential is used by this package's tests. CI
+checks out and asserts the exact pull-request head SHA on Windows and Linux.
 
 `session.idle` is recorded as an SDK lifecycle event only. Evidence always has
 `executionVerified: false`; code changes, tests, CI, an exact GitHub SHA, and
@@ -94,21 +126,75 @@ npm ci --omit=optional --ignore-scripts --no-audit --no-fund
 npm run check
 ```
 
-Tests use only a fake transport and fake exact-head verifier. They do not
-construct a `CopilotClient`, start a CLI/runtime, authenticate, access a model,
-or make network requests. Dependency installation excludes optional platform
-runtime binaries and lifecycle scripts. There is no live-session command in
-this S1 slice. The `HIC Copilot SDK PoC (offline)` workflow runs the same
+Adapter tests use a fake transport and fake exact-head verifier; separate
+verifier tests use disposable local Git fixtures. No test constructs a
+`CopilotClient`, starts a CLI/runtime, authenticates, accesses a model, or makes
+network requests. Dependency installation excludes optional platform runtime
+binaries and lifecycle scripts. There is no live-session command in this
+readiness slice. The `HIC Copilot SDK PoC (offline)` workflow runs the same
 typecheck/tests on Windows and Linux with read-only repository permission.
+
+Run the redacted local preflight separately with `npm run preflight`. It prints
+the pinned SDK and package-metadata runtime-version claim, a non-authoritative
+`copilot` name-on-`PATH` boolean (an editor shim may match), and the states `authentication=unknown`,
+`modelEntitlement=unknown`, `quotaOrBilling=unknown`. It does not launch the
+bundled runtime or CLI, inspect credentials, access the network, or make a
+model request. Runtime invocation and authentication support have therefore not
+been verified in this environment.
+
+## Sandbox threat model and fixture plan
+
+The threat includes untrusted reviewed-task metadata, SDK/model output,
+repository content, inherited process environment, host filesystem and
+credential stores, network egress, runaway processes/resources, and cleanup
+mistakes. Empty SDK tool configuration does not constrain runtime internals;
+Git worktrees do not provide OS isolation.
+
+**No safe execution sandbox has been implemented or verified.** In particular,
+Windows, WSL2, and Podman filesystem, process, and network boundaries are not
+assumed equivalent. A future reproducible disposable fixture must:
+
+1. Generate a unique disposable identity and a deterministic, minimal fixture
+   repository with a seed commit; never mount the HIC production checkout,
+   `.git`, home directory, databases, Redis, live volumes, or a developer
+   workspace.
+2. Run as an unprivileged isolated user in a digest-pinned VM/container image.
+   Mount only the fixture input read-only and a single scoped output directory
+   read/write. Start with a read-only root filesystem, no host socket/device,
+   no inherited credentials or unrelated environment, and verify those
+   properties on each supported Windows/Linux boundary.
+3. Bound CPU, memory, process count, wall-clock time, file size, and output
+   volume. Default network to none for offline tests. Any separately approved
+   future SDK request would require a controlled egress allowlist and explicit
+   single-use human consent; no zero-cost or no-egress claim is implied.
+4. Record only the disposable identity and sanitized exit/evidence metadata.
+   Clean up only the exact container/worktree created for that run, verify its
+   removal, and never use broad prune/reset/delete commands.
+5. Re-run the fake-transport offline harness on Windows and Linux. No CI job
+   starts the runtime, CLI, live model, or credential preflight.
+
+The verifier tests create their disposable Git fixtures only under this
+package's `test/` directory, commit no fixture artifacts, and remove each
+fixture by its unique path. This tests local Git/worktree checks, not OS
+isolation. Until the sandbox and environment-scrubbing properties above are
+proven, even a no-tools, no-file-write SDK message can expose sensitive
+environment/context through the runtime or network. A future S2 smoke may only
+propose that non-mutating response first; docs-file editing is not presently
+feasible or authorized.
 
 ## S2 readiness
 
-**Blocked, not authorized or run.** Before S2, an operator must verify an
-appropriate SDK CLI authentication and Copilot model/quota/billing mode; approve
-a bounded disposable docs-only test; and provide a separately reviewed exact
-head/worktree verifier plus a defensible sandbox with explicit filesystem and
-egress controls. The CLI/auth state was not verified here, and a worktree alone
-is insufficient isolation. S1 results are not S2 acceptance.
+**Blocked, not authorized or run.** Bundled runtime version **1.0.108 is a
+package-metadata claim**, not an invocation test. Authentication,
+model entitlement, quota, and billing are all **unknown**; no account
+identifiers, credentials, or billing details were inspected. The exact-head
+local verifier and GitHub status schema are implemented and offline-tested, but
+there is no configured trusted review key, no live GitHub check provider, and
+no OS sandbox proof. A worktree alone is insufficient isolation; even the
+non-mutating model smoke remains blocked. No model session was started, and no
+quota use or cost was measured. Do not promise zero cost. Any future real
+request requires separate explicit one-shot human consent and re-validation of
+auth, entitlement, quota/billing, sandbox, and egress.
 
 ## Official references
 

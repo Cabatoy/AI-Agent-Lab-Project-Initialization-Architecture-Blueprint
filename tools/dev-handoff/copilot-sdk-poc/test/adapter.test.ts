@@ -27,7 +27,9 @@ function validTask(overrides: Record<string, unknown> = {}): Record<string, unkn
     branch: "docs/sdk-poc",
     baseSha: "a".repeat(40),
     permittedPaths: ["docs-md/continuation.md"],
+    reviewKeyId: "test-key",
     reviewDigest: "b".repeat(64),
+    reviewSignature: Buffer.alloc(64).toString("base64"),
     expiresAt: new Date(now + 5 * 60_000).toISOString(),
     maxDurationMs: 60_000,
     maxTurns: 1,
@@ -169,6 +171,8 @@ test("task requires exact repo, UUID, SHA, digest, one-shot opt-in and short exp
     [validTask({ taskId: "not-a-uuid" }), /UUID/],
     [validTask({ baseSha: "deadbeef" }), /full Git SHA/],
     [validTask({ reviewDigest: "not-a-digest" }), /SHA-256/],
+    [validTask({ reviewSignature: "not-a-signature" }), /Ed25519 signature/],
+    [validTask({ reviewKeyId: undefined }), /Ed25519 signature/],
     [validTask({ oneShotOptIn: false }), /one explicitly opted-in turn/],
     [validTask({ maxTurns: 2 }), /one explicitly opted-in turn/],
     [validTask({ expiresAt: new Date(now - 1).toISOString() }), /expired/],
@@ -359,13 +363,20 @@ test("SDK event parent chains reject out-of-order callbacks without sequence num
     sequence: undefined,
     type: "session.idle",
   });
+  const missingParent = event({
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    parentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    sequence: undefined,
+    type: "assistant.message",
+  });
   transport.emit(root);
   transport.emit(child);
   transport.emit(lateChild);
+  transport.emit(missingParent);
 
   const evidence = await adapter.getEvidence();
   assert.deepEqual(evidence.events.map(({ id }) => id), [root.id, child.id]);
-  assert.equal(evidence.rejectedEventCount, 1);
+  assert.equal(evidence.rejectedEventCount, 2);
 });
 
 test("malformed events are excluded and SDK errors are surfaced as failed evidence", async () => {
@@ -401,6 +412,31 @@ test("cancel and finalize remain explicit and final evidence is not success-shap
   const evidence = await adapter.getEvidence();
   assert.equal(evidence.stopReason, "cancelled");
   assert.equal(evidence.executionVerified, false);
+});
+
+test("events after cancellation are rejected and a cancelled run cannot submit", async () => {
+  const transport = new FakeTransport();
+  const verifier = new FakeVerifier();
+  const adapter = makeAdapter(transport, verifier);
+  await adapter.startSession(validTask());
+  adapter.subscribeEvents();
+
+  let releaseVerification: ((accepted: boolean) => void) | undefined;
+  verifier.pending = new Promise<boolean>((resolve) => {
+    releaseVerification = resolve;
+  });
+  const controller = new AbortController();
+  const submit = adapter.submitReviewedTask(controller.signal);
+  controller.abort();
+  releaseVerification?.(true);
+
+  await assert.rejects(submit, /cancelled/);
+  transport.emit(event());
+  const evidence = await adapter.getEvidence();
+  assert.equal(transport.submissions.length, 0);
+  assert.equal(evidence.stopReason, "cancelled");
+  assert.equal(evidence.events.length, 0);
+  assert.equal(evidence.rejectedEventCount, 1);
 });
 
 test("submission timeout/crash errors propagate without fabricated success", async () => {
