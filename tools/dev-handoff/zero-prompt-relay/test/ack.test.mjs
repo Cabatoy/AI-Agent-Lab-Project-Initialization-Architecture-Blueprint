@@ -43,7 +43,7 @@ test('publisher sends only fixed synthetic ack to exact issue',async()=>{
   const calls=[];
   const result=await publishSyntheticReceipt(checkReceipt(receipt,{orderId:id,digest}),{token,fetchImpl:async(url,options)=>{
     calls.push({url,method:options.method,body:options.body});
-    return options.method==='GET'?{status:200,text:async()=>JSON.stringify([])}:{status:201,text:async()=>JSON.stringify({id:1,user:{login:'Cabatoy'},body:ackMarker(receipt)})};
+    return options.method==='GET'?{status:200,text:async()=>JSON.stringify([])}:{status:201,json:async()=>({id:1,user:{login:'Cabatoy'},body:ackMarker(receipt)})};
   }});
   assert.equal(result.status,'published-synthetic-ack');
   assert.equal(calls.length,2);assert.ok(calls.every(x=>x.url.startsWith('https://api.github.com/repos/'+REPO+'/issues/97/comments')));
