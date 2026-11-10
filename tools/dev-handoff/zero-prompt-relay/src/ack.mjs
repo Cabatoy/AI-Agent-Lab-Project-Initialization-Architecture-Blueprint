@@ -19,7 +19,7 @@ export function checkReceipt(x,requested) {
     x.type!=='synthetic-ping'||x.status!=='seen-untrusted'||x.executionAllowed!==false ||
     typeof x.observedAt!=='string'||!Number.isFinite(Date.parse(x.observedAt))) fail('invalid-ack');
   if(!UUID.test(x.orderId)||!DIGEST.test(x.digest)) fail('invalid-ack');
-  return {orderId:x.orderId,digest:x.digest,status:'seen-untrusted',executionAllowed:false};
+  return {orderId:x.orderId,digest:x.digest,type:'synthetic-ping',status:'seen-untrusted',executionAllowed:false};
 }
 export function readReceipt(order,root=stateRoot()) {
   const directory=join(root,'acks');
@@ -44,7 +44,7 @@ const readBody=async response=>{
   return data;
 };
 export async function publishSyntheticReceipt(receipt,{token,fetchImpl=fetch}={}) {
-  if(!isRecord(receipt)||!UUID.test(receipt.orderId)||!DIGEST.test(receipt.digest)||receipt.status!=='seen-untrusted'||receipt.executionAllowed!==false)fail('invalid-ack');
+  if(!isRecord(receipt)||!UUID.test(receipt.orderId)||!DIGEST.test(receipt.digest)||receipt.type!=='synthetic-ping'||receipt.status!=='seen-untrusted'||receipt.executionAllowed!==false)fail('invalid-ack');
   if(typeof token!=='string'||!/^github_pat_[A-Za-z0-9_]+$/.test(token)||token.length>300)fail('missing-scoped-token');
   // GitHub issue comments are a transport-only at-least-once channel, not a durable HIC ledger.
   const existing=await fetchImpl(API+'?per_page=100&page=1',{method:'GET',headers:headers(token),redirect:'manual'});
