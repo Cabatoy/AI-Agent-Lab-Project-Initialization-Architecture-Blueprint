@@ -79,11 +79,12 @@ function createFixture() {
   git(repository, "config", "user.email", "offline-verifier@example.invalid");
   git(repository, "config", "core.autocrlf", "false");
   git(repository, "config", "core.symlinks", "false");
+  writeFileSync(join(repository, ".gitattributes"), "* -text -filter -ident\n");
   git(repository, "remote", "add", "origin", "https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint.git");
   mkdirSync(join(repository, "docs-md"));
   writeFileSync(join(repository, ".gitignore"), ".ignored-check\n");
   writeFileSync(join(repository, "docs-md", "readiness.md"), "fixture\n");
-  git(repository, "add", ".gitignore", "docs-md/readiness.md");
+  git(repository, "add", ".gitattributes", ".gitignore", "docs-md/readiness.md");
   git(repository, "commit", "-q", "-m", "fixture");
   const baseSha = git(repository, "rev-parse", "HEAD");
   git(repository, "worktree", "add", "-q", "-b", "docs/verifier-fixture", worktree, baseSha);
