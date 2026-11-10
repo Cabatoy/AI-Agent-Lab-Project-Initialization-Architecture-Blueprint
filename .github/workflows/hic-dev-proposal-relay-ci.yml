@@ -1,0 +1,36 @@
+name: HIC Developer Proposal Relay (offline)
+
+on:
+  pull_request:
+    branches: [docs/hic-dev-work-order-protocol, develop]
+    paths:
+      - 'tools/dev-handoff/zero-prompt-relay/**'
+      - '.github/workflows/hic-dev-proposal-relay-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Proposal relay offline (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Confirm exact PR HEAD
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node -e "const {execFileSync}=require('node:child_process'); if(execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()!==process.env.EXPECTED_HEAD) process.exit(1);"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Offline tests (no SDK, credentials, or live calls)
+        working-directory: tools/dev-handoff/zero-prompt-relay
+        run: npm run check
