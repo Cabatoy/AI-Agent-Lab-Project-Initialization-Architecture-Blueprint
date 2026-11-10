@@ -40,16 +40,21 @@ function Get-HicPhase2LifecycleDesign {
 function Get-HicPhase2InferenceAdmissionDecision {
     param([System.Collections.IDictionary]$State)
 
-    if ([string]$State.serviceIdentity -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$') {
+    if ($null -eq $State -or
+        $State.serviceIdentity -isnot [string] -or
+        $State.serviceIdentity -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\z') {
         return [pscustomobject]@{ action='blocked'; reason='Inference service identity is missing or invalid.' }
     }
-    if ($State.serviceState -ne 'running') {
+    if ($State.serviceState -isnot [string] -or $State.serviceState -cne 'running') {
         return [pscustomobject]@{ action='blocked'; reason='Inference service is not verified running.' }
     }
-    switch ([string]$State.admissionGate) {
+    if ($State.admissionGate -isnot [string]) {
+        return [pscustomobject]@{ action='blocked'; reason='Inference admission state is unknown; fail closed.' }
+    }
+    switch -CaseSensitive ($State.admissionGate) {
         'open' {
-            if ($State.leaseState -ne 'acquired' -or
-                [string]$State.leaseId -cnotmatch '^[a-f0-9]{32}$') {
+            if ($State.leaseState -isnot [string] -or $State.leaseState -cne 'acquired' -or
+                $State.leaseId -isnot [string] -or $State.leaseId -cnotmatch '\A[a-f0-9]{32}\z') {
                 return [pscustomobject]@{ action='acquire-lease'; reason='Acquire a unique inference lease before sending the request.' }
             }
             return [pscustomobject]@{ action='admit'; reason='A verified inference lease protects this request.' }
@@ -61,6 +66,8 @@ function Get-HicPhase2InferenceAdmissionDecision {
 
 function Test-HicPhase2NonNegativeInteger {
     param([object]$Value)
+    if (($Value -isnot [int] -and $Value -isnot [long] -and $Value -isnot [string]) -or
+        [string]$Value -cnotmatch '\A(?:0|[1-9][0-9]*)\z') { return $false }
     $parsed = 0
     return [int]::TryParse([string]$Value, [ref]$parsed) -and $parsed -ge 0
 }
@@ -72,23 +79,26 @@ function Get-HicPhase2IdleUnloadDecision {
         [string]$CurrentPlanId
     )
 
-    if ([string]$State.serviceIdentity -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$' -or
-        $State.serviceState -ne 'running') {
+    if ($null -eq $State -or
+        $State.serviceIdentity -isnot [string] -or
+        $State.serviceIdentity -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\z' -or
+        $State.serviceState -isnot [string] -or $State.serviceState -cne 'running') {
         return [pscustomobject]@{ action='blocked'; reason='A verified running model identity is required.' }
     }
-    if ($State.ownership -ne 'hic-managed-verified') {
+    if ($State.ownership -isnot [string] -or $State.ownership -cne 'hic-managed-verified') {
         return [pscustomobject]@{ action='protected'; reason='External or unowned model services are never unloaded.' }
     }
-    if ($State.unloadAdapter -ne 'verified') {
+    if ($State.unloadAdapter -isnot [string] -or $State.unloadAdapter -cne 'verified') {
         return [pscustomobject]@{ action='blocked'; reason='Provider unload capability is not verified.' }
     }
-    if ($State.inferenceLedger -ne 'verified' -or -not (Test-HicPhase2NonNegativeInteger $State.inFlightRequests)) {
+    if ($State.inferenceLedger -isnot [string] -or $State.inferenceLedger -cne 'verified' -or
+        -not (Test-HicPhase2NonNegativeInteger $State.inFlightRequests)) {
         return [pscustomobject]@{ action='blocked'; reason='Inference activity is unknown; unload is not safe.' }
     }
     if ([int]$State.inFlightRequests -gt 0) {
         return [pscustomobject]@{ action='wait'; reason='Inference requests remain in flight.' }
     }
-    if ($State.admissionGate -ne 'sealed') {
+    if ($State.admissionGate -isnot [string] -or $State.admissionGate -cne 'sealed') {
         return [pscustomobject]@{ action='seal-admission-first'; reason='Atomically seal new inference admission before rechecking active leases.' }
     }
     if (-not (Test-HicPhase2NonNegativeInteger $State.idleSeconds) -or
@@ -100,7 +110,8 @@ function Get-HicPhase2IdleUnloadDecision {
         return [pscustomobject]@{ action='wait'; reason='Configured idle timeout has not elapsed.' }
     }
     if ([string]::IsNullOrWhiteSpace($CurrentPlanId) -or
-        $ApprovedPlanId -cne $CurrentPlanId -or $State.planId -cne $CurrentPlanId) {
+        $ApprovedPlanId -cne $CurrentPlanId -or
+        $State.planId -isnot [string] -or $State.planId -cne $CurrentPlanId) {
         return [pscustomobject]@{ action='blocked'; reason='The reviewed plan is missing or stale.' }
     }
     return [pscustomobject]@{
@@ -112,7 +123,7 @@ function Get-HicPhase2IdleUnloadDecision {
 function New-HicPhase2DisposableTestDatabasePlan {
     param([string]$RunId)
 
-    if ($RunId -cnotmatch '^[a-f0-9]{32}$') {
+    if ($RunId -cnotmatch '\A[a-f0-9]{32}\z') {
         throw 'A lowercase 32-character run ID is required for an isolated test database plan.'
     }
     return [ordered]@{
@@ -144,36 +155,55 @@ function Get-HicPhase2DisposableDatabaseCleanupDecision {
         [System.Collections.IDictionary]$Observed
     )
 
-    if ($Plan.runId -cnotmatch '^[a-f0-9]{32}$' -or
-        $ExpectedContainerId -cnotmatch '^[a-f0-9]{64}$' -or
-        $Observed.containerId -cne $ExpectedContainerId -or
-        $Observed.containerName -cne $Plan.containerName -or
-        $Observed.projectName -cne $Plan.projectName -or
-        $Observed.runMarker -cne $Plan.runMarker -or
-        $Observed.databaseName -cne $Plan.databaseName -or
-        $Observed.roleName -cne $Plan.roleName -or
-        $Observed.superuser -ne $Plan.superuser -or
-        $Observed.network -cne $Plan.network -or
-        $Observed.storage -cne $Plan.storage -or
-        $Observed.hostBinding -cne $Plan.hostBinding -or
-        $Observed.credentials -cne $Plan.credentials -or
-        $Observed.persistentDatabaseReuse -ne $false) {
+    if ($null -eq $Plan -or $null -eq $Observed -or
+        $Plan.runId -isnot [string] -or $Plan.runId -cnotmatch '\A[a-f0-9]{32}\z' -or
+        $ExpectedContainerId -cnotmatch '\A[a-f0-9]{64}\z') {
+        return [pscustomobject]@{ action='preserve'; reason='Disposable database plan or expected identity is invalid.' }
+    }
+    # Matching observations cannot make a tampered or persistent database plan disposable.
+    $canonicalPlan = New-HicPhase2DisposableTestDatabasePlan -RunId $Plan.runId
+    foreach ($key in $canonicalPlan.Keys) {
+        $expected = $canonicalPlan[$key]
+        $actual = $Plan[$key]
+        if ($expected -is [array]) {
+            $matches = $actual -is [array] -and $actual.Count -eq 0
+        }
+        elseif ($expected -is [bool]) {
+            $matches = $actual -is [bool] -and $actual -eq $expected
+        }
+        else {
+            $matches = $actual -is [string] -and $actual -ceq $expected
+        }
+        if (-not $matches) {
+            return [pscustomobject]@{ action='preserve'; reason="Disposable database plan field '$key' is missing or unsafe." }
+        }
+    }
+    foreach ($key in @('containerName', 'projectName', 'runMarker', 'databaseName', 'roleName',
+        'network', 'storage', 'hostBinding', 'credentials')) {
+        if ($Observed[$key] -isnot [string] -or $Observed[$key] -cne $canonicalPlan[$key]) {
+            return [pscustomobject]@{ action='preserve'; reason='Disposable database identity does not match this run; preserve the resource.' }
+        }
+    }
+    if ($Observed.containerId -isnot [string] -or $Observed.containerId -cne $ExpectedContainerId -or
+        $Observed.superuser -isnot [bool] -or $Observed.superuser -ne $false -or
+        $Observed.persistentDatabaseReuse -isnot [bool] -or $Observed.persistentDatabaseReuse -ne $false) {
         return [pscustomobject]@{ action='preserve'; reason='Disposable database identity does not match this run; preserve the resource.' }
     }
-    if (@($Observed.namedVolumes).Count -gt 0 -or @($Observed.bindMounts).Count -gt 0) {
+    if ($Observed.namedVolumes -isnot [array] -or $Observed.namedVolumes.Count -gt 0 -or
+        $Observed.bindMounts -isnot [array] -or $Observed.bindMounts.Count -gt 0) {
         return [pscustomobject]@{ action='preserve'; reason='Persistent or host-mounted data was detected; cleanup is not authorized.' }
     }
-    if ($Observed.testsRunning -ne $false) {
+    if ($Observed.testsRunning -isnot [bool] -or $Observed.testsRunning -ne $false) {
         return [pscustomobject]@{ action='wait'; reason='Test processes have not been verified exited.' }
     }
-    if ($Observed.connectionsVerified -ne $true -or
+    if ($Observed.connectionsVerified -isnot [bool] -or $Observed.connectionsVerified -ne $true -or
         -not (Test-HicPhase2NonNegativeInteger $Observed.activeConnections)) {
         return [pscustomobject]@{ action='preserve'; reason='Database connection state is unknown; preserve the resource.' }
     }
     if ([int]$Observed.activeConnections -gt 0) {
         return [pscustomobject]@{ action='wait'; reason='Database connections remain active.' }
     }
-    if ($Observed.state -notin @('running', 'exited', 'stopped')) {
+    if ($Observed.state -isnot [string] -or $Observed.state -cnotin @('running', 'exited', 'stopped')) {
         return [pscustomobject]@{ action='preserve'; reason='Disposable database runtime state is unknown.' }
     }
     return [pscustomobject]@{

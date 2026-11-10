@@ -2,7 +2,7 @@ name: HIC Control Plane and Web UI CI
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, 'feature/hic-resource-profiles']
     paths:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
@@ -26,6 +26,7 @@ on:
       - 'scripts/hic-process.ps1'
       - 'scripts/hic-machine.ps1'
       - 'scripts/hic-resource.ps1'
+      - 'scripts/hic-phase2-policy.ps1'
       - 'scripts/hic-resource.offline.tests.ps1'
       - 'deploy/hic-resources/**'
       - 'deploy/hic-managed/**'
