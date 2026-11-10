@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { sign, generateKeyPairSync, randomUUID } from "node:crypto";
+import { sign, generateKeyPairSync } from "node:crypto";
 import {
   mkdirSync,
+  mkdtempSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import type { ReviewedTask } from "../src/contracts.ts";
 import { ReadOnlyGitExactHeadVerifier } from "../src/exact-head-verifier.ts";
@@ -64,12 +66,10 @@ function signedTask(
 }
 
 function createFixture() {
-  const fixture = resolve(
-    process.cwd(),
-    "test",
-    `.git-verifier-fixtures-${randomUUID()}`,
-  );
-  mkdirSync(fixture, { recursive: true });
+  // Hosted Windows runners check out into a deeply nested directory. Keep disposable
+  // Git fixtures in the OS temp root so Git's hook templates stay below MAX_PATH.
+  // mkdtempSync reserves a unique identity; t.after removes only this fixture.
+  const fixture = mkdtempSync(join(tmpdir(), "hic-git-v-"));
   const repository = join(fixture, "repo");
   const worktree = join(fixture, "worktree");
   mkdirSync(repository, { recursive: true });
