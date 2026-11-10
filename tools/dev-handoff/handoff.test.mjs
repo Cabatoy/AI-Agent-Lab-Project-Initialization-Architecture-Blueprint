@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { digest, discover, HandoffError, installedInterface, prepare, readBaseline, readReviewedInput,
   reconcile, renderInbox, repository, validateInput, writeInbox } from './handoff.mjs';
 import { main } from './cli.mjs';
+import reporter from './ci-reporter.mjs';
 
 const now = Date.parse('2026-11-10T12:00:00Z');
 const id = index => `12345678-1234-1234-1234-${String(index).padStart(12, '0')}`;
@@ -264,4 +265,16 @@ test('CLI process is inert by default and refuses unknown execution arguments', 
   const disabled = spawnSync(process.execPath, [cli, 'run'], { encoding: 'utf8' });
   assert.equal(disabled.status, 2);
   assert.equal(disabled.stderr.trim(), 'DISABLED');
+});
+
+test('CI reporter exposes bounded escaped failure diagnostics without requiring private log access', async () => {
+  const events = [
+    { type: 'test:fail', data: { name: 'synthetic', details: { error: { cause: { stack: 'failed\n::notice::not-an-annotation%' } } } } },
+    { type: 'test:summary', data: { counts: { tests: 1, failed: 1 }, success: false } },
+  ];
+  const output = [];
+  for await (const chunk of reporter(events)) output.push(chunk);
+  assert.equal(output.length, 2);
+  assert.match(output[0], /^::error::synthetic%0Afailed%0A::notice::not-an-annotation%25\n$/);
+  assert.match(output[1], /success=false/);
 });

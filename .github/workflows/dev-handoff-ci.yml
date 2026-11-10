@@ -32,4 +32,4 @@ jobs:
           node --check tools/dev-handoff/handoff.mjs
           node --check tools/dev-handoff/cli.mjs
       - name: Offline synthetic adapter tests
-        run: node --test tools/dev-handoff/handoff.test.mjs
+        run: node --test --test-reporter=./tools/dev-handoff/ci-reporter.mjs tools/dev-handoff/handoff.test.mjs
