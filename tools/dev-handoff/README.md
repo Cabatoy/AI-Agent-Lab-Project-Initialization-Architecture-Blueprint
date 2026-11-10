@@ -119,6 +119,8 @@ queue dosyası veya kendi task durum deposu eklenmedi.
   ledger export'undan restart, üçüncü approval gate; geçersiz/replay/expired
   input, branch/SHA/repo/ownership, auth/network, kötü niyetli Issue metni,
   değişmiş kurulum, duplicate/yarım artifact ve sandbox Git worktree kontrolleri.
+  Windows drive case ve 8.3 kısa yol alias'ları native canonical path ile
+  karşılaştırılır; alias, ayrı worktree veya output sınırını aşamaz.
 - Synthetic rapor clickable dispatch bağlantısı içermez. Sandbox'ta kod
   çalıştıran bir ajan, Worker, DB, model veya servis başlatılmaz.
 - Gerçek kurulum fingerprint kontrolü geçti; Agents composer'ın gerçek

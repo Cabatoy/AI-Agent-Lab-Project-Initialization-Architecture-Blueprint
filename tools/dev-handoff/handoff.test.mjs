@@ -212,6 +212,13 @@ test('sandbox isolated-worktree inspection, immutable inbox reservation and dupl
     const alias = `${wt[0].toLowerCase()}${wt.slice(1)}`;
     assert.equal(readBaseline(alias).head, baseline.head);
     assert.equal(prepare({ ...input, worktree: alias }, options).handoffId, first.handoffId);
+    const short = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      '(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:HIC_SYNTHETIC_WT).ShortPath'],
+    { encoding: 'utf8', env: { ...process.env, HIC_SYNTHETIC_WT: wt }, timeout: 10000 }).trim();
+    const shortBaseline = readBaseline(short);
+    assert.equal(shortBaseline.worktree, baseline.worktree);
+    assert.equal(prepare({ ...input, worktree: short }, { ...options, baseline: shortBaseline }).handoffId, first.handoffId);
+    stops(() => writeInbox(short, first, wt), 'OUTPUT_MUST_BE_OUTSIDE_WORKTREE');
   }
   const target = writeInbox(root, first, wt);
   assert.deepEqual(readdirSync(target).sort(), ['handoff.json', 'inbox.html']);

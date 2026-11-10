@@ -51,7 +51,7 @@ export function readBaseline(worktree) {
   requireThat(isAbsolute(worktree), 'WORKTREE_NOT_ABSOLUTE');
   let root;
   try {
-    root = realpathSync(worktree);
+    root = realpathSync.native(worktree);
     requireThat(lstatSync(join(root, '.git')).isFile(), 'ISOLATED_WORKTREE_REQUIRED');
   } catch (error) {
     if (error instanceof HandoffError) throw error;
@@ -65,11 +65,11 @@ export function readBaseline(worktree) {
   const remote = git('remote', 'get-url', 'origin');
   requireThat([`https://github.com/${repository}.git`, `https://github.com/${repository}`,
     `git@github.com:${repository}.git`].includes(remote), 'WRONG_REPOSITORY');
-  requireThat(samePath(realpathSync(git('rev-parse', '--show-toplevel')), root) &&
-    !samePath(realpathSync(git('rev-parse', '--absolute-git-dir')),
-      realpathSync(resolve(root, git('rev-parse', '--git-common-dir')))), 'ISOLATED_WORKTREE_REQUIRED');
+  requireThat(samePath(realpathSync.native(git('rev-parse', '--show-toplevel')), root) &&
+    !samePath(realpathSync.native(git('rev-parse', '--absolute-git-dir')),
+      realpathSync.native(resolve(root, git('rev-parse', '--git-common-dir')))), 'ISOLATED_WORKTREE_REQUIRED');
   return {
-    worktree: root, repository, branch: git('symbolic-ref', '--short', 'HEAD'),
+    worktree: root, requestedWorktree: resolve(worktree), repository, branch: git('symbolic-ref', '--short', 'HEAD'),
     head: git('rev-parse', 'HEAD'), clean: git('status', '--porcelain', '--untracked-files=all') === '',
   };
 }
@@ -154,7 +154,7 @@ export function prepare(input, { baseline, github, capability, now = Date.now(),
     capability.mainImplementationSha256 === installedInterface.mainImplementationSha256 &&
     capability.submitsPrompt === false, 'FUSION_UNSUPPORTED');
   requireThat(baseline.repository === repository && baseline.clean === true, 'BASELINE_NOT_CLEAN');
-  requireThat(samePath(input.worktree, baseline.worktree), 'WRONG_WORKTREE');
+  requireThat(samePath(input.worktree, baseline.requestedWorktree ?? baseline.worktree), 'WRONG_WORKTREE');
   requireThat(github?.queueUpdatedAt === input.queueUpdatedAt && Array.isArray(github.items) &&
     github.items.length === input.items.length, 'UNRECONCILED_QUEUE');
   let candidate = null;
@@ -217,8 +217,8 @@ ${report.synthetic ? '<p>SYNTHETIC TEST ONLY — no live dispatch link.</p>' : `
 export function writeInbox(outputParent, report, worktree) {
   requireThat(typeof report.handoffId === 'string' && /^[a-f0-9]{64}(?![\s\S])/.test(report.handoffId), 'INVALID_HANDOFF_ID');
   let parent;
-  try { parent = realpathSync(outputParent); } catch { throw new HandoffError('OUTPUT_PARENT_UNREADABLE'); }
-  const inside = relative(realpathSync(worktree), parent);
+  try { parent = realpathSync.native(outputParent); } catch { throw new HandoffError('OUTPUT_PARENT_UNREADABLE'); }
+  const inside = relative(realpathSync.native(worktree), parent);
   requireThat(inside !== '' && (inside.startsWith(`..${sep}`) || inside === '..' || isAbsolute(inside)), 'OUTPUT_MUST_BE_OUTSIDE_WORKTREE');
   const target = join(parent, report.handoffId);
   try { mkdirSync(target); } catch { throw new HandoffError('INBOX_ALREADY_EXISTS_OR_UNWRITABLE'); }
