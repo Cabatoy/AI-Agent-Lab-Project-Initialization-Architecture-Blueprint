@@ -2,6 +2,384 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'hic-resource.ps1')
 
+function Copy-TestPolicyState {
+    param([System.Collections.IDictionary]$Source)
+    $copy = [ordered]@{}
+    foreach ($key in $Source.Keys) { $copy[$key] = $Source[$key] }
+    return $copy
+}
+
+$phase2AdversarialAssertions = 0
+function Assert-Phase2PolicyAction {
+    param([object[]]$Decision, [string]$Expected, [string]$Case)
+    if ($Decision.Count -ne 1 -or $Decision[0].action -cne $Expected -or
+        [string]::IsNullOrWhiteSpace($Decision[0].reason)) {
+        throw "Phase 2 case '$Case' expected one '$Expected' decision with a reason."
+    }
+    $script:phase2AdversarialAssertions++
+}
+
+$phase2Design = Get-HicPhase2LifecycleDesign
+if ($phase2Design.status -ne 'design-only' -or $phase2Design.runtimeMutationEnabled -ne $false -or
+    $phase2Design.workerEnabled -ne $false -or $phase2Design.modelIdleUnload.enabled -ne $false -or
+    $phase2Design.disposableTestDatabase.persistentDatabaseReuse -ne $false) {
+    throw 'Phase 2 policies must remain proposal-only and preserve the Worker and persistent databases.'
+}
+
+$admissionState = [ordered]@{
+    serviceIdentity = 'reviewed-model'
+    serviceState = 'running'
+    admissionGate = 'open'
+    leaseState = 'missing'
+    leaseId = ''
+}
+if ((Get-HicPhase2InferenceAdmissionDecision $admissionState).action -ne 'acquire-lease') {
+    throw 'Inference must acquire a unique lease before it can be admitted.'
+}
+$admissionState.leaseState = 'acquired'
+$admissionState.leaseId = '0123456789abcdef0123456789abcdef'
+if ((Get-HicPhase2InferenceAdmissionDecision $admissionState).action -ne 'admit') {
+    throw 'A verified inference lease must permit the request while the gate is open.'
+}
+$admissionState.admissionGate = 'sealed'
+if ((Get-HicPhase2InferenceAdmissionDecision $admissionState).action -ne 'wait') {
+    throw 'New inference must queue while the unload gate is sealed.'
+}
+$admissionState.admissionGate = 'unknown'
+if ((Get-HicPhase2InferenceAdmissionDecision $admissionState).action -ne 'blocked') {
+    throw 'Unknown inference gate state must fail closed.'
+}
+
+$unloadState = [ordered]@{
+    serviceIdentity = 'owned-model'
+    serviceState = 'running'
+    ownership = 'hic-managed-verified'
+    unloadAdapter = 'verified'
+    inferenceLedger = 'verified'
+    inFlightRequests = 0
+    admissionGate = 'sealed'
+    idleSeconds = 900
+    idleTimeoutSeconds = 900
+    planId = 'HIC76-reviewed-1'
+}
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'unload-eligible') {
+    throw 'A verified, idle, HIC-owned model may become eligible only after the gate is sealed and the plan is current.'
+}
+$unloadState.inFlightRequests = 1
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'wait') {
+    throw 'In-flight inference must block model unload.'
+}
+$unloadState.inFlightRequests = 0
+$unloadState.admissionGate = 'open'
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'seal-admission-first') {
+    throw 'Model unload must seal admission before its final zero-lease check.'
+}
+$unloadState.admissionGate = 'sealed'
+$unloadState.ownership = 'external-or-unknown'
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'protected') {
+    throw 'External or unowned models must never be unloaded.'
+}
+$unloadState.ownership = 'hic-managed-verified'
+$unloadState.unloadAdapter = 'unknown'
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'blocked') {
+    throw 'Unverified provider unload capability must block unload.'
+}
+$unloadState.unloadAdapter = 'verified'
+$unloadState.inferenceLedger = 'unknown'
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'blocked') {
+    throw 'Unknown in-flight inference state must fail closed.'
+}
+$unloadState.inferenceLedger = 'verified'
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-stale' 'HIC76-reviewed-1').action -ne 'blocked') {
+    throw 'Stale or mismatched approval must block unload.'
+}
+$unloadState.planId = 'HIC76-reviewed-1'
+$unloadState.idleSeconds = 899
+if ((Get-HicPhase2IdleUnloadDecision $unloadState 'HIC76-reviewed-1' 'HIC76-reviewed-1').action -ne 'wait') {
+    throw 'Model idle timeout must elapse before unload becomes eligible.'
+}
+
+$runId = '0123456789abcdef0123456789abcdef'
+$testDatabasePlan = New-HicPhase2DisposableTestDatabasePlan -RunId $runId
+if ($testDatabasePlan.containerName -ne "hic-test-pg-$runId" -or
+    $testDatabasePlan.namedVolumes.Count -ne 0 -or $testDatabasePlan.bindMounts.Count -ne 0 -or
+    $testDatabasePlan.hostBinding -ne '127.0.0.1:runtime-assigned-port' -or
+    $testDatabasePlan.persistentDatabaseReuse -ne $false -or
+    $testDatabasePlan.workerEnabled -ne $false -or $testDatabasePlan.mutationsAuthorized -ne $false) {
+    throw 'Disposable database plans must be per-run, ephemeral, loopback-only, and non-authorizing.'
+}
+if ((New-HicPhase2DisposableTestDatabasePlan -RunId 'fedcba9876543210fedcba9876543210').containerName -eq $testDatabasePlan.containerName) {
+    throw 'Every disposable test database run must have a unique identity.'
+}
+$invalidRunIdRejected = $false
+try { $null = New-HicPhase2DisposableTestDatabasePlan -RunId 'shared-project-database' }
+catch { $invalidRunIdRejected = $true }
+if (-not $invalidRunIdRejected) { throw 'Invalid disposable database run IDs must be rejected.' }
+
+$expectedTestContainerId = 'a' * 64
+$testDatabaseObserved = [ordered]@{
+    containerId = $expectedTestContainerId
+    containerName = $testDatabasePlan.containerName
+    projectName = $testDatabasePlan.projectName
+    runMarker = $testDatabasePlan.runMarker
+    databaseName = $testDatabasePlan.databaseName
+    roleName = $testDatabasePlan.roleName
+    superuser = $false
+    network = $testDatabasePlan.network
+    storage = $testDatabasePlan.storage
+    hostBinding = $testDatabasePlan.hostBinding
+    credentials = $testDatabasePlan.credentials
+    persistentDatabaseReuse = $false
+    namedVolumes = @()
+    bindMounts = @()
+    testsRunning = $false
+    connectionsVerified = $true
+    activeConnections = 0
+    state = 'running'
+}
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'cleanup-eligible') {
+    throw 'Only an exact disposable test database with drained work may become cleanup-eligible.'
+}
+$testDatabaseObserved.containerId = 'b' * 64
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A container ID mismatch must preserve the test database.'
+}
+$testDatabaseObserved.containerId = $expectedTestContainerId
+$testDatabaseObserved.namedVolumes = @('project-postgres-data')
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A mounted persistent volume must never be eligible for disposable cleanup.'
+}
+$testDatabaseObserved.namedVolumes = @()
+$testDatabaseObserved.runMarker = 'HIC:TESTDB:other-run'
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A mismatched disposable run marker must preserve the test database.'
+}
+$testDatabaseObserved.runMarker = $testDatabasePlan.runMarker
+$testDatabaseObserved.databaseName = 'project_data'
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A mismatched database identity must preserve the test database.'
+}
+$testDatabaseObserved.databaseName = $testDatabasePlan.databaseName
+$testDatabaseObserved.hostBinding = '0.0.0.0:5432'
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A non-loopback host binding must never be treated as a disposable fixture.'
+}
+$testDatabaseObserved.hostBinding = $testDatabasePlan.hostBinding
+$testDatabaseObserved.superuser = $true
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'A privileged disposable test role must be rejected.'
+}
+$testDatabaseObserved.superuser = $false
+$testDatabaseObserved.connectionsVerified = $false
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'preserve') {
+    throw 'Unknown connection state must preserve the test database.'
+}
+$testDatabaseObserved.connectionsVerified = $true
+$testDatabaseObserved.testsRunning = $true
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'wait') {
+    throw 'Disposable cleanup must wait until all test processes exit.'
+}
+$testDatabaseObserved.testsRunning = $false
+$testDatabaseObserved.activeConnections = 1
+if ((Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved).action -ne 'wait') {
+    throw 'Disposable cleanup must wait until database connections drain.'
+}
+
+$admissionState.admissionGate = 'open'
+Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $null) 'blocked' 'null admission state'
+foreach ($key in $admissionState.Keys) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.Remove($key)
+    $expected = if ($key -in @('leaseState', 'leaseId')) { 'acquire-lease' } else { 'blocked' }
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) $expected "missing admission $key"
+}
+foreach ($value in @($null, '', 'bad/model', ('x' * 64), "model`n", @('model'))) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.serviceIdentity = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'blocked' 'invalid model identity'
+}
+foreach ($value in @($null, '', 'stopped', 'RUNNING', @('running'))) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.serviceState = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'blocked' 'unverified running state'
+}
+foreach ($value in @($null, '', 'OPEN', 'unknown', @('open', 'sealed'))) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.admissionGate = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'blocked' 'ambiguous admission gate'
+}
+foreach ($value in @($null, '', 'released', 'expired', 'cancelled', 'ACQUIRED', @('acquired'))) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.leaseState = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'acquire-lease' 'inactive lease'
+}
+foreach ($value in @($null, '', ('a' * 31), ('a' * 33), ('A' * 32), ('a' * 32 + "`n"), @('a' * 32))) {
+    $state = Copy-TestPolicyState $admissionState
+    $state.leaseId = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'acquire-lease' 'malformed lease ID'
+}
+$state = Copy-TestPolicyState $admissionState
+$state.admissionGate = 'sealed'
+Assert-Phase2PolicyAction @(Get-HicPhase2InferenceAdmissionDecision $state) 'wait' 'sealed gate overrides acquired lease'
+
+$unloadState.idleSeconds = 900
+Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $null 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'blocked' 'null unload state'
+foreach ($key in $unloadState.Keys) {
+    $state = Copy-TestPolicyState $unloadState
+    $state.Remove($key)
+    $expected = switch ($key) {
+        'ownership' { 'protected' }
+        'admissionGate' { 'seal-admission-first' }
+        default { 'blocked' }
+    }
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') $expected "missing unload $key"
+}
+$invalidCounts = @($null, '', -1, '-1', 0.5, '0.5', $false, $true, '+0', ' 0', '00', "0`n", '1e0', '2147483648', @('0'))
+foreach ($key in @('inFlightRequests', 'idleSeconds', 'idleTimeoutSeconds')) {
+    foreach ($value in $invalidCounts) {
+        $state = Copy-TestPolicyState $unloadState
+        $state[$key] = $value
+        Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'blocked' "invalid unload $key"
+    }
+}
+foreach ($value in @(0, 86401)) {
+    $state = Copy-TestPolicyState $unloadState
+    $state.idleTimeoutSeconds = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'blocked' 'timeout outside bounds'
+}
+foreach ($timeout in @(1, 86400)) {
+    $state = Copy-TestPolicyState $unloadState
+    $state.idleTimeoutSeconds = $timeout
+    $state.idleSeconds = $timeout - 1
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'wait' 'idle below threshold'
+    $state.idleSeconds = $timeout
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'unload-eligible' 'exact idle boundary'
+}
+foreach ($value in @(1, [int]::MaxValue)) {
+    $state = Copy-TestPolicyState $unloadState
+    $state.inFlightRequests = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'wait' 'streaming or retry lease remains active'
+}
+foreach ($key in @('serviceIdentity', 'serviceState', 'ownership', 'unloadAdapter', 'inferenceLedger', 'admissionGate', 'planId')) {
+    $state = Copy-TestPolicyState $unloadState
+    $state[$key] = @($state[$key])
+    $expected = if ($key -eq 'ownership') { 'protected' } elseif ($key -eq 'admissionGate') { 'seal-admission-first' } else { 'blocked' }
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') $expected "array unload $key"
+}
+foreach ($key in @('serviceState', 'ownership', 'unloadAdapter', 'inferenceLedger', 'admissionGate')) {
+    $state = Copy-TestPolicyState $unloadState
+    $state[$key] = $state[$key].ToUpperInvariant()
+    $expected = if ($key -eq 'ownership') { 'protected' } elseif ($key -eq 'admissionGate') { 'seal-admission-first' } else { 'blocked' }
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') $expected "noncanonical unload $key"
+}
+foreach ($value in @($null, '', ' ', 'hic76-reviewed-1', 'HIC76-stale')) {
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $unloadState $value 'HIC76-reviewed-1') 'blocked' 'invalid approved plan'
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $unloadState $value $value) 'blocked' 'missing or mismatched current plan'
+}
+$state = Copy-TestPolicyState $unloadState
+$state.inFlightRequests = 1
+$before = $state | ConvertTo-Json -Compress
+foreach ($attempt in 1..2) {
+    Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'wait' 'sealed gate must not discard an active streaming/cancellation lease'
+}
+if (($state | ConvertTo-Json -Compress) -cne $before) { throw 'Unload policy must not release leases or mutate its input.' }
+$state.inFlightRequests = 0
+Assert-Phase2PolicyAction @(Get-HicPhase2IdleUnloadDecision $state 'HIC76-reviewed-1' 'HIC76-reviewed-1') 'unload-eligible' 'last lease drained behind sealed gate'
+
+$testDatabaseObserved.activeConnections = 0
+Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $null $expectedTestContainerId $testDatabaseObserved) 'preserve' 'null cleanup plan'
+Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $null) 'preserve' 'null cleanup observation'
+foreach ($key in $testDatabasePlan.Keys) {
+    $plan = Copy-TestPolicyState $testDatabasePlan
+    $plan.Remove($key)
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $plan $expectedTestContainerId $testDatabaseObserved) 'preserve' "missing plan $key"
+}
+foreach ($key in $testDatabaseObserved.Keys) {
+    $observed = Copy-TestPolicyState $testDatabaseObserved
+    $observed.Remove($key)
+    $expected = if ($key -eq 'testsRunning') { 'wait' } else { 'preserve' }
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) $expected "missing observed $key"
+}
+foreach ($key in @('containerName', 'projectName', 'runMarker', 'databaseName', 'roleName', 'network', 'storage', 'hostBinding', 'credentials')) {
+    $plan = Copy-TestPolicyState $testDatabasePlan
+    $observed = Copy-TestPolicyState $testDatabaseObserved
+    $observed[$key] = 'external-or-persistent'
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $plan $expectedTestContainerId $observed) 'preserve' "mismatched $key"
+    $plan[$key] = $observed[$key]
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $plan $expectedTestContainerId $observed) 'preserve' "matching but unsafe plan $key"
+    $observed[$key] = @($testDatabaseObserved[$key])
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) 'preserve' "array observed $key"
+}
+foreach ($key in @('superuser', 'persistentDatabaseReuse', 'workerEnabled', 'mutationsAuthorized', 'requiresExplicitApply')) {
+    foreach ($value in @('False', 'True', 0, 1, $null, (-not $testDatabasePlan[$key]))) {
+        $plan = Copy-TestPolicyState $testDatabasePlan
+        $plan[$key] = $value
+        Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $plan $expectedTestContainerId $testDatabaseObserved) 'preserve' "unsafe plan flag $key"
+    }
+}
+foreach ($key in @('superuser', 'persistentDatabaseReuse', 'testsRunning', 'connectionsVerified')) {
+    foreach ($value in @('False', 'True', 0, 1, $null, @($false))) {
+        $observed = Copy-TestPolicyState $testDatabaseObserved
+        $observed[$key] = $value
+        $expected = if ($key -eq 'testsRunning') { 'wait' } else { 'preserve' }
+        Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) $expected "untyped observed flag $key"
+    }
+}
+foreach ($key in @('namedVolumes', 'bindMounts')) {
+    foreach ($value in @($null, '', @('persistent-data'))) {
+        $observed = Copy-TestPolicyState $testDatabaseObserved
+        $observed[$key] = $value
+        Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) 'preserve' "unsafe observed $key"
+        $plan = Copy-TestPolicyState $testDatabasePlan
+        $plan[$key] = $value
+        Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $plan $expectedTestContainerId $testDatabaseObserved) 'preserve' "unsafe plan $key"
+    }
+}
+foreach ($value in $invalidCounts) {
+    $observed = Copy-TestPolicyState $testDatabaseObserved
+    $observed.activeConnections = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) 'preserve' 'invalid active connection count'
+}
+foreach ($value in @($null, '', ('a' * 63), ('a' * 65), ('A' * 64), ('a' * 64 + "`n"))) {
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $value $testDatabaseObserved) 'preserve' 'invalid expected container ID'
+}
+foreach ($value in @($null, '', ('A' * 32), ('a' * 31), ('a' * 33), ('a' * 32 + "`n"))) {
+    $rejected = $false
+    try { $null = New-HicPhase2DisposableTestDatabasePlan -RunId $value }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw 'Malformed run IDs must be rejected, including trailing newlines.' }
+    $phase2AdversarialAssertions++
+}
+foreach ($value in @('unknown', 'paused', 'RUNNING', @('running'))) {
+    $observed = Copy-TestPolicyState $testDatabaseObserved
+    $observed.state = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) 'preserve' 'unknown database runtime state'
+}
+foreach ($value in @('running', 'exited', 'stopped')) {
+    $observed = Copy-TestPolicyState $testDatabaseObserved
+    $observed.state = $value
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $observed) 'cleanup-eligible' 'drained disposable database'
+}
+$otherPlan = New-HicPhase2DisposableTestDatabasePlan -RunId 'fedcba9876543210fedcba9876543210'
+Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $otherPlan $expectedTestContainerId $testDatabaseObserved) 'preserve' 'cross-run cleanup'
+$beforePlan = $testDatabasePlan | ConvertTo-Json -Compress
+$beforeObserved = $testDatabaseObserved | ConvertTo-Json -Compress
+foreach ($attempt in 1..2) {
+    Assert-Phase2PolicyAction @(Get-HicPhase2DisposableDatabaseCleanupDecision $testDatabasePlan $expectedTestContainerId $testDatabaseObserved) 'cleanup-eligible' 'repeat evaluation does not perform cleanup'
+}
+if (($testDatabasePlan | ConvertTo-Json -Compress) -cne $beforePlan -or
+    ($testDatabaseObserved | ConvertTo-Json -Compress) -cne $beforeObserved) {
+    throw 'Cleanup policy must not mutate its plan or observed database state.'
+}
+Write-Host "HIC Phase 2 adversarial policy assertions: $phase2AdversarialAssertions PASS"
+
+$workflow = Get-Content -Raw (Join-Path $root '.github\workflows\hic-control-plane-ui-ci.yml')
+if ($workflow -notmatch 'branches:\s*\[develop, main, ''feature/hic-resource-profiles''\]' -or
+    $workflow -notmatch '(?m)^\s+- ''scripts/hic-phase2-policy\.ps1''\s*$' -or
+    $workflow -notmatch '\./scripts/hic-resource\.offline\.tests\.ps1') {
+    throw 'Stacked Phase 2 PRs and policy-only edits must trigger the existing offline CI suite.'
+}
+
 if ((Get-HicResourceLabelValue -Labels 'com.docker.compose.depends_on=redis:service_started:false,com.docker.compose.service=agent-worker' -Name 'com.docker.compose.service') -cne 'agent-worker' -or
     (Get-HicResourceLabelValue -Labels 'com.docker.compose.service=agent-worker' -Name 'com.docker.compose.project') -cne '') {
     throw 'Podman label-map parsing must extract only the requested compose label.'
@@ -336,6 +714,17 @@ if ($cliPlan.profile -ne 'Light' -or $cliPlan.task -ne 'ui' -or
     $cliPlan.mutationsAuthorized -ne $false -or $cliPlan.memoryBudgetGiB.selectedGiB -ne 8) {
     throw 'CLI profile plan must default to Light, expose advisory overrides and authorize no mutations.'
 }
+$phase2CliPlan = (& (Join-Path $PSScriptRoot 'hic.ps1') resource phase2-plan -Json) | ConvertFrom-Json
+if ($phase2CliPlan.operation -ne 'phase2-lifecycle-design' -or
+    $phase2CliPlan.runtimeMutationEnabled -ne $false -or
+    $phase2CliPlan.modelIdleUnload.enabled -ne $false -or
+    $phase2CliPlan.disposableTestDatabase.persistentDatabaseReuse -ne $false) {
+    throw 'The Phase 2 command must expose design-only lifecycle safeguards without authorizing runtime changes.'
+}
+$phase2ApplyRejected = $false
+try { $null = & (Join-Path $PSScriptRoot 'hic.ps1') resource phase2-plan -Apply -Json }
+catch { $phase2ApplyRejected = $true }
+if (-not $phase2ApplyRejected) { throw 'The design-only Phase 2 command must reject -Apply.' }
 $cliStart = (& (Join-Path $PSScriptRoot 'hic.ps1') resource start -Json) | ConvertFrom-Json
 if ($cliStart.action -ne 'plan-only' -or $cliStart.changesMade -ne $false) {
     throw 'resource start without -Apply must remain a plan-only operation.'
