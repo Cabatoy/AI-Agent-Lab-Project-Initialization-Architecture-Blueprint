@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "issue": 79,
+  "status": "proposed-design-only",
+  "runtimeEnabled": false,
+  "sources": {
+    "develop": { "sha": "bcfa97679e235f75483135d19a64654228fecc27", "pr": null },
+    "workspace": { "sha": "0601242279d3a55bd39a2fc278ea5c0df429cf0e", "pr": 59 },
+    "boundary": { "sha": "c8df5725beb981bb3e9438d44a366dcae7899ccb", "pr": 61 },
+    "decisions": { "sha": "ff4337578df67b1905e52abd664b5548efcbc9de", "pr": 66 },
+    "intake": { "sha": "07a49f9d511ad7dfd55b9f258f759568061e7046", "pr": 73 },
+    "resources": { "sha": "fa8dd6e1f78fd1d6dee3d241d9c336d576e41e74", "pr": 78 }
+  },
+  "documents": {
+    "tr": ["tr/dashboard-design.md", "tr/api-mapping.md", "tr/adr-079-personalization.md"],
+    "en": ["en/dashboard-design.md", "en/api-mapping.md", "en/adr-079-personalization.md"]
+  },
+  "endpoints": [
+    { "id": "health", "method": "GET", "path": "/health", "source": "develop", "file": "src/ControlPlane/Program.cs", "auth": "local-loopback", "effect": "read", "automatic": true },
+    { "id": "tasks", "method": "GET", "path": "/tasks", "source": "develop", "file": "src/ControlPlane/Program.cs", "auth": "local-loopback", "effect": "read", "automatic": true },
+    { "id": "task", "method": "GET", "path": "/tasks/{id:guid}", "source": "develop", "file": "src/ControlPlane/Program.cs", "auth": "local-loopback", "effect": "read", "automatic": false },
+    { "id": "plans", "method": "GET", "path": "/plans", "source": "develop", "file": "src/ControlPlane/Program.cs", "auth": "local-loopback", "effect": "read", "automatic": true },
+    { "id": "diagnostics", "method": "GET", "path": "/diagnostics/local", "source": "develop", "file": "src/ControlPlane/Program.cs", "auth": "local-loopback", "effect": "read", "automatic": true },
+    { "id": "session", "method": "GET", "path": "/local-runner/session", "source": "intake", "file": "src/ControlPlane/LocalHealthRunner.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "general-conversations", "method": "GET", "path": "/local-runner/general-conversations", "source": "workspace", "file": "src/ControlPlane/GeneralConversations.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "general-plan", "method": "GET", "path": "/local-runner/general-conversations/{id:guid}/plan", "source": "workspace", "file": "src/ControlPlane/GeneralPlans.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "general-plan-approve", "method": "POST", "path": "/local-runner/general-conversations/{id:guid}/plan/approve", "source": "workspace", "file": "src/ControlPlane/GeneralPlans.cs", "auth": "operator-session", "effect": "draft-write", "automatic": false },
+    { "id": "general-plan-reject", "method": "POST", "path": "/local-runner/general-conversations/{id:guid}/plan/reject", "source": "workspace", "file": "src/ControlPlane/GeneralPlans.cs", "auth": "operator-session", "effect": "decision-write", "automatic": false },
+    { "id": "git-decisions", "method": "GET", "path": "/local-runner/tasks/{taskId:guid}/git-decisions", "source": "decisions", "file": "src/ControlPlane/GitEditRunner.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "git-preview", "method": "POST", "path": "/local-runner/tasks/{taskId:guid}/git-preview", "source": "decisions", "file": "src/ControlPlane/GitEditRunner.cs", "auth": "operator-session", "effect": "preview-write", "automatic": false },
+    { "id": "git-approve", "method": "POST", "path": "/local-runner/tasks/{taskId:guid}/git-approve", "source": "decisions", "file": "src/ControlPlane/GitEditRunner.cs", "auth": "operator-session", "effect": "decision-write", "automatic": false },
+    { "id": "git-reject", "method": "POST", "path": "/local-runner/tasks/{taskId:guid}/git-reject", "source": "decisions", "file": "src/ControlPlane/GitEditRunner.cs", "auth": "operator-session", "effect": "decision-write", "automatic": false },
+    { "id": "run", "method": "GET", "path": "/local-runner/runs/{runId:guid}", "source": "intake", "file": "src/ControlPlane/LocalHealthRunner.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "model", "method": "GET", "path": "/local-runner/model", "source": "workspace", "file": "src/ControlPlane/ModelCodeEdit.cs", "auth": "operator-session", "effect": "provider-read", "automatic": false },
+    { "id": "github-status", "method": "GET", "path": "/local-runner/github/status", "source": "intake", "file": "src/ControlPlane/GitHubPublisherEndpoints.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "publication", "method": "GET", "path": "/local-runner/github/publications/{id:guid}", "source": "intake", "file": "src/ControlPlane/GitHubPublisherEndpoints.cs", "auth": "operator-session", "effect": "read", "automatic": false },
+    { "id": "issue-preview", "method": "POST", "path": "/local-runner/github/issues/preview", "source": "intake", "file": "src/ControlPlane/GitHubIssuePreview.cs", "auth": "operator-session", "effect": "provider-read", "automatic": false },
+    { "id": "issue-import-preview", "method": "POST", "path": "/local-runner/github/issues/import-preview", "source": "intake", "file": "src/ControlPlane/GitHubIssuePreview.cs", "auth": "operator-session", "effect": "preview-write", "automatic": false },
+    { "id": "issue-import-confirm", "method": "POST", "path": "/local-runner/github/issues/import-previews/{id:guid}/confirm", "source": "intake", "file": "src/ControlPlane/GitHubIssuePreview.cs", "auth": "operator-session", "effect": "draft-write", "automatic": false }
+  ],
+  "widgets": [
+    { "id": "tasks", "stage": "A1", "availability": "baseline", "endpoints": ["tasks", "task"], "fallback": "unknown-not-zero" },
+    { "id": "plans", "stage": "A1", "availability": "baseline", "endpoints": ["plans"], "fallback": "unknown-not-zero" },
+    { "id": "health", "stage": "A1", "availability": "baseline", "endpoints": ["health", "diagnostics"], "fallback": "unknown-not-healthy" },
+    { "id": "decisions", "stage": "A2", "availability": "stacked-partial", "endpoints": ["session", "general-conversations", "general-plan", "git-decisions", "run"], "fallback": "no-global-inbox" },
+    { "id": "github", "stage": "A2", "availability": "stacked-partial", "endpoints": ["github-status", "publication", "issue-preview"], "fallback": "no-ci-feed" },
+    { "id": "model", "stage": "A2", "availability": "stacked-partial", "endpoints": ["session", "model"], "fallback": "unknown-not-ready" },
+    { "id": "resources", "stage": "A3", "availability": "gap", "endpoints": [], "fallback": "no-web-safe-api" },
+    { "id": "usage", "stage": "A3", "availability": "gap", "endpoints": [], "fallback": "no-verified-telemetry" },
+    { "id": "agents", "stage": "future", "availability": "gap", "endpoints": [], "fallback": "no-persisted-registry" }
+  ],
+  "taskStatuses": ["Draft", "Proposed", "Planned", "Approved", "Retrying", "InProgress", "Executing", "Review", "Completed", "Failed", "Blocked", "Cancelled", "Rejected"],
+  "runningTaskStatuses": ["InProgress", "Executing"],
+  "derivedApprovalCount": false,
+  "deadLetterSupported": false,
+  "refreshProposal": {
+    "automaticEndpointIds": ["health", "tasks", "plans", "diagnostics"],
+    "intervalMs": 30000,
+    "timeoutMs": 8000,
+    "maxConcurrent": 2,
+    "maxRequestsPerCycle": 4,
+    "maxRowsRendered": 50,
+    "staleAfterMs": 60000,
+    "maxAutomaticRetryPerCycle": 0,
+    "abortOn": ["unmount", "hidden", "offline", "session-ended", "context-change"],
+    "ignoreLateGeneration": true,
+    "pollStackedProviders": false
+  },
+  "responsiveProposal": [
+    { "id": "phone", "minWidth": 320, "maxWidth": 767, "columns": 1, "navigation": "drawer", "detail": "full-width" },
+    { "id": "tablet", "minWidth": 768, "maxWidth": 1199, "columns": 2, "navigation": "collapsible", "detail": "below-selection" },
+    { "id": "desktop", "minWidth": 1200, "maxWidth": null, "columns": 3, "navigation": "persistent", "detail": "side-panel" }
+  ],
+  "requiredStates": ["loading", "empty", "ready", "stale", "offline", "unauthenticated", "forbidden", "invalid-contract", "unavailable"],
+  "guardrails": {
+    "workerEnabled": false,
+    "executorEnabled": false,
+    "migrationsAuthorized": false,
+    "serviceMutationsAuthorized": false,
+    "publisherPrivilegesRequired": false,
+    "paidProviderAutoSelection": false,
+    "tenantRuntimeImplemented": false,
+    "communityAutoPromotion": false
+  }
+}

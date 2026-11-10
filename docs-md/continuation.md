@@ -38,6 +38,24 @@ kanıtı ve sınırları için bu bağlantıyı esas alın. Bu not yeni runtime 
   Atlanan v3 işleri başarılı test veya merge onayı olarak değerlendirilmemeli;
   ayrı worktree sonuçları etkin checkout'a veya cloud'a dağıtım değildir.
 
+## Dashboard #79 — Tasarım Checkpoint'i, 10 Kasım 2026
+
+- [Dashboard IA ve responsive önerisi](dashboard/tr/dashboard-design.md),
+  [otoriter API matrisi](dashboard/tr/api-mapping.md) ve
+  [gelecek kişiselleştirme ADR önerisi](dashboard/tr/adr-079-personalization.md)
+  Türkçe/İngilizce ayrı dosyalarla hazırlandı. Bunlar onaylanmış ürün veya
+  mimari karar değildir; mevcut karar kayıtları değişmedi.
+- `develop` ile açık #59/#61/#66/#73 kaynak snapshot'ları incelendi; task/plan/
+  tanı verisi, actor-sınırlı karar geçmişi ve veri boşlukları ayrıldı.
+  Global approval inbox, web-safe resource API, canlı GitHub CI feed'i ve
+  doğrulanmış maliyet telemetrisi teslim edilmiş değildir.
+- İzole tasarım dalında 56 offline belge/sözleşme testi ve Web UI build geçti.
+  Bu kanıt responsive browser kabulü veya tenant runtime testi değildir.
+  Runtime, migration, Worker/executor ve servis lifecycle değişmedi.
+- Önerilen sonraki kapı: tasarımın insan incelemesi; A1 uygulaması ayrı onay/PR,
+  #73 bağımlı entegrasyonları ise kendi yetkilendirme/read-only kabulü sonrası.
+  Yeni Markdown tasarımları için PDF üretilmedi.
+
 ## Depoyu İndirme
 
 1. Depoyu klonlayın. VS Code'da repo kökünü **File > Open Folder** ile açın; Visual Studio'da repo kökündeki `HumanInControl.sln` dosyasını açın.
