@@ -46,6 +46,38 @@ describe('native host read-only action', () => {
 });
 
 describe('Control Plane API contract', () => {
+  it('cancels a read before fetch and during response decoding without misreporting a timeout', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    await expect(api.tasks(controller.signal)).rejects.toMatchObject({ kind: 'aborted' });
+    expect(fetch).not.toHaveBeenCalled();
+    const next = new AbortController();
+    fetch.mockResolvedValue({
+      ok: true, json: async () => { next.abort(); return []; },
+    });
+    await expect(api.tasks(next.signal)).rejects.toMatchObject({ kind: 'aborted' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts in-flight GET transport and removes its caller listener after success', async () => {
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    })));
+    const read = api.plans(controller.signal);
+    const assertion = expect(read).rejects.toMatchObject({ kind: 'aborted' });
+    controller.abort();
+    await assertion;
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('rejects a shape-valid but unrelated health response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ status: 'ok', service: 'another-service' })));
+    await expect(api.health()).rejects.toMatchObject({ kind: 'invalid' });
+  });
+
   it('reads actual health, task list, task detail and plan shapes using GET', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(Response.json({ status: 'ok', service: 'control-plane' }))

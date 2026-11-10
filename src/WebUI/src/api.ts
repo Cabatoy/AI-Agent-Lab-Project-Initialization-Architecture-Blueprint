@@ -97,7 +97,7 @@ const nativeWorkspace: Guard<NativeWorkspaceInspection> = (v): v is NativeWorksp
   object(v) && v.action === 'workspace.inspect' && guid(v.runId) && date(v.checkedAtUtc) &&
   typeof v.workspaceAvailable === 'boolean' && typeof v.gitCheckoutFound === 'boolean' &&
   typeof v.solutionFound === 'boolean';
-const health: Guard<Health> = (v): v is Health => object(v) && str(v.status) && str(v.service);
+const health: Guard<Health> = (v): v is Health => object(v) && v.status === 'ok' && v.service === 'control-plane';
 const localDiagnostics: Guard<LocalDiagnosticSnapshot> = (v): v is LocalDiagnosticSnapshot =>
   object(v) && v.action === 'system.health' && date(v.checkedAtUtc) &&
   v.controlPlane === 'ok' && (v.postgres === 'ok' || v.postgres === 'unavailable') &&
@@ -138,7 +138,7 @@ const plan: Guard<Plan> = (v): v is Plan => object(v) && guid(v.id) && nullable(
 const list = <T>(guard: Guard<T>): Guard<T[]> => (v): v is T[] => Array.isArray(v) && v.every(guard);
 
 export class ApiError extends Error {
-  constructor(public kind: 'network' | 'timeout' | 'http' | 'invalid', message: string, public status?: number,
+  constructor(public kind: 'network' | 'timeout' | 'http' | 'invalid' | 'aborted', message: string, public status?: number,
     /** True when a write may have reached the Control Plane even though no confirmation was received. */
     public outcomeUnknown = false) {
     super(message);
@@ -212,17 +212,26 @@ async function createTask(input: CreateTaskInput, timeoutMs = 15000): Promise<Ta
   }
 }
 
-async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<T> {
+async function get<T>(path: string, guard: Guard<T>, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const checkCancelled = () => {
+    if (signal?.aborted) throw new ApiError('aborted', 'Control Plane read cancelled.');
+    if (controller.signal.aborted) throw new ApiError('timeout', 'Control Plane request timed out.');
+  };
+  const timer = setTimeout(abort, 8000);
   try {
+    checkCancelled();
     let response: Response;
     try {
-      response = await fetch(`/api${path}`, { method: 'GET', signal: controller.signal, cache: 'no-store' });
+      response = await fetch(`/api${path}`, { method: 'GET', signal: controller.signal, cache: 'no-store', credentials: 'omit' });
     } catch {
-      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network',
-        controller.signal.aborted ? 'Control Plane request timed out.' : 'Control Plane is unreachable.');
+      checkCancelled();
+      throw new ApiError('network', 'Control Plane is unreachable.');
     }
+    checkCancelled();
     if (!response.ok) {
       const proxyError = response.headers.get('X-HIC-Proxy-Error');
       if (proxyError === 'unreachable') throw new ApiError('network', 'Control Plane is unreachable.');
@@ -233,13 +242,15 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
     try {
       data = await response.json();
     } catch {
-      if (controller.signal.aborted) throw new ApiError('timeout', 'Control Plane request timed out.');
+      checkCancelled();
       throw new ApiError('invalid', 'Control Plane returned invalid JSON.');
     }
+    checkCancelled();
     if (!guard(data)) throw new ApiError('invalid', 'Control Plane response does not match the expected contract.');
     return data;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -352,13 +363,13 @@ export const api = {
     if (!guid(runId)) return Promise.reject(new ApiError('invalid', 'Invalid local run identifier.'));
     return localRunnerRequest(`/runs/${runId}`, localHealthRun, token, 'GET');
   },
-  health: () => get('/health', health),
-  localDiagnostics: () => get('/diagnostics/local', localDiagnostics),
-  tasks: () => get('/tasks', list(task)),
-  task: (id: string) => {
+  health: (signal?: AbortSignal) => get('/health', health, signal),
+  localDiagnostics: (signal?: AbortSignal) => get('/diagnostics/local', localDiagnostics, signal),
+  tasks: (signal?: AbortSignal) => get('/tasks', list(task), signal),
+  task: (id: string, signal?: AbortSignal) => {
     if (!guid(id)) return Promise.reject(new ApiError('invalid', 'Invalid task identifier.'));
-    return get(`/tasks/${id}`, task);
+    return get(`/tasks/${id}`, task, signal);
   },
-  plans: () => get('/plans', list(plan)),
+  plans: (signal?: AbortSignal) => get('/plans', list(plan), signal),
   createTask,
 };

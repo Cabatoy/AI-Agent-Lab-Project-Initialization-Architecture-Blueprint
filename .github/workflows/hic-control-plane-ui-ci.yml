@@ -2,7 +2,7 @@ name: HIC Control Plane and Web UI CI
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, 'docs/hic-operator-dashboard-design']
     paths:
       - 'HumanInControl.sln'
       - 'AI-Agent-Lab.sln'
