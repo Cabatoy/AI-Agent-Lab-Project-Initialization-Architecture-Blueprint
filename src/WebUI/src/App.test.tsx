@@ -19,10 +19,63 @@ beforeEach(() => {
   vi.mocked(api.tasks).mockResolvedValue([]);
   vi.mocked(api.plans).mockResolvedValue([]);
   vi.mocked(api.task).mockResolvedValue(item);
+  vi.mocked(api.localDiagnostics).mockResolvedValue({
+    action: 'system.health', checkedAtUtc: item.updatedAtUtc,
+    controlPlane: 'ok', postgres: 'ok', redis: 'ok', worker: 'not-checked',
+  });
 });
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.clearAllMocks(); });
 
 describe('dashboard', () => {
+  it('renders only authoritative counts and raw unknown statuses without executing untrusted markup', async () => {
+    vi.mocked(api.tasks).mockResolvedValue([{ ...item, title: '<script>not executable</script>', status: 'FutureStatus' }]);
+    render(<App />);
+    const count = screen.getByRole('region', { name: 'Task count' });
+    expect(await within(count).findByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '<script>not executable</script>' })).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
+    expect(screen.getAllByText('FutureStatus')).toHaveLength(2);
+    expect(screen.queryByText(/pending approval count|DeadLetter/)).not.toBeInTheDocument();
+    expect(api.createTask).not.toHaveBeenCalled();
+    expect(api.inspectNativeWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('keeps focus on detail heading and returns it to the originating task', async () => {
+    vi.mocked(api.tasks).mockResolvedValue([item]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: item.title }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: item.title })).toHaveFocus());
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: item.title })).toHaveFocus());
+  });
+
+  it('closes the narrow navigation disclosure with Escape and returns focus', async () => {
+    render(<App />);
+    const menu = screen.getByRole('button', { name: 'Menu' });
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(screen.getByRole('navigation', { name: 'Main navigation' }), { key: 'Escape' });
+    expect(menu).toHaveAttribute('aria-expanded', 'false');
+    expect(menu).toHaveFocus();
+  });
+
+  it('retains the unsent Draft during manual overview refresh and renders at most 50 tasks', async () => {
+    vi.mocked(api.tasks).mockResolvedValue(Array.from({ length: 60 }, (_, index) => ({
+      ...item, id: `00000000-0000-0000-0000-${index.toString().padStart(12, '0')}`, title: `Task ${index}`,
+    })));
+    render(<App />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Request/ }), { target: { value: 'Keep my ongoing input' } });
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    await waitFor(() => expect(api.tasks).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Keep my ongoing input');
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(screen.getAllByRole('button', { name: /^Task \d+$/ })).toHaveLength(50);
+    expect(screen.getByText('60 TASKS')).toBeInTheDocument();
+    expect(api.createTask).not.toHaveBeenCalled();
+  });
+
   it('shows loading, then real empty states and a successful refresh timestamp', async () => {
     render(<App />);
     expect(screen.getByText('Refreshing Control Plane data…')).toBeInTheDocument();
@@ -34,18 +87,18 @@ describe('dashboard', () => {
     expect(screen.getByText(/Task relationships and dependency graphs are not exposed/)).toBeInTheDocument();
   });
   it('shows failures instead of presenting them as empty results', async () => {
-    vi.mocked(api.tasks).mockRejectedValue(new Error('Control Plane is unreachable.'));
+    vi.mocked(api.tasks).mockRejectedValue(new ApiError('network', 'Control Plane is unreachable.'));
     render(<App />);
     await waitFor(() => expect(screen.getAllByText('Control Plane is unreachable.').length).toBeGreaterThan(0));
     expect(screen.queryByText('No tasks yet.')).not.toBeInTheDocument();
-    expect(screen.getByText('Not yet available')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Task count' })).getByText('Unknown')).toBeInTheDocument();
   });
   it('opens actual task detail and does not invent execution history', async () => {
     vi.mocked(api.tasks).mockResolvedValue([item]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Actual task' }));
     expect(await screen.findByText('Actual result')).toBeInTheDocument();
-    expect(api.task).toHaveBeenCalledWith(item.id);
+    expect(api.task).toHaveBeenCalledWith(item.id, expect.any(AbortSignal));
     expect(screen.getByText(/Execution history and audit events are not exposed/)).toBeInTheDocument();
   });
   it('shows actual plans and read-only placeholders without action buttons', async () => {
@@ -73,7 +126,7 @@ describe('dashboard', () => {
     expect(screen.getByText('HUMAN-APPROVED LOCAL RUN')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Authenticate local operator' })).toBeDisabled();
     expect(api.createTask).not.toHaveBeenCalled();
-    expect(api.localDiagnostics).not.toHaveBeenCalled();
+    expect(api.localDiagnostics).toHaveBeenCalledTimes(1);
   });
   it('opens the human-controlled local planning workflow', async () => {
     render(<App />);
@@ -90,8 +143,8 @@ describe('dashboard', () => {
     expect(screen.queryByText('Not yet available')).not.toBeInTheDocument();
     vi.mocked(api.health).mockRejectedValue(new Error('Offline'));
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
-    expect((await screen.findAllByText('Unavailable')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('Not yet available')).not.toBeInTheDocument();
+    expect(await screen.findByText('Stale · last known data')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Control Plane health' })).getByText(/Last successful read/)).toBeInTheDocument();
   });
 });
 
@@ -110,12 +163,12 @@ describe('local diagnostics', () => {
     vi.mocked(api.localDiagnostics).mockResolvedValue(snapshot);
     render(<App />);
     await screen.findByText('Connected');
-    expect(api.localDiagnostics).not.toHaveBeenCalled();
+    expect(api.localDiagnostics).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run local diagnostics' }));
     expect(await screen.findByText('Not checked')).toBeInTheDocument();
     expect(screen.getByText('Unavailable')).toBeInTheDocument();
-    expect(api.localDiagnostics).toHaveBeenCalledTimes(1);
+    expect(api.localDiagnostics).toHaveBeenCalledTimes(2);
     expect(api.createTask).not.toHaveBeenCalled();
   });
 
@@ -173,10 +226,10 @@ describe('command center', () => {
     };
   };
 
-  it('keeps Overview as the landing page and never submits on load or while typing', async () => {
+  it('keeps Dashboard as the landing page and never submits on load or while typing', async () => {
     render(<App />);
     await screen.findByText('Connected');
-    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: /Request/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /New task/ }));
     const request = screen.getByRole('textbox', { name: /Request/ });
@@ -257,7 +310,7 @@ describe('command center', () => {
     vi.mocked(api.task).mockResolvedValue(draft);
     fireEvent.click(within(created).getByRole('button', { name: 'View task' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Tasks' })).toBeInTheDocument();
-    await waitFor(() => expect(api.task).toHaveBeenCalledWith(draft.id));
+    await waitFor(() => expect(api.task).toHaveBeenCalledWith(draft.id, expect.any(AbortSignal)));
     expect(await screen.findByText('Fix the login bug with details', { normalizer: s => s.replace(/\s+/g, ' ').trim() })).toBeInTheDocument();
   });
 
@@ -305,7 +358,7 @@ describe('command center', () => {
     fireEvent.change(request, { target: { value: 'Unsent draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Plans' }));
     expect(screen.getByText('No plans yet.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
     expect(screen.getByText('Connected')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Command Center' }));
     expect(screen.getByRole('textbox', { name: /Request/ })).toHaveValue('Unsent draft');

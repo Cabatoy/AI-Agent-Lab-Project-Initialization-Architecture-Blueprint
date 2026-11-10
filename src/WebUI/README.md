@@ -19,6 +19,68 @@ tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
 
+### Dashboard A1 — Issue #82
+
+Giriş ekranı artık **Dashboard**'dur. Mevcut Tasks/Plans tabloları ve tanı
+sunumu yeniden kullanılır; task state machine, login/tenant izolasyonu veya
+ikinci veri deposu eklenmez. Command Center'daki gönderilmemiş Draft metni
+navigasyon ve arka plan yenilemesi sırasında korunur.
+
+- Otomatik çevrim yalnız GET `/health`, `/tasks`, `/plans`,
+  `/diagnostics/local` yollarını okur: çevrimde en çok dört istek,
+  iki eşzamanlı okuma, istek başına sekiz saniye timeout ve görünür/online
+  sekmede 30 saniyelik aralık. Çevrim içinde retry yoktur; manuel Yenile
+  devam eden çevrimle birleşir.
+- Gizleme, offline, unmount ve context/session sonu okumaları iptal eder;
+  geç yanıtlar yeni snapshot'ı ezemez. Context/session sonu veya 401/403
+  snapshot'ı temizleyip okumayı durdurur; erişim düzeltildikten sonra sayfa
+  yeniden açılmalıdır. A1 gerçek bir operator session/login eklemez.
+- Başarılı `[]` gerçek boş/sıfırdır. Timeout, bozuk JSON/contract, 401/403,
+  offline ve 503 unknown'dur. Eski başarılı veri yalnız görünür **Stale**
+  etiketi ve panel bazlı başarılı okuma zamanı ile tutulur; 60 saniyede
+  stale olur. Sağlık endpoint'i dependency veya Worker sağlığı kanıtı değildir.
+- Tasks/Plans en çok 50 satır render eder; sayaçlar tam başarılı yanıttan
+  gelir. API sayfasızdır; bu sınır yanıt byte/bellek kullanımını sınırlamaz.
+  Draft/Approved durumları approval inbox veya çalışan Worker sayılmaz.
+- Dashboard hiçbir POST, preview, karar, model veya publisher çağrısı yapmaz.
+  Var olan açık insan adımlı workflow'lar değişmez. Belirsiz Draft sonrası
+  **Check Tasks list**, daha önce başlamış bir GET'e dayanmaz; devam eden
+  çevrim bittiğinde yeni bir okuma ister ve kendi başına POST tekrarlamaz.
+- Resource CLI, GitHub/CI, model kullanım/maliyet ve agent registry
+  entegre değildir. Lifecycle, migration, Worker/executor veya cloud tenancy
+  teslim edilmez. Baseline API yalnız local-loopback prototipidir.
+
+Doğrulama:
+
+```text
+npm test
+npm run build
+node tests/dashboard.browser-fixture.mjs
+```
+
+Son komut yalnız sentetik built UI/API fixture'ını rastgele `127.0.0.1`
+portunda başlatır; gerçek API'ye proxy yapmaz, DB/Podman/Native Host'a erişmez,
+tüm POST'ları reddeder. İş bitince yalnız bu test sürecini durdurun.
+`?scenario=empty|invalid|unauthenticated|forbidden|unavailable` ile hata/boşluk
+görünümleri kontrol edilebilir; varsayılan sentetik uzun başlıklı task ve
+Redis unavailable örneğidir. `/__fixture/report` yalnız fixture'ın gördüğü
+GET yollarını listeler. Bu test sunucusu production/dev launcher değildir.
+
+10 Kasım 2026 sentetik browser kontrolü: 320/768/1200/1440 CSS px'de yatay
+taşma yok; 640 px'de 200% zoom reflow, disclosure menüsünde Escape/odak
+dönüşü, task detayı başlık odağı, gönderilmemiş metin korunumu, empty≠unknown,
+401/403/503/invalid-contract ve stale/offline zaman etiketi doğrulandı.
+İstek raporunda yalnız dört read yolu ve kullanıcı seçimiyle task detail GET'i
+vardı; korunan preview veya veritabanı kullanılmadı. Bu, insan operator kabulü
+veya tüm ekran okuyucular için erişilebilirlik sertifikası değildir.
+
+Dar ekran navigasyonu modal drawer yerine akış içi disclosure'dır; kapalıyken
+bağlantılar tab sırasından çıkar, Escape odağı Menu düğmesine döndürür.
+Task tablosu etiketli kartlara dönüşür; uzun kimlikler sarılır. Mevcut
+[tasarım önerisi](../../docs-md/dashboard/tr/dashboard-design.md) ve
+[gelecek ADR](../../docs-md/dashboard/tr/adr-079-personalization.md) bu
+uygulamayla kabul edilmiş mimari karara dönüşmez.
+
 ### Önkoşullar ve çalıştırma
 
 - Node.js 20.19+ veya 22.12+ ve npm.

@@ -4,6 +4,16 @@ import { api, type LocalDiagnosticSnapshot } from './api';
 const label = (status: 'ok' | 'unavailable' | 'not-checked') =>
   status === 'ok' ? 'Responding' : status === 'unavailable' ? 'Unavailable' : 'Not checked';
 
+export function LocalDiagnosticsResult({ result }: { result: LocalDiagnosticSnapshot }) {
+  return <div className="local-diagnostics">
+    <div className="boundary"><span>Control Plane API</span><strong>{label(result.controlPlane)}</strong></div>
+    <div className="boundary"><span>PostgreSQL</span><strong>{label(result.postgres)}</strong></div>
+    <div className="boundary"><span>Redis</span><strong>{label(result.redis)}</strong></div>
+    <div className="boundary"><span>Worker</span><strong>{label(result.worker)}</strong></div>
+    <p className="muted small">Checked: {new Date(result.checkedAtUtc).toLocaleString()} · No task created or executed. This is not an audited agent run.</p>
+  </div>;
+}
+
 export function LocalDiagnosticsPanel() {
   const [result, setResult] = useState<LocalDiagnosticSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,12 +48,6 @@ export function LocalDiagnosticsPanel() {
     </button>
     {pending && <p role="status" className="muted small">Checking local services…</p>}
     {error && <p className="notice error" role="alert">{error}</p>}
-    {result && <div className="local-diagnostics" role="status">
-      <div className="boundary"><span>Control Plane API</span><strong>{label(result.controlPlane)}</strong></div>
-      <div className="boundary"><span>PostgreSQL</span><strong>{label(result.postgres)}</strong></div>
-      <div className="boundary"><span>Redis</span><strong>{label(result.redis)}</strong></div>
-      <div className="boundary"><span>Worker</span><strong>{label(result.worker)}</strong></div>
-      <p className="muted small">Checked: {new Date(result.checkedAtUtc).toLocaleString()} · No task created or executed. This is not an audited agent run.</p>
-    </div>}
+    {result && <LocalDiagnosticsResult result={result} />}
   </section>;
 }
