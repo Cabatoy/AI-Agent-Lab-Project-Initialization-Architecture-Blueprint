@@ -27,7 +27,9 @@ function validTask(overrides: Record<string, unknown> = {}): Record<string, unkn
     branch: "docs/sdk-poc",
     baseSha: "a".repeat(40),
     permittedPaths: ["docs-md/continuation.md"],
+    reviewKeyId: "test-key",
     reviewDigest: "b".repeat(64),
+    reviewSignature: Buffer.alloc(64).toString("base64"),
     expiresAt: new Date(now + 5 * 60_000).toISOString(),
     maxDurationMs: 60_000,
     maxTurns: 1,
@@ -45,6 +47,7 @@ class FakeTransport implements CopilotTransport {
   cancelled = 0;
   finalized = 0;
   submitError: Error | undefined;
+  waitForSubmissionCancellation = false;
   sessionId = "sdk-session-1";
 
   async startSession(options: TransportSessionOptions): Promise<string> {
@@ -56,10 +59,26 @@ class FakeTransport implements CopilotTransport {
     sessionId: string,
     prompt: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<void> {
     this.submissions.push({ sessionId, prompt, timeoutMs });
     if (this.submitError !== undefined) {
       throw this.submitError;
+    }
+    if (this.waitForSubmissionCancellation) {
+      if (signal === undefined || signal.aborted) {
+        throw new Error("SDK task submission cancelled");
+      }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            this.cancelled += 1;
+            reject(new Error("SDK task submission cancelled"));
+          },
+          { once: true },
+        );
+      });
     }
   }
 
@@ -169,6 +188,8 @@ test("task requires exact repo, UUID, SHA, digest, one-shot opt-in and short exp
     [validTask({ taskId: "not-a-uuid" }), /UUID/],
     [validTask({ baseSha: "deadbeef" }), /full Git SHA/],
     [validTask({ reviewDigest: "not-a-digest" }), /SHA-256/],
+    [validTask({ reviewSignature: "not-a-signature" }), /Ed25519 signature/],
+    [validTask({ reviewKeyId: undefined }), /Ed25519 signature/],
     [validTask({ oneShotOptIn: false }), /one explicitly opted-in turn/],
     [validTask({ maxTurns: 2 }), /one explicitly opted-in turn/],
     [validTask({ expiresAt: new Date(now - 1).toISOString() }), /expired/],
@@ -302,6 +323,25 @@ test("approval expiry and a changed exact head block submission after session cr
   assert.equal(changedHeadTransport.submissions.length, 0);
 });
 
+test("abort signal cancels an in-flight one-shot submission and prevents replay", async () => {
+  const transport = new FakeTransport();
+  transport.waitForSubmissionCancellation = true;
+  const adapter = makeAdapter(transport);
+  await adapter.startSession(validTask());
+  adapter.subscribeEvents();
+
+  const controller = new AbortController();
+  const submission = adapter.submitReviewedTask(controller.signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(submission, /cancelled/);
+  assert.equal(transport.cancelled, 1);
+  const evidence = await adapter.getEvidence();
+  assert.equal(evidence.stopReason, "cancelled");
+  await assert.rejects(adapter.submitReviewedTask(), /only one reviewed task/);
+});
+
 test("idle, duplicate, foreign and out-of-order events never prove task completion", async () => {
   const transport = new FakeTransport();
   const adapter = makeAdapter(transport);
@@ -359,13 +399,20 @@ test("SDK event parent chains reject out-of-order callbacks without sequence num
     sequence: undefined,
     type: "session.idle",
   });
+  const missingParent = event({
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    parentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    sequence: undefined,
+    type: "assistant.message",
+  });
   transport.emit(root);
   transport.emit(child);
   transport.emit(lateChild);
+  transport.emit(missingParent);
 
   const evidence = await adapter.getEvidence();
   assert.deepEqual(evidence.events.map(({ id }) => id), [root.id, child.id]);
-  assert.equal(evidence.rejectedEventCount, 1);
+  assert.equal(evidence.rejectedEventCount, 2);
 });
 
 test("malformed events are excluded and SDK errors are surfaced as failed evidence", async () => {
@@ -401,6 +448,31 @@ test("cancel and finalize remain explicit and final evidence is not success-shap
   const evidence = await adapter.getEvidence();
   assert.equal(evidence.stopReason, "cancelled");
   assert.equal(evidence.executionVerified, false);
+});
+
+test("events after cancellation are rejected and a cancelled run cannot submit", async () => {
+  const transport = new FakeTransport();
+  const verifier = new FakeVerifier();
+  const adapter = makeAdapter(transport, verifier);
+  await adapter.startSession(validTask());
+  adapter.subscribeEvents();
+
+  let releaseVerification: ((accepted: boolean) => void) | undefined;
+  verifier.pending = new Promise<boolean>((resolve) => {
+    releaseVerification = resolve;
+  });
+  const controller = new AbortController();
+  const submit = adapter.submitReviewedTask(controller.signal);
+  controller.abort();
+  releaseVerification?.(true);
+
+  await assert.rejects(submit, /cancelled/);
+  transport.emit(event());
+  const evidence = await adapter.getEvidence();
+  assert.equal(transport.submissions.length, 0);
+  assert.equal(evidence.stopReason, "cancelled");
+  assert.equal(evidence.events.length, 0);
+  assert.equal(evidence.rejectedEventCount, 1);
 });
 
 test("submission timeout/crash errors propagate without fabricated success", async () => {

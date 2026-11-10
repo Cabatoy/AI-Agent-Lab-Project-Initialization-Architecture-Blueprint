@@ -11,6 +11,14 @@ import {
   type TransportSessionOptions,
 } from "./contracts.ts";
 
+type SdkSession = Pick<
+  CopilotSession,
+  "sessionId" | "sendAndWait" | "abort" | "disconnect" | "on"
+>;
+type SdkClient = {
+  createSession(config: SessionConfig): Promise<SdkSession>;
+};
+
 function normalizeType(type: SessionEvent["type"]): TransportEvent["type"] {
   switch (type) {
     case "assistant.message":
@@ -35,11 +43,11 @@ function normalizeEvent(sessionId: string, event: SessionEvent): TransportEvent 
 
 export class CopilotSdkTransport implements CopilotTransport {
   readonly sdkVersion = PINNED_SDK_VERSION;
-  private readonly sessions = new Map<string, CopilotSession>();
+  private readonly sessions = new Map<string, SdkSession>();
   private readonly events = new Map<string, TransportEvent[]>();
-  private readonly client: CopilotClient;
+  private readonly client: SdkClient;
 
-  constructor(client: CopilotClient) {
+  constructor(client: SdkClient) {
     this.client = client;
   }
 
@@ -60,8 +68,51 @@ export class CopilotSdkTransport implements CopilotTransport {
     sessionId: string,
     prompt: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<void> {
-    await this.requireSession(sessionId).sendAndWait({ prompt }, timeoutMs);
+    if (signal?.aborted) {
+      throw new Error("SDK task submission cancelled");
+    }
+
+    const session = this.requireSession(sessionId);
+    let abortOperation: Promise<void> | undefined;
+    const requestAbort = () => {
+      abortOperation ??= session.abort();
+      return abortOperation;
+    };
+
+    let removeAbortListener: (() => void) | undefined;
+    const cancellation = signal === undefined
+      ? undefined
+      : new Promise<never>((_resolve, reject) => {
+          const onAbort = () => {
+            void requestAbort().then(
+              () => reject(new Error("SDK task submission cancelled")),
+              reject,
+            );
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+          if (signal.aborted) {
+            onAbort();
+          }
+        });
+
+    try {
+      const request = session.sendAndWait({ prompt }, timeoutMs);
+      if (cancellation === undefined) {
+        await request;
+        return;
+      }
+
+      await Promise.race([request, cancellation]);
+      if (signal?.aborted) {
+        await requestAbort();
+        throw new Error("SDK task submission cancelled");
+      }
+    } finally {
+      removeAbortListener?.();
+    }
   }
 
   subscribeEvents(
@@ -99,7 +150,7 @@ export class CopilotSdkTransport implements CopilotTransport {
     return events.slice();
   }
 
-  private requireSession(sessionId: string): CopilotSession {
+  private requireSession(sessionId: string): SdkSession {
     const session = this.sessions.get(sessionId);
     if (session === undefined) {
       throw new Error("SDK session is not active");

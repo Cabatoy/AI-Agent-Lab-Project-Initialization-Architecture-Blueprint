@@ -14,7 +14,9 @@ const taskKeys = new Set([
   "branch",
   "baseSha",
   "permittedPaths",
+  "reviewKeyId",
   "reviewDigest",
+  "reviewSignature",
   "expiresAt",
   "maxDurationMs",
   "maxTurns",
@@ -24,6 +26,8 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const shaPattern = /^[0-9a-f]{40}$/i;
 const digestPattern = /^[0-9a-f]{64}$/i;
+const keyIdPattern = /^[A-Za-z0-9._-]{1,64}$/;
+const signaturePattern = /^[A-Za-z0-9+/]{86}==$|^[A-Za-z0-9+/]{87}=$/;
 const branchPattern = /^[A-Za-z0-9._/-]{1,128}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,7 +94,8 @@ export function parseReviewedTask(
   if (
     typeof input.worktreePath !== "string" ||
     !isAbsolute(input.worktreePath) ||
-    resolve(input.worktreePath) !== input.worktreePath
+    resolve(input.worktreePath) !== input.worktreePath ||
+    /[\u0000-\u001f\u007f]/.test(input.worktreePath)
   ) {
     throw new Error("worktreePath must be an absolute canonical path");
   }
@@ -113,6 +118,15 @@ export function parseReviewedTask(
   }
   if (typeof input.reviewDigest !== "string" || !digestPattern.test(input.reviewDigest)) {
     throw new Error("reviewDigest must be a SHA-256 digest");
+  }
+  if (
+    typeof input.reviewKeyId !== "string" ||
+    !keyIdPattern.test(input.reviewKeyId) ||
+    typeof input.reviewSignature !== "string" ||
+    !signaturePattern.test(input.reviewSignature) ||
+    Buffer.from(input.reviewSignature, "base64").length !== 64
+  ) {
+    throw new Error("review approval must contain a well-formed Ed25519 signature and key id");
   }
   if (
     typeof input.expiresAt !== "string" ||
@@ -142,7 +156,9 @@ export function parseReviewedTask(
     branch: input.branch,
     baseSha: input.baseSha,
     permittedPaths: validatePathList(input.permittedPaths),
+    reviewKeyId: input.reviewKeyId,
     reviewDigest: input.reviewDigest,
+    reviewSignature: input.reviewSignature,
     expiresAt: input.expiresAt,
     maxDurationMs: input.maxDurationMs,
     maxTurns: 1,

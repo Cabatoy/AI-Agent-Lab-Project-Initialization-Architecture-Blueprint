@@ -62,7 +62,7 @@ export class DeveloperOnlyCopilotAdapter {
     this.enabled = options.enabled ?? isAdapterEnabled();
   }
 
-  async startSession(input: unknown): Promise<string> {
+  async startSession(input: unknown, signal?: AbortSignal): Promise<string> {
     if (!this.enabled) {
       throw new Error("Copilot SDK adapter is disabled");
     }
@@ -76,13 +76,24 @@ export class DeveloperOnlyCopilotAdapter {
     this.starting = true;
     try {
       const task = parseReviewedTask(input, this.clock());
-      if (!(await this.verifier.verify(task))) {
+      if (signal?.aborted) {
+        throw new Error("reviewed session start was cancelled");
+      }
+      if (!(await this.verifier.verify(task, signal))) {
         throw new Error("exact-head verifier rejected the reviewed task");
+      }
+      if (signal?.aborted) {
+        throw new Error("reviewed session start was cancelled");
       }
 
       const sessionId = await this.transport.startSession({
         worktreePath: task.worktreePath,
       });
+      if (signal?.aborted) {
+        await this.transport.cancel(sessionId);
+        await this.transport.finalize(sessionId);
+        throw new Error("reviewed session start was cancelled");
+      }
       if (sessionId.trim() === "") {
         throw new Error("SDK transport returned an empty session id");
       }
@@ -109,7 +120,7 @@ export class DeveloperOnlyCopilotAdapter {
     });
   }
 
-  async submitReviewedTask(): Promise<void> {
+  async submitReviewedTask(signal?: AbortSignal): Promise<void> {
     const sessionId = this.requireSession();
     const task = this.requireTask();
     if (this.unsubscribe === undefined) {
@@ -123,11 +134,19 @@ export class DeveloperOnlyCopilotAdapter {
     }
     this.submitted = true;
     try {
+      if (signal?.aborted) {
+        this.stopReason = "cancelled";
+        throw new Error("review submission was cancelled");
+      }
       if (Date.parse(task.expiresAt) <= this.clock()) {
         throw new Error("review approval expired before submission");
       }
-      if (!(await this.verifier.verify(task))) {
+      if (!(await this.verifier.verify(task, signal))) {
         throw new Error("exact-head verifier rejected the task before submission");
+      }
+      if (signal?.aborted) {
+        this.stopReason = "cancelled";
+        throw new Error("review submission was cancelled");
       }
       if (this.stopReason !== "running" && this.stopReason !== "idle") {
         throw new Error(`session stopped before submission: ${this.stopReason}`);
@@ -138,9 +157,12 @@ export class DeveloperOnlyCopilotAdapter {
         sessionId,
         buildReviewedPrompt(task),
         task.maxDurationMs,
+        signal,
       );
     } catch (error) {
-      if (!this.isCancelled()) {
+      if (signal?.aborted) {
+        this.stopReason = "cancelled";
+      } else if (!this.isCancelled()) {
         this.stopReason = "failed";
       }
       throw error;
@@ -208,6 +230,14 @@ export class DeveloperOnlyCopilotAdapter {
       return false;
     }
     this.seenEventIds.add(event.id);
+    if (
+      this.stopReason === "cancelled" ||
+      this.stopReason === "failed" ||
+      this.stopReason === "finalized"
+    ) {
+      this.rejectedReasons.push("event-after-terminal-state");
+      return false;
+    }
     if (!Number.isFinite(Date.parse(event.timestamp))) {
       this.rejectedReasons.push("malformed-event");
       return false;
@@ -227,10 +257,9 @@ export class DeveloperOnlyCopilotAdapter {
       return false;
     }
     if (
-      this.lastAcceptedEventId !== undefined &&
-      (event.parentId === null ||
-        (this.seenEventIds.has(event.parentId) &&
-          event.parentId !== this.lastAcceptedEventId))
+      (this.lastAcceptedEventId === undefined && event.parentId !== null) ||
+      (this.lastAcceptedEventId !== undefined &&
+        event.parentId !== this.lastAcceptedEventId)
     ) {
       this.rejectedReasons.push("out-of-order-event");
       return false;

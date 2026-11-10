@@ -12,7 +12,9 @@ export interface ReviewedTask {
   readonly branch: string;
   readonly baseSha: string;
   readonly permittedPaths: readonly string[];
+  readonly reviewKeyId: string;
   readonly reviewDigest: string;
+  readonly reviewSignature: string;
   readonly expiresAt: string;
   readonly maxDurationMs: number;
   readonly maxTurns: 1;
@@ -62,6 +64,7 @@ export interface CopilotTransport {
     sessionId: string,
     prompt: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<void>;
   subscribeEvents(
     sessionId: string,
@@ -73,5 +76,5 @@ export interface CopilotTransport {
 }
 
 export interface ExactHeadVerifier {
-  verify(task: ReviewedTask): Promise<boolean>;
+  verify(task: ReviewedTask, signal?: AbortSignal): Promise<boolean>;
 }
