@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'hic-phase2-policy.ps1')
+
 function Get-HicResourceDefinitions {
     $path = Join-Path (Join-Path $PSScriptRoot '..') 'deploy\hic-resources\profiles.json'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -858,8 +860,17 @@ function Invoke-HicResourceCommand {
         [string]$Root
     )
     if ($Action -eq 'profile' -and $SubAction -ne 'plan') { throw 'Supported profile command: profile plan.' }
-    if ($Action -eq 'resource' -and $SubAction -notin @('status', 'doctor', 'start', 'stop')) {
-        throw 'Supported resource commands: resource status, resource doctor, resource start, resource stop.'
+    if ($Action -eq 'resource' -and $SubAction -notin @('status', 'doctor', 'start', 'stop', 'phase2-plan')) {
+        throw 'Supported resource commands: resource status, resource doctor, resource start, resource stop, resource phase2-plan.'
+    }
+    if ($Action -eq 'resource' -and $SubAction -eq 'phase2-plan') {
+        if ($Apply) { throw 'resource phase2-plan is design-only and does not support -Apply.' }
+        $design = Get-HicPhase2LifecycleDesign
+        if (-not $Json) {
+            Write-Host 'HIC Phase 2 lifecycle design - no runtime inspection or changes'
+            Write-Host 'Model unload and disposable test database policies are proposals only.'
+        }
+        return $design
     }
     if ($Action -eq 'resource' -and $SubAction -eq 'stop') {
         $report = [ordered]@{
