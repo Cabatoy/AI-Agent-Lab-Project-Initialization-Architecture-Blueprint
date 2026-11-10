@@ -1,0 +1,16 @@
+{
+  "observedOn": "2026-11-10",
+  "platform": "win32",
+  "editorVersion": "1.145.2",
+  "editorCommit": "c4453f8ea430795f941c1b2ff6c9321135a74a02",
+  "extensionId": "GitHub.copilot-chat",
+  "extensionVersion": "0.73.0",
+  "extensionManifestSha256": "d0e92ec15928120112abbe0d45ce3b4a3c1051562421044848ee3dee014f0874",
+  "mainImplementationSha256": "bc1301b3269f645df36d12d424cdbbf35a3930076914bd77229df45394352896",
+  "draftUri": "vscode://agents/new",
+  "submitsPrompt": false,
+  "completionCallback": false,
+  "headlessFusionApi": false,
+  "operatorAcceptance": "not-run",
+  "documentation": "https://code.visualstudio.com/docs/configure/command-line#_prepare-a-new-agent-session-draft"
+}

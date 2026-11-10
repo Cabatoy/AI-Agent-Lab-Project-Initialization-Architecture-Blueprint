@@ -1,0 +1,35 @@
+name: Developer handoff offline checks
+
+on:
+  push:
+    branches: ['feature/hic-fusion-handoff-d0-d1']
+    paths:
+      - 'tools/dev-handoff/**'
+      - '.github/workflows/dev-handoff-ci.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'tools/dev-handoff/**'
+      - '.github/workflows/dev-handoff-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax check (no installs or runtime)
+        run: |
+          node --check tools/dev-handoff/handoff.mjs
+          node --check tools/dev-handoff/cli.mjs
+      - name: Offline synthetic adapter tests
+        run: node --test --test-reporter=./tools/dev-handoff/ci-reporter.mjs tools/dev-handoff/handoff.test.mjs
