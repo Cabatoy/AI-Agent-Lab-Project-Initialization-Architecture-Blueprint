@@ -49,12 +49,13 @@ export async function publishSyntheticReceipt(receipt,{token,fetchImpl=fetch}={}
   if(typeof token!=='string'||!/^github_pat_[A-Za-z0-9_]+$/.test(token)||token.length>300)fail('missing-scoped-token');
   // GitHub issue comments are a transport-only at-least-once channel, not a durable HIC ledger.
   const existing=await fetchImpl(API+'?per_page=100&page=1',{method:'GET',headers:headers(token),redirect:'manual'});
-  const comments=(await readBody(existing)).filter(c=>c?.user?.login===EXPECTED_COMMENT_AUTHOR);
+  const page=await readBody(existing);
+  if(page.length===100)fail('ack-pagination-unverified');
+  const comments=page.filter(c=>c?.user?.login===EXPECTED_COMMENT_AUTHOR);
   const marker=ackMarker(receipt);
   const prefix='<!-- hic-dev-ack-v1 order='+receipt.orderId+' digest=';
   if(comments.some(c=>typeof c?.body==='string'&&c.body.includes(prefix)&&!c.body.includes(marker)))fail('ack-remote-conflict');
   if(comments.some(c=>typeof c?.body==='string'&&c.body.includes(marker)))return {status:'already-published',orderId:receipt.orderId};
-  if(comments.length===100)fail('ack-pagination-unverified');
   const body=marker+'\nHIC developer relay: synthetic transport receipt; **seen-untrusted**; executionAllowed=false. No agent or task executed.';
   const response=await fetchImpl(API,{method:'POST',headers:{...headers(token),'Content-Type':'application/json'},body:JSON.stringify({body}),redirect:'manual'});
   if(response.status!==201)fail('ack-publish-not-confirmed');
