@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import {
   ALLOWED_REPOSITORY,
@@ -100,6 +100,18 @@ function samePath(left: string, right: string): boolean {
   return process.platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+async function hasSymlinkPathComponent(path: string): Promise<boolean> {
+  const { root } = parse(path);
+  let current = root;
+  for (const segment of path.slice(root.length).split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    if ((await lstat(current)).isSymbolicLink()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -411,8 +423,17 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
       if (!samePath(worktreePath, validatedTask.worktreePath)) {
         return rejected(stage);
       }
+      if (
+        process.platform === "win32" &&
+        await hasSymlinkPathComponent(worktreePath)
+      ) {
+        return rejected(stage);
+      }
       const canonicalRoot = await realpath(worktreePath);
-      if (!samePath(worktreePath, canonicalRoot)) {
+      if (
+        process.platform !== "win32" &&
+        !samePath(worktreePath, canonicalRoot)
+      ) {
         return rejected(stage);
       }
       const run = (args: readonly string[]) =>
