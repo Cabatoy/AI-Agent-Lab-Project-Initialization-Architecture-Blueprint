@@ -176,10 +176,10 @@ assumed equivalent. A future reproducible disposable fixture must:
 5. Re-run the fake-transport offline harness on Windows and Linux. No CI job
    starts the runtime, CLI, live model, or credential preflight.
 
-The verifier tests create their disposable Git fixtures only under this
-package's `test/` directory, commit no fixture artifacts, and remove each
-fixture by its unique path. This tests local Git/worktree checks, not OS
-isolation. Until the sandbox and environment-scrubbing properties above are
+The verifier tests create uniquely named disposable Git fixtures under the
+OS temporary directory (rather than the deeply nested CI checkout path on
+Windows), commit no fixture artifacts, and remove only each test's exact
+fixture path. This tests local Git/worktree checks, not OS isolation. Until the sandbox and environment-scrubbing properties above are
 proven, even a no-tools, no-file-write SDK message can expose sensitive
 environment/context through the runtime or network. A future S2 smoke may only
 propose that non-mutating response first; docs-file editing is not presently
