@@ -15,7 +15,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-if(-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'Windows only: per-user DPAPI and Task Scheduler required.' }
+if($env:OS -ne 'Windows_NT') { throw 'Windows only: per-user DPAPI and Task Scheduler required.' }
 $toolRoot=Split-Path -Parent $PSScriptRoot
 $nodeExe=(Get-Command node.exe -ErrorAction Stop).Source
 $stateDir=Join-Path $env:LOCALAPPDATA 'HICDevRelay'
@@ -72,7 +72,7 @@ switch ($Mode) {
    if($confirm -cne 'ENABLE-HIC-ACK'){throw 'Not authorized.'}
    $user=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
    $scriptPath=$MyInvocation.MyCommand.Path
-   $arguments='-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "'+$scriptPath+'" -Mode AckWatch'
+   $arguments='-NoProfile -NonInteractive -File "'+$scriptPath+'" -Mode AckWatch'
    $action=New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $arguments
    $trigger=New-ScheduledTaskTrigger -AtLogOn -User $user
    $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
