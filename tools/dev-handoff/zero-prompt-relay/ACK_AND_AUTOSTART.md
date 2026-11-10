@@ -65,3 +65,5 @@ It reports active worktrees, upstream, ahead/behind commits and branch candidate
 4. **P3:** Bounded automatic continuation of **allowlisted** tasks and Draft PR creation with separate scoped publisher; no automatic merge/deploy or privileged changes.
 
 The operator must complete the one-time local setup. A cloud ChatGPT session cannot install or launch software on this Windows host merely by writing a GitHub issue. **Humans are not message queues.**
+
+**CI nesting note:** The parent #96 workflow must include `feature/hic-dev-proposal-watcher` as a permitted PR base branch so the #97 stacked review receives exact-head Windows/Linux checks. This is a CI trigger rule, not an execution permission.
