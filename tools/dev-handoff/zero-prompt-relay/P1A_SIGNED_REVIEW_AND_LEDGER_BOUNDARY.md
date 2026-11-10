@@ -1,5 +1,10 @@
 # HIC DEV P1A — signed reviewed work-order boundary (OFFLINE ONLY)
 
+P1A.2'nin ek authenticated snapshot sözleşmesi, bağımsız public-key lifecycle
+runbook'u ve canlı `BLOCKED` kararı için
+[P1A.2 sınırını](P1A2_AUTHORITY_AND_KEY_RUNBOOK.md) okuyun. Aşağıdaki P1A
+verifier/legacy ledger API'si korunur; hiçbir canlı authority'ye yükseltilmez.
+
 **Status:** Developer-only review library, not installed or executable. This branch does not change the Windows scheduled `AckWatch` or any live HIC Control Plane, Redis, PostgreSQL, Podman, or Git credential.
 
 ## Authority
