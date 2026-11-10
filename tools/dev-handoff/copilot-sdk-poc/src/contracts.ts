@@ -64,6 +64,7 @@ export interface CopilotTransport {
     sessionId: string,
     prompt: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<void>;
   subscribeEvents(
     sessionId: string,

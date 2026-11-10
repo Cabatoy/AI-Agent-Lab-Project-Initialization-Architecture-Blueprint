@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PINNED_SDK_VERSION } from "./contracts.ts";
 
@@ -13,7 +12,7 @@ export interface ReadinessPreflight {
     readonly runtimeInvoked: false;
   };
   readonly cli: {
-    readonly namePresentOnPath: boolean;
+    readonly namePresentOnPath: "not-checked";
     readonly presenceIsAuthoritative: false;
     readonly versionQueryRun: false;
   };
@@ -25,17 +24,7 @@ export interface ReadinessPreflight {
   readonly modelRequestMade: false;
 }
 
-export function isCopilotCliOnPath(pathValue = process.env.PATH ?? ""): boolean {
-  const extensions =
-    process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];
-  return pathValue.split(delimiter).some((directory) =>
-    extensions.some((extension) => existsSync(join(directory, `copilot${extension}`))),
-  );
-}
-
-export function collectReadinessPreflight(
-  pathValue = process.env.PATH ?? "",
-): ReadinessPreflight {
+export function collectReadinessPreflight(): ReadinessPreflight {
   return Object.freeze({
     sdk: Object.freeze({
       package: "@github/copilot-sdk",
@@ -44,7 +33,7 @@ export function collectReadinessPreflight(
       runtimeInvoked: false,
     }),
     cli: Object.freeze({
-      namePresentOnPath: isCopilotCliOnPath(pathValue),
+      namePresentOnPath: "not-checked",
       presenceIsAuthoritative: false,
       versionQueryRun: false,
     }),

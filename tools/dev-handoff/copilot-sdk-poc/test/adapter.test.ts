@@ -47,6 +47,7 @@ class FakeTransport implements CopilotTransport {
   cancelled = 0;
   finalized = 0;
   submitError: Error | undefined;
+  waitForSubmissionCancellation = false;
   sessionId = "sdk-session-1";
 
   async startSession(options: TransportSessionOptions): Promise<string> {
@@ -58,10 +59,26 @@ class FakeTransport implements CopilotTransport {
     sessionId: string,
     prompt: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<void> {
     this.submissions.push({ sessionId, prompt, timeoutMs });
     if (this.submitError !== undefined) {
       throw this.submitError;
+    }
+    if (this.waitForSubmissionCancellation) {
+      if (signal === undefined || signal.aborted) {
+        throw new Error("SDK task submission cancelled");
+      }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            this.cancelled += 1;
+            reject(new Error("SDK task submission cancelled"));
+          },
+          { once: true },
+        );
+      });
     }
   }
 
@@ -304,6 +321,25 @@ test("approval expiry and a changed exact head block submission after session cr
   );
   assert.equal(verifier.calls.length, 2);
   assert.equal(changedHeadTransport.submissions.length, 0);
+});
+
+test("abort signal cancels an in-flight one-shot submission and prevents replay", async () => {
+  const transport = new FakeTransport();
+  transport.waitForSubmissionCancellation = true;
+  const adapter = makeAdapter(transport);
+  await adapter.startSession(validTask());
+  adapter.subscribeEvents();
+
+  const controller = new AbortController();
+  const submission = adapter.submitReviewedTask(controller.signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(submission, /cancelled/);
+  assert.equal(transport.cancelled, 1);
+  const evidence = await adapter.getEvidence();
+  assert.equal(evidence.stopReason, "cancelled");
+  await assert.rejects(adapter.submitReviewedTask(), /only one reviewed task/);
 });
 
 test("idle, duplicate, foreign and out-of-order events never prove task completion", async () => {

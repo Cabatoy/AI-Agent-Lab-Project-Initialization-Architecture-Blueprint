@@ -157,6 +157,7 @@ export class DeveloperOnlyCopilotAdapter {
         sessionId,
         buildReviewedPrompt(task),
         task.maxDurationMs,
+        signal,
       );
     } catch (error) {
       if (signal?.aborted) {

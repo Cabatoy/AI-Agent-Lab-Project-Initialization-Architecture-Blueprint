@@ -135,12 +135,15 @@ readiness slice. The `HIC Copilot SDK PoC (offline)` workflow runs the same
 typecheck/tests on Windows and Linux with read-only repository permission.
 
 Run the redacted local preflight separately with `npm run preflight`. It prints
-the pinned SDK and package-metadata runtime-version claim, a non-authoritative
-`copilot` name-on-`PATH` boolean (an editor shim may match), and the states `authentication=unknown`,
+the pinned SDK and package-metadata runtime-version claim, `cli.namePresentOnPath=not-checked`,
+and the states `authentication=unknown`,
 `modelEntitlement=unknown`, `quotaOrBilling=unknown`. It does not launch the
-bundled runtime or CLI, inspect credentials, access the network, or make a
-model request. Runtime invocation and authentication support have therefore not
-been verified in this environment.
+bundled runtime or CLI, scan `PATH` (which could contain network locations),
+inspect credentials, access the network, or make a model request. The earlier
+read-only `copilot --version` probe in this environment found only a VS Code
+shim and reported the CLI unavailable. The npm package metadata claims the
+bundled runtime version, but the runtime has not been invoked; authentication
+support, entitlement, and quota remain unverified.
 
 ## Sandbox threat model and fixture plan
 

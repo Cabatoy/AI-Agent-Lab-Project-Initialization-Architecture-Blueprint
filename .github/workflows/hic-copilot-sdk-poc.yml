@@ -26,7 +26,8 @@ jobs:
       - name: Confirm checkout is the exact PR head
         env:
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node -e "const { execFileSync } = require('node:child_process'); if (execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== process.env.EXPECTED_HEAD_SHA) process.exit(1); console.log('Checked out exact PR head')"
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (head !== process.env.EXPECTED_HEAD_SHA) process.exit(1); console.log('Checked out exact PR head');"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

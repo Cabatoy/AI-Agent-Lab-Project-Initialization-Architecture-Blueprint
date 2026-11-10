@@ -97,12 +97,12 @@ test("GitHub read-only status schema binds checks to the exact requested SHA", a
   );
 });
 
-test("readiness preflight reports only safe local facts and leaves auth/quota unknown", () => {
-  const preflight = collectReadinessPreflight("");
+test("readiness preflight avoids PATH and credentials and leaves auth/quota unknown", () => {
+  const preflight = collectReadinessPreflight();
   assert.equal(preflight.sdk.pinnedVersion, "1.0.30");
   assert.equal(preflight.sdk.bundledRuntimeVersionClaim, DECLARED_BUNDLED_RUNTIME_VERSION);
   assert.equal(preflight.sdk.runtimeInvoked, false);
-  assert.equal(preflight.cli.namePresentOnPath, false);
+  assert.equal(preflight.cli.namePresentOnPath, "not-checked");
   assert.equal(preflight.cli.presenceIsAuthoritative, false);
   assert.equal(preflight.cli.versionQueryRun, false);
   assert.equal(preflight.authentication, "unknown");
