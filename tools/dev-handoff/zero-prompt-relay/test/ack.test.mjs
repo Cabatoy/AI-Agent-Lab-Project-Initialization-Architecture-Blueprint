@@ -34,7 +34,7 @@ test('GET existing acknowledgment deduplicates; no POST or token logging',async(
   const calls=[];
   const result=await publishSyntheticReceipt(checked,{token,fetchImpl:async(url,options)=>{
     calls.push({url,method:options.method,headers:options.headers});
-    return {status:200,text:async()=>JSON.stringify([{body:ackMarker(checked)}])};
+    return {status:200,text:async()=>JSON.stringify([{body:ackMarker(checked),user:{login:'Cabatoy'}}])};
   }});
   assert.equal(result.status,'already-published');assert.equal(calls.length,1);assert.equal(calls[0].method,'GET');
   assert.ok(calls[0].url.endsWith('/issues/97/comments?per_page=100&page=1'));
@@ -43,7 +43,7 @@ test('publisher sends only fixed synthetic ack to exact issue',async()=>{
   const calls=[];
   const result=await publishSyntheticReceipt(checkReceipt(receipt,{orderId:id,digest}),{token,fetchImpl:async(url,options)=>{
     calls.push({url,method:options.method,body:options.body});
-    return options.method==='GET'?{status:200,text:async()=>JSON.stringify([])}:{status:201,text:async()=>JSON.stringify({id:1})};
+    return options.method==='GET'?{status:200,text:async()=>JSON.stringify([])}:{status:201,text:async()=>JSON.stringify({id:1,user:{login:'Cabatoy'},body:ackMarker(receipt)})};
   }});
   assert.equal(result.status,'published-synthetic-ack');
   assert.equal(calls.length,2);assert.ok(calls.every(x=>x.url.startsWith('https://api.github.com/repos/'+REPO+'/issues/97/comments')));
@@ -54,7 +54,7 @@ test('conflicting remote digest blocks publication',async()=>{
   let posts=0;
   await assert.rejects(publishSyntheticReceipt(checkReceipt(receipt,{orderId:id,digest}),{token,fetchImpl:async(_url,options)=>{
     if(options.method==='POST')posts++;
-    return {status:200,text:async()=>JSON.stringify([{body:'<!-- hic-dev-ack-v1 order='+id+' digest='+'b'.repeat(64)+' -->'}])};
+    return {status:200,text:async()=>JSON.stringify([{body:'<!-- hic-dev-ack-v1 order='+id+' digest='+'b'.repeat(64)+' -->',user:{login:'Cabatoy'}}])};
   }}),/ack-remote-conflict/);
   assert.equal(posts,0);
 });
@@ -78,3 +78,21 @@ test('one synthetic GitHub ping flows to local receipt and remote mock ack',()=>
     await run();assert.equal(count,2); // remote dedupe belongs to the authenticated publisher
   });
 }));
+
+test('untrusted public commenter cannot impersonate local relay ack',async()=>{
+ const checked=checkReceipt(receipt,{orderId:id,digest});
+ const calls=[];
+ const result=await publishSyntheticReceipt(checked,{token,fetchImpl:async(url,opts)=>{
+   calls.push(opts.method);
+   if(opts.method==='GET') return {status:200,text:async()=>JSON.stringify([{body:ackMarker(checked),user:{login:'attacker'}}])};
+   return {status:201,json:async()=>({id:2,user:{login:'Cabatoy'},body:ackMarker(checked)})};
+ }});
+ assert.equal(result.status,'published-synthetic-ack');assert.deepEqual(calls,['GET','POST']);
+});
+test('publisher rejects mismatched authored comment after POST',async()=>{
+ const checked=checkReceipt(receipt,{orderId:id,digest});
+ await assert.rejects(publishSyntheticReceipt(checked,{token,fetchImpl:async(_u,opts)=>
+   opts.method==='GET' ? {status:200,text:async()=>JSON.stringify([])} :
+   {status:201,json:async()=>({id:9,user:{login:'attacker'},body:ackMarker(checked)})}
+ }),/ack-publish-author-unverified/);
+});
