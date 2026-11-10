@@ -2,7 +2,11 @@ name: HIC Copilot SDK PoC (offline)
 
 on:
   pull_request:
-    branches: [develop, main, feature/issue-88-copilot-sdk-poc]
+    branches:
+      - develop
+      - main
+      - feature/issue-88-copilot-sdk-poc
+      - feature/issue-90-copilot-sdk-s2-readiness
     paths:
       - 'tools/dev-handoff/copilot-sdk-poc/**'
       - '.github/workflows/hic-copilot-sdk-poc.yml'

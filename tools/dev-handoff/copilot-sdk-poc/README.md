@@ -16,6 +16,7 @@ Read-only checks on 2026-11-10 found:
 | .NET SDK | `10.0.403` |
 | VS Code | `1.145.2` |
 | Copilot CLI | Not available: the `copilot --version` shim reported that the CLI was not found |
+| Podman/WSL | `podman.exe` and `wsl.exe` command names are installed; machine, service, and feature state were not queried |
 | SDK authentication | Not verified; the CLI was unavailable, and no credentials/keychain state was inspected |
 
 The official Node SDK is pinned to `@github/copilot-sdk` **1.0.30** in
@@ -152,7 +153,7 @@ shim and reported the CLI unavailable. The npm package metadata claims the
 bundled runtime version, but the runtime has not been invoked; authentication
 support, entitlement, and quota remain unverified.
 
-## Sandbox threat model and fixture plan
+## Offline sandbox harness and verification boundary
 
 The threat includes untrusted reviewed-task metadata, SDK/model output,
 repository content, inherited process environment, host filesystem and
@@ -160,9 +161,41 @@ credential stores, network egress, runaway processes/resources, and cleanup
 mistakes. Empty SDK tool configuration does not constrain runtime internals;
 Git worktrees do not provide OS isolation.
 
-**No safe execution sandbox has been implemented or verified.** In particular,
-Windows, WSL2, and Podman filesystem, process, and network boundaries are not
-assumed equivalent. A future reproducible disposable fixture must:
+The developer-only offline scaffold is disabled by default.
+`OFFLINE_SANDBOX_POLICY` records a deny-by-default target policy, and
+`createDisposableOfflineFixture()` creates a unique synthetic repository with
+a dummy credential-named file. Its cleanup helper verifies the fixture ID,
+exact temp-root location, reparse-point status, and ownership marker before
+removing only that one fixture. It never uses `prune`, broad worktree deletion,
+or Compose/container lifecycle commands. These fixture and cleanup tests do
+not establish an OS sandbox.
+
+Run the explicit operator preflight (`sandbox --offline-fixture`) with:
+
+```powershell
+npm run sandbox:offline-fixture
+```
+
+Currently it returns exit code 1 and a redacted `status: "unverified"` report
+without creating a fixture, starting Podman/WSL, opening the network, reading
+credentials, or contacting the SDK. No runtime probe provider is implemented.
+The installed command-name check is not a Podman/WSL capability check: no
+machine/service state, Windows Sandbox feature state, or container isolation
+property was queried. A separate `approve-podman` confirmation is required
+before the read-only Podman status probes permitted by the repository's local
+environment rules. Do not treat installed binaries or policy constants as
+isolation evidence.
+
+`buildSandboxPreflight()` requires explicit observations for each filesystem,
+credential, egress, resource-limit, image-digest, fixture-identity, and cleanup
+check. Missing observations yield `unverified`; a failed boundary yields
+`blocked`. Reasons are fixed codes and never include host paths, error text,
+or fixture contents. Unit tests use synthetic observations to test this
+aggregation contract only; those fake observations are not runtime evidence.
+No current invocation can produce a real `verified` sandbox result.
+
+Before any runtime provider is considered, a reproducible disposable fixture
+must:
 
 1. Generate a unique disposable identity and a deterministic, minimal fixture
    repository with a seed commit; never mount the HIC production checkout,
@@ -183,14 +216,14 @@ assumed equivalent. A future reproducible disposable fixture must:
 5. Re-run the fake-transport offline harness on Windows and Linux. No CI job
    starts the runtime, CLI, live model, or credential preflight.
 
-The verifier tests create uniquely named disposable Git fixtures under the
-OS temporary directory (rather than the deeply nested CI checkout path on
-Windows), commit no fixture artifacts, and remove only each test's exact
-fixture path. This tests local Git/worktree checks, not OS isolation. Until the sandbox and environment-scrubbing properties above are
-proven, even a no-tools, no-file-write SDK message can expose sensitive
-environment/context through the runtime or network. A future S2 smoke may only
-propose that non-mutating response first; docs-file editing is not presently
-feasible or authorized.
+The exact-head verifier tests create uniquely named disposable Git fixtures
+under the OS temporary directory (rather than the deeply nested CI checkout
+path on Windows), commit no fixture artifacts, and remove only each test's
+exact fixture path. They test local Git/worktree checks, not OS isolation.
+Until a real sandbox and environment-scrubbing properties are independently
+verified, even a no-tools, no-file-write SDK message can expose sensitive
+environment/context through the runtime or network. No model smoke or SDK
+session is authorized by this scaffold.
 
 ## S2 readiness
 
@@ -200,7 +233,8 @@ model entitlement, quota, and billing are all **unknown**; no account
 identifiers, credentials, or billing details were inspected. The exact-head
 local verifier and GitHub status schema are implemented and offline-tested, but
 there is no configured trusted review key, no live GitHub check provider, and
-no OS sandbox proof. A worktree alone is insufficient isolation; even the
+no OS sandbox proof. Podman/WSL runtime and Windows host isolation capabilities
+remain unverified. A worktree alone is insufficient isolation; even the
 non-mutating model smoke remains blocked. No model session was started, and no
 quota use or cost was measured. Do not promise zero cost. Any future real
 request requires separate explicit one-shot human consent and re-validation of

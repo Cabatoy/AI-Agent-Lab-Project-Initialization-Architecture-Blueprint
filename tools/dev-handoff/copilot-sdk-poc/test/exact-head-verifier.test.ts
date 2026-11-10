@@ -6,9 +6,10 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import type { ReviewedTask } from "../src/contracts.ts";
@@ -292,4 +293,32 @@ test("verifier fails closed on cancellation, timeout, and missing trusted keys",
     clock: () => now + 11 * 60_000,
   });
   assert.equal(await expiredClockVerifier.verify(expiringTask), false);
+});
+
+test("Windows case aliases remain valid while junction/reparse path aliases are rejected", async (t) => {
+  const fixture = createFixture();
+  t.after(() => rmSync(fixture.fixture, { recursive: true, force: true }));
+
+  if (process.platform === "win32") {
+    const caseAlias = fixture.worktree.toUpperCase();
+    await assertVerified(signedTask(
+      caseAlias,
+      "docs/verifier-fixture",
+      fixture.baseSha,
+    ));
+  }
+
+  const junction = join(fixture.fixture, "worktree-alias");
+  symlinkSync(
+    fixture.fixture,
+    junction,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const aliasedWorktree = join(junction, basename(fixture.worktree));
+  const result = await verifier().verifyWithDiagnostics(signedTask(
+    aliasedWorktree,
+    "docs/verifier-fixture",
+    fixture.baseSha,
+  ));
+  assert.deepEqual(result, { verified: false, stage: "worktree-path" });
 });

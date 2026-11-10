@@ -10,7 +10,9 @@
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
-    "preflight": "node src/preflight.ts"
+    "preflight": "node src/preflight.ts",
+    "sandbox": "node src/sandbox-cli.ts",
+    "sandbox:offline-fixture": "node src/sandbox-cli.ts --offline-fixture"
   },
   "dependencies": {
     "@github/copilot-sdk": "1.0.30"
