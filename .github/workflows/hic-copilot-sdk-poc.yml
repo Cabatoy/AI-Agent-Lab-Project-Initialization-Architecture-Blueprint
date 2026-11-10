@@ -1,0 +1,34 @@
+name: HIC Copilot SDK PoC (offline)
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'tools/dev-handoff/copilot-sdk-poc/**'
+      - '.github/workflows/hic-copilot-sdk-poc.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Offline fake-transport tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/dev-handoff/copilot-sdk-poc/package-lock.json
+      - name: Install pinned dependencies without SDK runtime binaries
+        working-directory: tools/dev-handoff/copilot-sdk-poc
+        run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+      - name: Typecheck and run fake-transport tests
+        working-directory: tools/dev-handoff/copilot-sdk-poc
+        run: npm run check
