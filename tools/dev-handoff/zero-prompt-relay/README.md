@@ -48,6 +48,11 @@ No scheduled task/Windows service is installed. Do not enable OS autostart yet; 
 
 ## Missing pieces
 
+P1A.2'nin yalnız sahte authority sağlayıcısıyla çalışan, yürütme yetkisi vermeyen
+snapshot doğrulaması ve canlı kullanımın `BLOCKED` nedenleri
+[authority/key runbook](P1A2_AUTHORITY_AND_KEY_RUNBOOK.md) içinde açıklanır.
+Bu kütüphane mevcut relay girişlerine veya scheduled task'a bağlanmaz.
+
 This P0 slice proves only **GitHub → local receipt** after one-time startup. It does not prove **local → GitHub ack**, HIC task/run claims, reviewed signing keys, lease recovery, sandbox isolation, SDK login/quota, code/test/CI artifacts or autonomous continuation. Those must be separately implemented and approved under [Issue #93](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/93); existing [#92](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/92) sandbox preflight remains `UNVERIFIED`.
 
 *Humans are not message queues.*

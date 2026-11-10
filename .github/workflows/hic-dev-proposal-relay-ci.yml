@@ -2,7 +2,7 @@ name: HIC Developer Proposal Relay (offline)
 
 on:
   pull_request:
-    branches: [feature/hic-dev-ack-channel, feature/hic-dev-proposal-watcher, docs/hic-dev-work-order-protocol, develop]
+    branches: [feature/hic-dev-signed-review-p1a, feature/hic-dev-ack-channel, feature/hic-dev-proposal-watcher, docs/hic-dev-work-order-protocol, develop]
     paths:
       - 'tools/dev-handoff/zero-prompt-relay/**'
       - '.github/workflows/hic-dev-proposal-relay-ci.yml'
