@@ -107,6 +107,15 @@ function verifier(overrides: {
   });
 }
 
+async function assertVerified(task: ReviewedTask): Promise<void> {
+  const result = await verifier().verifyWithDiagnostics(task);
+  assert.equal(
+    result.verified,
+    true,
+    result.verified ? undefined : `verifier rejected at stage: ${result.stage}`,
+  );
+}
+
 test("read-only verifier accepts only the signed, clean exact linked worktree", async (t) => {
   const fixture = createFixture();
   t.after(() => rmSync(fixture.fixture, { recursive: true, force: true }));
@@ -116,12 +125,12 @@ test("read-only verifier accepts only the signed, clean exact linked worktree", 
     "docs/verifier-fixture",
     fixture.baseSha,
   );
-  assert.equal(await verifier().verify(exactTask), true);
+  await assertVerified(exactTask);
 
   writeFileSync(join(fixture.worktree, "docs-md", "readiness.md"), "dirty\n");
   assert.equal(await verifier().verify(exactTask), false);
   writeFileSync(join(fixture.worktree, "docs-md", "readiness.md"), "fixture\n");
-  assert.equal(await verifier().verify(exactTask), true);
+  await assertVerified(exactTask);
 
   writeFileSync(join(fixture.worktree, ".ignored-check"), "ignored fixture\n");
   assert.equal(await verifier().verify(exactTask), false);
@@ -133,7 +142,7 @@ test("read-only verifier accepts only the signed, clean exact linked worktree", 
   git(fixture.worktree, "add", "docs-md/readiness.md");
   assert.equal(await verifier().verify(exactTask), false);
   git(fixture.worktree, "reset", "--hard", "-q", "HEAD");
-  assert.equal(await verifier().verify(exactTask), true);
+  await assertVerified(exactTask);
 
   git(
     fixture.repository,
@@ -193,7 +202,7 @@ test("verifier rejects Git symlinks and untrusted or stale review signatures", a
     "docs/verifier-fixture",
     fixture.baseSha,
   );
-  assert.equal(await verifier().verify(exactTask), true);
+  await assertVerified(exactTask);
 
   const escapedPath = join(fixture.worktree, "docs-md", "escape.md");
   writeFileSync(escapedPath, "../../outside.md");

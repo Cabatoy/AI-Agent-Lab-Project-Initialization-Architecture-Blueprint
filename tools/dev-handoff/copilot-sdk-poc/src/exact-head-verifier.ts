@@ -34,6 +34,29 @@ export interface ReadOnlyGitVerifierOptions {
   readonly runGit?: GitCommandRunner;
 }
 
+export type ExactHeadRejectionStage =
+  | "cancelled"
+  | "task-validation"
+  | "review-signature"
+  | "worktree-path"
+  | "git-root"
+  | "origin"
+  | "head"
+  | "branch"
+  | "worktree-registration"
+  | "tree-index"
+  | "worktree-bytes"
+  | "permitted-path"
+  | "git-or-filesystem-error";
+
+export type ExactHeadVerificationResult =
+  | { readonly verified: true }
+  | { readonly verified: false; readonly stage: ExactHeadRejectionStage };
+
+function rejected(stage: ExactHeadRejectionStage): ExactHeadVerificationResult {
+  return Object.freeze({ verified: false, stage });
+}
+
 function safeGitEnvironment(): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
@@ -325,21 +348,28 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
   }
 
   async verify(task: ReviewedTask, signal?: AbortSignal): Promise<boolean> {
+    return (await this.verifyWithDiagnostics(task, signal)).verified;
+  }
+
+  async verifyWithDiagnostics(
+    task: ReviewedTask,
+    signal?: AbortSignal,
+  ): Promise<ExactHeadVerificationResult> {
     if (signal?.aborted) {
-      return false;
+      return rejected("cancelled");
     }
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let abortHandler: (() => void) | undefined;
-    const interrupted = new Promise<boolean>((resolveInterrupted) => {
+    const interrupted = new Promise<ExactHeadVerificationResult>((resolveInterrupted) => {
       timeout = setTimeout(() => {
         controller.abort();
-        resolveInterrupted(false);
+        resolveInterrupted(rejected("git-or-filesystem-error"));
       }, this.timeoutMs);
       if (signal !== undefined) {
         abortHandler = () => {
           controller.abort();
-          resolveInterrupted(false);
+          resolveInterrupted(rejected("cancelled"));
         };
         signal.addEventListener("abort", abortHandler, { once: true });
       }
@@ -364,23 +394,26 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
   private async verifyInternal(
     task: ReviewedTask,
     signal: AbortSignal,
-  ): Promise<boolean> {
+  ): Promise<ExactHeadVerificationResult> {
+    let stage: ExactHeadRejectionStage = "task-validation";
     try {
       const validatedTask = parseReviewedTask(task, this.clock());
+      stage = "review-signature";
       if (!isReviewSignatureValid(validatedTask, this.trustedReviewKeys)) {
-        return false;
+        return rejected(stage);
       }
       if (signal.aborted) {
-        return false;
+        return rejected("cancelled");
       }
 
+      stage = "worktree-path";
       const worktreePath = resolve(validatedTask.worktreePath);
       if (!samePath(worktreePath, validatedTask.worktreePath)) {
-        return false;
+        return rejected(stage);
       }
       const canonicalRoot = await realpath(worktreePath);
       if (!samePath(worktreePath, canonicalRoot)) {
-        return false;
+        return rejected(stage);
       }
       const run = (args: readonly string[]) =>
         runWithDeadline(
@@ -391,12 +424,13 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
           signal,
         );
 
+      stage = "git-root";
       if ((await run(["rev-parse", "--is-inside-work-tree"])) !== "true") {
-        return false;
+        return rejected(stage);
       }
       const gitRoot = await realpath(await run(["rev-parse", "--show-toplevel"]));
       if (!samePath(gitRoot, canonicalRoot)) {
-        return false;
+        return rejected(stage);
       }
 
       const gitDirectory = resolve(canonicalRoot, await run(["rev-parse", "--git-dir"]));
@@ -405,27 +439,31 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
         await run(["rev-parse", "--git-common-dir"]),
       );
       if (samePath(gitDirectory, commonDirectory)) {
-        return false;
+        return rejected("worktree-registration");
       }
 
+      stage = "origin";
       const origins = (await run(["remote", "get-url", "--all", "origin"]))
         .split(/\r?\n/)
         .filter(Boolean);
       if (origins.length !== 1 || !isAllowedOrigin(origins[0])) {
-        return false;
+        return rejected(stage);
       }
 
+      stage = "head";
       const headSha = (
         await run(["rev-parse", "--verify", "HEAD^{commit}"])
       ).toLowerCase();
       if (headSha !== validatedTask.baseSha.toLowerCase()) {
-        return false;
+        return rejected(stage);
       }
+      stage = "branch";
       const branch = await run(["symbolic-ref", "--quiet", "--short", "HEAD"]);
       if (branch !== validatedTask.branch) {
-        return false;
+        return rejected(stage);
       }
 
+      stage = "worktree-registration";
       const worktrees = parseWorktrees(await run(["worktree", "list", "--porcelain"]));
       const registeredWorktree = worktrees.find((worktree) =>
         samePath(worktree.path, canonicalRoot),
@@ -439,9 +477,10 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
         registeredWorktree.prunable ||
         samePath(worktrees[0].path, canonicalRoot)
       ) {
-        return false;
+        return rejected(stage);
       }
 
+      stage = "tree-index";
       const headFiles = parseHeadTree(
         await run(["ls-tree", "-r", "-z", "--full-tree", "HEAD"]),
       );
@@ -457,28 +496,33 @@ export class ReadOnlyGitExactHeadVerifier implements ExactHeadVerifier {
             indexFile.mode !== file.mode ||
             indexFile.objectId !== file.objectId
           );
-        }) ||
-        !(await worktreeMatchesHead(
+        })
+      ) {
+        return rejected(stage);
+      }
+
+      stage = "worktree-bytes";
+      if (!(await worktreeMatchesHead(
           canonicalRoot,
           headFiles,
           await run(["rev-parse", "--show-object-format"]),
           signal,
-        ))
-      ) {
-        return false;
+        ))) {
+        return rejected(stage);
       }
 
+      stage = "permitted-path";
       for (const permittedPath of validatedTask.permittedPaths) {
         if (
           (await hasSymlinkOrPathEscape(canonicalRoot, permittedPath)) ||
           !headFiles.has(permittedPath)
         ) {
-          return false;
+          return rejected(stage);
         }
       }
-      return !signal.aborted;
+      return signal.aborted ? rejected("cancelled") : { verified: true };
     } catch {
-      return false;
+      return rejected(stage);
     }
   }
 }
