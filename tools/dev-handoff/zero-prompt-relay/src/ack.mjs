@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { INBOX_PATH, REPO, checkInbox, githubContent, pollOnce } from './relay.mjs';
 
 const ACK_ISSUE=97;
+const EXPECTED_COMMENT_AUTHOR='Cabatoy';
 const API='https://api.github.com/repos/'+REPO+'/issues/'+ACK_ISSUE+'/comments';
 const isRecord=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -48,7 +49,7 @@ export async function publishSyntheticReceipt(receipt,{token,fetchImpl=fetch}={}
   if(typeof token!=='string'||!/^github_pat_[A-Za-z0-9_]+$/.test(token)||token.length>300)fail('missing-scoped-token');
   // GitHub issue comments are a transport-only at-least-once channel, not a durable HIC ledger.
   const existing=await fetchImpl(API+'?per_page=100&page=1',{method:'GET',headers:headers(token),redirect:'manual'});
-  const comments=await readBody(existing);
+  const comments=(await readBody(existing)).filter(c=>c?.user?.login===EXPECTED_COMMENT_AUTHOR);
   const marker=ackMarker(receipt);
   const prefix='<!-- hic-dev-ack-v1 order='+receipt.orderId+' digest=';
   if(comments.some(c=>typeof c?.body==='string'&&c.body.includes(prefix)&&!c.body.includes(marker)))fail('ack-remote-conflict');
@@ -57,6 +58,9 @@ export async function publishSyntheticReceipt(receipt,{token,fetchImpl=fetch}={}
   const body=marker+'\nHIC developer relay: synthetic transport receipt; **seen-untrusted**; executionAllowed=false. No agent or task executed.';
   const response=await fetchImpl(API,{method:'POST',headers:{...headers(token),'Content-Type':'application/json'},body:JSON.stringify({body}),redirect:'manual'});
   if(response.status!==201)fail('ack-publish-not-confirmed');
+  let result;
+  try { result=await response.json(); } catch { fail('ack-publish-response-invalid'); }
+  if(!Number.isSafeInteger(result?.id) || result.id<1 || result?.user?.login!==EXPECTED_COMMENT_AUTHOR || typeof result?.body!=='string' || !result.body.includes(marker)) fail('ack-publish-author-unverified');
   // Do not interpret publication as code completion, authorization, or a HIC ledger transition.
   return {status:'published-synthetic-ack',orderId:receipt.orderId};
 }
