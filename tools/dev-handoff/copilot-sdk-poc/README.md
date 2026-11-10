@@ -80,6 +80,8 @@ These are defense-in-depth SDK settings, **not an OS sandbox**. The optional
 - rejects a dirty or ignored-file-containing worktree, unregistered/locked
   worktrees, path escapes, symlink/reparse paths, and non-regular or
   non-Markdown files outside `docs/` and `docs-md/`;
+- on Windows, permits filesystem `realpath` aliases after rejecting symlink or
+  reparse components; subsequent Git checks use the resolved worktree path;
 - compares the committed tree, index, and filesystem by Git blob hashes instead
   of invoking `git status`; it disables optional Git locks/global config and
   passes only executable-resolution/system variables to Git subprocesses. A
@@ -89,6 +91,11 @@ These are defense-in-depth SDK settings, **not an OS sandbox**. The optional
   digest to be signed by a configured trusted Ed25519 public key. No trusted key
   is configured in this PoC, so the real verifier fails closed until an
   independently managed key/approval process is provided.
+
+`verify()` remains boolean. `verifyWithDiagnostics()` additionally reports a
+fixed rejection-stage code without exposing filesystem paths, repository
+content, or caught error text; offline tests use it to identify cross-platform
+guard failures.
 
 The verifier runs before session creation and again immediately before task
 submission. It is not a filesystem lock: another process can still change a
