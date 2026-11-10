@@ -19,6 +19,7 @@ export class HandoffError extends Error {
 const requireThat = (condition, code) => { if (!condition) throw new HandoffError(code); };
 const exact = (object, keys) => requireThat(object !== null && typeof object === 'object' && !Array.isArray(object) &&
   Object.keys(object).sort().join(',') === [...keys].sort().join(','), 'INVALID_CONTRACT');
+const samePath = (left, right) => relative(resolve(left), resolve(right)) === '';
 
 export function readReviewedInput(bytes, approvedSha256) {
   requireThat(bytes.length <= 65536 && /^[a-f0-9]{64}(?![\s\S])/.test(approvedSha256 ?? '') &&
@@ -64,9 +65,9 @@ export function readBaseline(worktree) {
   const remote = git('remote', 'get-url', 'origin');
   requireThat([`https://github.com/${repository}.git`, `https://github.com/${repository}`,
     `git@github.com:${repository}.git`].includes(remote), 'WRONG_REPOSITORY');
-  requireThat(realpathSync(git('rev-parse', '--show-toplevel')) === root &&
-    realpathSync(git('rev-parse', '--absolute-git-dir')) !==
-      realpathSync(resolve(root, git('rev-parse', '--git-common-dir'))), 'ISOLATED_WORKTREE_REQUIRED');
+  requireThat(samePath(realpathSync(git('rev-parse', '--show-toplevel')), root) &&
+    !samePath(realpathSync(git('rev-parse', '--absolute-git-dir')),
+      realpathSync(resolve(root, git('rev-parse', '--git-common-dir')))), 'ISOLATED_WORKTREE_REQUIRED');
   return {
     worktree: root, repository, branch: git('symbolic-ref', '--short', 'HEAD'),
     head: git('rev-parse', 'HEAD'), clean: git('status', '--porcelain', '--untracked-files=all') === '',
@@ -153,7 +154,7 @@ export function prepare(input, { baseline, github, capability, now = Date.now(),
     capability.mainImplementationSha256 === installedInterface.mainImplementationSha256 &&
     capability.submitsPrompt === false, 'FUSION_UNSUPPORTED');
   requireThat(baseline.repository === repository && baseline.clean === true, 'BASELINE_NOT_CLEAN');
-  requireThat(resolve(input.worktree) === resolve(baseline.worktree), 'WRONG_WORKTREE');
+  requireThat(samePath(input.worktree, baseline.worktree), 'WRONG_WORKTREE');
   requireThat(github?.queueUpdatedAt === input.queueUpdatedAt && Array.isArray(github.items) &&
     github.items.length === input.items.length, 'UNRECONCILED_QUEUE');
   let candidate = null;

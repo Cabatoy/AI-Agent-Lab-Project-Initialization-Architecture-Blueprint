@@ -208,6 +208,11 @@ test('sandbox isolated-worktree inspection, immutable inbox reservation and dupl
   options.baseline = baseline;
   for (const item of options.github.items) item.head = baseline.head;
   const first = prepare(input, options);
+  if (process.platform === 'win32') {
+    const alias = `${wt[0].toLowerCase()}${wt.slice(1)}`;
+    assert.equal(readBaseline(alias).head, baseline.head);
+    assert.equal(prepare({ ...input, worktree: alias }, options).handoffId, first.handoffId);
+  }
   const target = writeInbox(root, first, wt);
   assert.deepEqual(readdirSync(target).sort(), ['handoff.json', 'inbox.html']);
   const bytes = readFileSync(join(target, 'handoff.json'));
