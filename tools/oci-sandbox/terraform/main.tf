@@ -65,6 +65,10 @@ resource "oci_core_instance" "sandbox_host" {
     assign_public_ip = false
   }
 
+  instance_options {
+    are_legacy_imds_endpoints_disabled = true
+  }
+
   source_details {
     source_type             = "image"
     source_id               = var.ubuntu_2404_arm_image_ocid
@@ -89,7 +93,7 @@ resource "oci_core_instance" "sandbox_host" {
         length(trimspace(var.availability_domain)) > 0 &&
         startswith(var.ubuntu_2404_arm_image_ocid, "ocid1.image.") &&
         (startswith(trimspace(var.operator_ssh_public_key), "ssh-ed25519 ") ||
-         startswith(trimspace(var.operator_ssh_public_key), "ssh-rsa "))
+        startswith(trimspace(var.operator_ssh_public_key), "ssh-rsa "))
       )
       error_message = "BLOCKED: reviewed private network/cost/quota/management and pinned official image/AD/personal SSH PUBLIC key required."
     }
