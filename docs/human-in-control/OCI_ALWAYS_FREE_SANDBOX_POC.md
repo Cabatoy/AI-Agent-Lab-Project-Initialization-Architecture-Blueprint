@@ -26,7 +26,7 @@ Official sources (consult current pages before provisioning):
 
 ## Account-owner checklist (NO data to upload)
 
-1. Create one personal OCI account with personal contact information, strong MFA, unique credentials, and careful home-region choice. No corporate SSO, DFDS email, company workspace or work GitHub token.
+1. Create one personal OCI account with personal contact information, strong MFA, unique credentials, and careful home-region choice. No corporate SSO, employer email, work workspace or work GitHub token.
 2. In Console, check subscription type, actual **Always Free eligible** shapes in home region, account resource quotas, billing profile and actual quoted monthly price before any Create action. Distinguish Free Trial credits from Always Free.
 3. Set billing alerts/notifications and review compartment-level limits; remember alerts do not impose zero-charge hard enforcement. Do not upgrade to Pay As You Go or create billable resources without a new explicit approval.
 4. Prefer a dedicated personal sandbox compartment and a least-privileged operator/admin workflow. Keep API tokens, private keys, SSH keys, tenancy OCIDs, IPs and billing details OFF public repositories and out of this chat.
