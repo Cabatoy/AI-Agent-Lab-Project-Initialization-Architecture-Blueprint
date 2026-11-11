@@ -23,7 +23,7 @@ variable "tenancy_ocid" {
 
 variable "proposal_network" {
   type        = bool
-  description = "Plan private compartment/VCN/subnet only; OFF by default."
+  description = "Look up the existing compartment and plan private VCN/subnet only; OFF by default."
   default     = false
 }
 

@@ -2,25 +2,28 @@
 # changes the flags. Terraform plan is not approval to terraform apply.
 # No internet/NAT/service gateway, public IP or executor endpoint is defined.
 
-resource "oci_identity_compartment" "hic" {
-  count          = var.proposal_network ? 1 : 0
-  compartment_id = var.tenancy_ocid
-  name           = "hic-sandbox"
-  description    = "Optional Human In Control isolated sandbox host resources"
-  enable_delete  = false
-  freeform_tags  = { "hic-purpose" = "sandbox-poc", "hic-phase" = "proposal" }
+data "oci_identity_compartments" "hic" {
+  count                     = var.proposal_network ? 1 : 0
+  compartment_id            = var.tenancy_ocid
+  compartment_id_in_subtree = false
+  name                      = "hic-sandbox"
+  state                     = "ACTIVE"
 
   lifecycle {
     precondition {
       condition     = var.owner_free_eligibility_checked && var.owner_billing_reviewed && startswith(var.tenancy_ocid, "ocid1.tenancy.")
       error_message = "BLOCKED: verified owner/account free eligibility, price, and tenancy identifier are required even to propose resources."
     }
+    postcondition {
+      condition     = length(self.compartments) == 1 && alltrue([for c in self.compartments : c.name == "hic-sandbox" && c.compartment_id == var.tenancy_ocid && c.state == "ACTIVE" && startswith(c.id, "ocid1.compartment.")])
+      error_message = "BLOCKED: exactly one ACTIVE hic-sandbox direct child of the specified tenancy is required."
+    }
   }
 }
 
 resource "oci_core_vcn" "hic" {
   count          = var.proposal_network ? 1 : 0
-  compartment_id = oci_identity_compartment.hic[0].id
+  compartment_id = one(data.oci_identity_compartments.hic[0].compartments).id
   cidr_block     = "10.92.0.0/16"
   display_name   = "hic-private-vcn"
   dns_label      = "hicvcn"
@@ -29,7 +32,7 @@ resource "oci_core_vcn" "hic" {
 
 resource "oci_core_security_list" "deny_all" {
   count          = var.proposal_network ? 1 : 0
-  compartment_id = oci_identity_compartment.hic[0].id
+  compartment_id = one(data.oci_identity_compartments.hic[0].compartments).id
   vcn_id         = oci_core_vcn.hic[0].id
   display_name   = "hic-deny-all"
   # No ingress_security_rules and no egress_security_rules blocks.
@@ -37,7 +40,7 @@ resource "oci_core_security_list" "deny_all" {
 
 resource "oci_core_subnet" "private" {
   count                      = var.proposal_network ? 1 : 0
-  compartment_id             = oci_identity_compartment.hic[0].id
+  compartment_id             = one(data.oci_identity_compartments.hic[0].compartments).id
   vcn_id                     = oci_core_vcn.hic[0].id
   cidr_block                 = "10.92.1.0/24"
   display_name               = "hic-private-subnet"
@@ -51,7 +54,7 @@ resource "oci_core_subnet" "private" {
 resource "oci_core_instance" "sandbox_host" {
   count               = var.proposal_vm ? 1 : 0
   availability_domain = var.availability_domain
-  compartment_id      = oci_identity_compartment.hic[0].id
+  compartment_id      = try(one(data.oci_identity_compartments.hic[0].compartments).id, null)
   display_name        = "hic-sandbox-host-01"
   shape               = "VM.Standard.A1.Flex"
 
@@ -61,7 +64,7 @@ resource "oci_core_instance" "sandbox_host" {
   }
 
   create_vnic_details {
-    subnet_id        = oci_core_subnet.private[0].id
+    subnet_id        = try(oci_core_subnet.private[0].id, null)
     assign_public_ip = false
   }
 
