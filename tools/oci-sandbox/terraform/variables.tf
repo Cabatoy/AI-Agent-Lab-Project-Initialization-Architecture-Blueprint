@@ -33,6 +33,32 @@ variable "proposal_vm" {
   default     = false
 }
 
+variable "proposal_bastion" {
+  type        = bool
+  description = "Propose a scoped Bastion and VM-only SSH NSG; OFF by default."
+  default     = false
+}
+
+variable "proposal_bastion_iam" {
+  type        = bool
+  description = "Propose the separately reviewed operator IAM policy; OFF by default."
+  default     = false
+}
+
+variable "bastion_client_cidr" {
+  type        = string
+  description = "One reviewed operator source IPv4 /32, supplied privately; no default access."
+  default     = ""
+  sensitive   = true
+}
+
+variable "bastion_operator_group_ocid" {
+  type        = string
+  description = "Existing reviewed operator group OCID, supplied privately; no group is created."
+  default     = ""
+  sensitive   = true
+}
+
 variable "owner_free_eligibility_checked" {
   type        = bool
   default     = false
