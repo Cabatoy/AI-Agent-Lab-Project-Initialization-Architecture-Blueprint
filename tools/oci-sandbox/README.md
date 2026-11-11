@@ -11,7 +11,7 @@ OCI Console's Cloud Shell provides the OCI CLI, `jq` and, per Oracle docs, Terra
 1. Sign in to your **personal** Oracle Cloud Console.
 2. Open **Cloud Shell** from the Console Developer Tools / terminal icon; use the tenancy **home region** when possible.
 3. Open `tools/oci-sandbox/preflight.sh` in this repository and copy it into Cloud Shell as `hic-oci-preflight.sh`. Review its source before executing. **Do not run an unreviewed downloaded script from the internet.**
-4. Execute `bash hic-oci-preflight.sh`. Do not provide secrets, IDs, payment information or CLI debug logs to a public GitHub issue or to ChatGPT.
+4. Execute `bash hic-oci-preflight.sh`. Every read-only OCI query prints a `Checking OCI: ...` progress line to show where it is waiting; each query has a 60-second timeout and automatic OCI retries are disabled. If an earlier version prints only the first three introductory lines, use `Ctrl+C` and **redownload the current branch version** before rerunning. No cloud resources are changed. Do not provide secrets, IDs, payment information or CLI debug logs to a public GitHub issue or to ChatGPT.
 5. Share only these redacted output lines: `Home region`, `Availability domains visible`, `Ampere A1.Flex`, `Ubuntu 24.04 image`, `hic-sandbox compartment`. The script intentionally prints no OCIDs.
 6. **Do not press Create instance yet.** The **Console estimate** and shape's Always Free label must be independently checked; A1 listed does not prove current host capacity.
 
