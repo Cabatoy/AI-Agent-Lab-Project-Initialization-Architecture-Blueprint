@@ -7,14 +7,15 @@ umask 077
 
 say() { printf '%s\n' "$*"; }
 die() { say "BLOCKED: $*" >&2; exit 2; }
-for exe in oci jq; do command -v "$exe" >/dev/null 2>&1 || die "Missing $exe in OCI Cloud Shell"; done
+for exe in oci jq timeout; do command -v "$exe" >/dev/null 2>&1 || die "Missing $exe in OCI Cloud Shell"; done
 
 # Strictly allowlist the only OCI subcommands used in this script. Never echo raw OCI responses.
 oci_read() {
   local label="$1"; shift
   local body
-  if ! body="$(oci "$@" --output json 2>/dev/null)"; then
-    die "Cannot read $label: verify Cloud Shell login and IAM permissions. No resources modified."
+  say "Checking OCI: $label ..." >&2
+  if ! body="$(timeout 60s oci "$@" --no-retry --connection-timeout 10 --read-timeout 30 --output json 2>/dev/null)"; then
+    die "Cannot read $label (OCI permission/API/network issue or 60s timeout). No resources modified."
   fi
   if ! jq -e . >/dev/null 2>&1 <<<"$body"; then die "Malformed OCI JSON for $label"; fi
   printf '%s' "$body"
