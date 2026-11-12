@@ -113,41 +113,70 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 
 ## HIC Relay Watch Mode Phase 2 — 13 Kasım 2026
 
-Tamamlanan: GitHub issue #120 Phase 2 (ChatForwardWatch Mode)
+Tamamlanan: GitHub issue #120 Phase 2 (ChatForwardWatch Mode) — forwardOnce entegrasyonu ve loop modu
 
 **Implementasyon:**
-- `tools/dev-handoff/zero-prompt-relay/src/watch.mjs` (88 LOC): GitHub issue polling + per-issue persistent DB
-- `tools/dev-handoff/zero-prompt-relay/src/watch-cli.mjs` (32 LOC): CLI interface
-- `tools/dev-handoff/zero-prompt-relay/test/watch.test.mjs` (50 LOC): Config, filtering, error handling testleri
-- `scripts/Run-DevRelay.ps1`: `ChatForwardWatchSetup` ve `ChatForwardWatchOnce` modları eklendi
+- `tools/dev-handoff/zero-prompt-relay/src/watch.mjs` (180 LOC): GitHub issue polling + per-issue persistent DB + forwardOnce entegrasyonu + watchLoop
+- `tools/dev-handoff/zero-prompt-relay/src/watch-cli.mjs` (45 LOC): CLI interface `--poll-once` ve `--poll-loop`
+- `tools/dev-handoff/zero-prompt-relay/test/watch.test.mjs` (100+ LOC): Config, filtering, error handling, watchOnce/watchLoop integration testleri
+- `scripts/Run-DevRelay.ps1`: `ChatForwardWatchSetup`, `ChatForwardWatchOnce` ve `ChatForwardWatchLoop` modları
 
 **Özellikler:**
 - Yapılandırılan HIC repo'da `hic-relay-ready` etiketi + güvenilir yazar filtrelemesi
 - Per-issue DB (issues.json): yeniden başlatmada tekrar gönderme yok
 - PR otomatik skip, açık olmayan issue'lar atlanıyor
+- forwardOnce (#118) entegrasyonu: VS Code Chat'e gerçek iletim
+- watchOnce: polling + forwarding + DB kaydı (bir kez)
+- watchLoop: 60s interval polling + Ctrl+C graceful shutdown
+- Transient GitHub hataları otomatik retry
 - Test suite: 32/32 pass (npm run check)
 
 **Belgeler:**
-- `CHAT_FORWARD.md` güncellenmiş: Watch setup, poll (Ask modunda), stop yönetimi
-- `.github/PR-121-SUMMARY.md`: Test sonuçları + PowerShell komutları + stop yöntemi
+- `CHAT_FORWARD.md` güncellenmiş: Watch setup, poll modu, loop modu, stop yönetimi
+- `.github/PR-121-SUMMARY.md`: Test sonuçları + PowerShell komutları + live start/stop
 
 **PowerShell Launcher (Windows Ask Modu):**
+
+Setup (one-time):
 ```powershell
-# Setup (one-time)
 $relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
 powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
   -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
   -RelayLabel hic-relay-ready `
   -TrustedAuthor Cabatoy
-
-# Poll (bir kez, Ask modunda)
-powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
-
-# Stop: Task Manager → node.exe veya code.cmd → End Task
 ```
+
+Poll once (bir kez, Ask modunda):
+```powershell
+powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
+```
+
+Live loop (60s polling + Ctrl+C stop):
+```powershell
+powershell -NoProfile -File $relay -Mode ChatForwardWatchLoop
+```
+
+Yeniden başlatma testi:
+```powershell
+# İkinci kez: aynı issue'lar re-send edilmez
+powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
+```
+
+Stop:
+- Loop mode: `Ctrl+C` terminal'dan
+- Once/Setup: otomatik exit
+- Task Manager: `code.cmd` veya `node.exe` → End Task
 
 **Branch & PR:**
 - Branch: `feature/hic-relay-watch-polling` (pushed)
+- Base: `feature/hic-relay-vscode-chat-issue` (#118)
+- Commits: 
+  - `6aa3901`: feat(dev): implement ChatForwardWatchOnce and ChatForwardWatchLoop modes with forwardOnce integration
+  - `683d36f`: docs: update ChatForwardWatch modes documentation with live loop commands
+
+**Kalan İş (Phase 3):**
+- Live smoke test: GitHub'da uygun/uygun olmayan issue'lar oluştur, watch polling ile doğrula, re-send no-send test
+- PR #121 description'ını GitHub UI'dan manuel güncelle (MCP tool yok)
 - Base: `feature/hic-relay-vscode-chat-issue` (#118)
 - PR #121: Draft olarak açılmaya hazır
 - Commit'ler: 4 commit (Phase 1 MVP + Phase 2 full impl + docs + summary)
