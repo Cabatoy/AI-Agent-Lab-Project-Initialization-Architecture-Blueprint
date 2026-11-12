@@ -52,6 +52,36 @@ Tarayıcı: **http://127.0.0.1:5173**. Port kullanımda ise sunucu otomatik baş
 porta geçmek yerine hata verir. Durdurmak için terminalde Ctrl+C kullanın.
 Geliştirme sunucusu yalnız `127.0.0.1` adresine bağlanır.
 
+### İlk yerel model konuşması (önizleme)
+
+Bu akış, henüz `develop`'a alınmamış [#59 önizlemesindeki](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/pull/59)
+UI ve Control Plane içindir; eski bir çalışan UI otomatik güncellenmez.
+Önceden hazırlanmış aynı sürümdeki yerel UI ve Control Plane, yapılandırılmış
+operator erişimi ve erişilebilir bir local model gerekir. Ayrıca seçilen
+veritabanında [genel konuşma şeması](../../docs/human-in-control/HIC_GITHUB_PUBLISHER.md#genel-konuşmalar)
+kurulu olmalıdır. Migration otomatik değildir; mevcut veritabanını değiştirmek
+ayrı açık onay gerektirir.
+
+1. Yukarıdaki yerel UI adresini veya önceden hazırlanmış önizlemenin loopback
+   adresini tarayıcıda açın; **Conversations** seçin.
+2. Oturum geri yüklenmezse **Local operator bootstrap token** alanına
+   yapılandırılmış token'ı girip **Open conversation workspace** seçin. Token'ı
+   mesajlara, issue'lara veya loglara yazmayın.
+3. Model durumu erişilemiyor veya yapılandırılmamış görünüyorsa **Refresh model
+   status** ile tekrar kontrol edin. Erişilebilirlik, yanıtın başarılı olacağını
+   garanti etmez.
+4. **General conversation title** girip **Create general conversation** seçin.
+   **Message general conversation** alanına mesajınızı yazın ve **Send general
+   message** seçin. Başarılı yanıtta mesaj, konuşmada **HIC ·** sağlayıcı adı
+   altında görünür.
+5. Aynı operator ve veritabanıyla **Conversations** ekranına dönün; **General
+   conversation** bölümündeki kayıtlı konuşma başlığına tıklayarak mesajları
+   yeniden açın. Oturum süresi dolmuşsa önce tekrar giriş yapın.
+
+Genel konuşma repository seçimi gerektirmez; task, araç, kod yürütme veya
+yayın izni oluşturmaz. Model hatasında yanıt uydurulmaz; yeniden göndermeden
+önce kayıtlı geçmişi kontrol edin.
+
 ### API yapılandırması
 
 Varsayılan API adresi `http://127.0.0.1:8080`'dir. Başka bir yerel port için
