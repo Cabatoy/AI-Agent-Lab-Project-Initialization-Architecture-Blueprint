@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export const WATCH_VERSION='hic.dev-watch/1';
+export const WATCH_DB_VERSION='hic.dev-watch-db/1';
 const REPO=/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const LOGIN=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const LABEL=/^[a-z-]{1,50}$/i;
@@ -41,8 +42,64 @@ export async function fetchWatchIssues(repo,label,author,{fetchImpl=fetch}={}) {
   }
 }
 
+function safeDir(path) {
+  mkdirSync(path,{recursive:true,mode:0o700});
+  const st=lstatSync(path);if(!st.isDirectory()||st.isSymbolicLink()) fail('unsafe-watch-state-dir');
+  return path;
+}
+
+function readWatchDB(path) {
+  if(!existsSync(path)) return {version:WATCH_DB_VERSION,records:{}};
+  const st=lstatSync(path);
+  if(!st.isFile()||st.isSymbolicLink()||st.size>65536) fail('unsafe-watch-db');
+  let x;try{x=JSON.parse(readFileSync(path,'utf8'))}catch{fail('unreadable-watch-db')}
+  if(!isObject(x)||x.version!==WATCH_DB_VERSION||!isObject(x.records)) fail('watch-db-conflict');
+  return x;
+}
+
+function writeWatchDB(path,db) {
+  const tmp=path+'.tmp';
+  writeFileSync(tmp,JSON.stringify(db)+'\n',{mode:0o600});
+  renameSync(tmp,path);
+}
+
+function getRecordKey(repo,issueNumber) {
+  return repo.replace('/','__')+'__'+issueNumber;
+}
+
+function isAlreadyForwarded(record) {
+  return record&&(record.status==='forwarded'||record.status==='handed-off-unverified'||record.status==='launch-failed');
+}
+
 export async function watchPoll({config,stateDir=defaultStateDir(),fetchImpl=fetch}={}) {
   const c=checkWatchConfig(config);
   const issues=await fetchWatchIssues(c.repository,c.relayLabel,c.trustedAuthor,{fetchImpl});
-  return {config:c,issues:issues||[]};
+  
+  const root=safeDir(join(safeDir(stateDir),'watch-forward'));
+  const dbPath=join(root,'issues.json');
+  const db=readWatchDB(dbPath);
+  
+  const pending=[];
+  for(const issue of issues) {
+    const key=getRecordKey(c.repository,issue.number);
+    const record=db.records[key];
+    if(!isAlreadyForwarded(record)) {
+      pending.push({number:issue.number,title:issue.title,body:issue.body??'',updatedAt:issue.updated_at});
+    }
+  }
+  
+  return {config:c,pending,dbPath,db};
 }
+
+export async function recordForwardAttempt({db,dbPath,repository,issueNumber,status='pending',stateDir=defaultStateDir()}={}) {
+  const key=getRecordKey(repository,issueNumber);
+  db.records[key]={issueNumber,repository,status,attemptedAt:new Date().toISOString()};
+  const root=safeDir(join(safeDir(stateDir),'watch-forward'));
+  const path=dbPath||join(root,'issues.json');
+  const tmp=path+'.tmp';
+  writeFileSync(tmp,JSON.stringify(db)+'\n',{mode:0o600});
+  const fs=require('node:fs');
+  fs.renameSync(tmp,path);
+  return db.records[key];
+}
+
