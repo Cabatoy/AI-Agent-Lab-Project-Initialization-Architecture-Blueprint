@@ -122,8 +122,8 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
   const c=checkWatchConfig(config);
   if(!forwardImpl) fail('forward-impl-required');
   
-  // Resolve codeCommand from env or parameter
-  const resolvedCodeCommand=codeCommand||process.env.VSCODE_CHAT_COMMAND||process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd';
+  // Resolve codeCommand: explicit parameter > env VSCODE_CHAT_COMMAND > fallback code.cmd
+  const resolvedCodeCommand=codeCommand||(process.env.VSCODE_CHAT_COMMAND||(process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd'));
   
   // Poll for pending issues
   const poll=await watchPoll({config:c,stateDir,fetchImpl});

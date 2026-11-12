@@ -85,7 +85,8 @@ switch ($Mode) {
  'ChatForwardWatchLoop' {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    Write-Host 'Starting watch loop. Press Ctrl+C to stop.'
-   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--config' $watchConfigFile '--state-dir' $stateDir
+   $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
    break
  }
  'SetupAck' {

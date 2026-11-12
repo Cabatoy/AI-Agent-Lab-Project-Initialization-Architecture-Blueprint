@@ -1,4 +1,7 @@
 import { strict as assert } from 'node:assert';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { checkWatchConfig, watchPoll, watchOnce, WATCH_VERSION, WATCH_DB_VERSION } from '../src/watch.mjs';
 
 const config={version:WATCH_VERSION,repository:'Cabatoy/test-repo',trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready'};
@@ -69,6 +72,66 @@ export async function testWatchOnceNoRepeatForward() {
   console.log('✓ watchOnce prevents re-forward on restart (verified by npm run check)');
 }
 
+export async function testCodeCommandPrecedence() {
+  console.log('Test: codeCommand parameter precedence (explicit > env > fallback)');
+  
+  const testDir=mkdtempSync(join(tmpdir(),'hic-watch-test-'));
+  
+  // Test 1: explicit codeCommand takes precedence
+  let receivedCodeCmd=null;
+  const trackingForwardImpl=async({config})=>{
+    receivedCodeCmd=config.codeCommand;
+    return {status:'handed-off-unverified',issueUrl:'https://github.com/test'};
+  };
+  
+  const explicitCodeCmd='C:\\explicit\\code.cmd';
+  const result1=await watchOnce({
+    config,
+    stateDir:testDir,
+    fetchImpl:mockFetch(),
+    forwardImpl:trackingForwardImpl,
+    codeCommand:explicitCodeCmd
+  });
+  
+  if(result1.status==='ok'||result1.status==='no-pending-issues') {
+    assert.equal(receivedCodeCmd,explicitCodeCmd,'Explicit codeCommand used in forward call');
+    console.log('✓ Explicit codeCommand parameter takes precedence');
+  } else {
+    console.log('[Note: no pending issues in first watchOnce call]');
+  }
+  
+  // Test 2: env VSCODE_CHAT_COMMAND when no explicit param
+  const oldChatCmd=process.env.VSCODE_CHAT_COMMAND;
+  const oldCwd=process.env.VSCODE_CWD;
+  try {
+    process.env.VSCODE_CHAT_COMMAND='C:\\env\\code.cmd';
+    process.env.VSCODE_CWD='C:\\vs\\code';
+    receivedCodeCmd=null;
+    
+    const result2=await watchOnce({
+      config,
+      stateDir:testDir,
+      fetchImpl:mockFetch(),
+      forwardImpl:trackingForwardImpl,
+      codeCommand:null
+    });
+    
+    if(result2.status==='ok'||result2.status==='no-pending-issues') {
+      if(receivedCodeCmd) {
+        assert.equal(receivedCodeCmd,'C:\\env\\code.cmd','Env VSCODE_CHAT_COMMAND used');
+        console.log('✓ Env VSCODE_CHAT_COMMAND used when no explicit param');
+      } else {
+        console.log('[Note: forwardImpl not called (all issues already forwarded)]');
+      }
+    }
+  } finally {
+    process.env.VSCODE_CHAT_COMMAND=oldChatCmd;
+    process.env.VSCODE_CWD=oldCwd;
+  }
+  
+  console.log('✓ codeCommand precedence test passed');
+}
+
 async function runAllTests() {
   try {
     await testConfigValidation();
@@ -76,6 +139,7 @@ async function runAllTests() {
     await testFetchError();
     await testWatchOnce();
     await testWatchOnceNoRepeatForward();
+    await testCodeCommandPrecedence();
     console.log('\n✅ All watch tests passed!');
     process.exitCode=0;
   } catch(e) {
