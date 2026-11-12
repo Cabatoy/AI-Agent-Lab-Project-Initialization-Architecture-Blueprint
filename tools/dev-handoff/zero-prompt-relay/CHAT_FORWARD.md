@@ -35,6 +35,8 @@ powershell -NoProfile -File $relay -Mode ChatForwardOnce
 
 ### Nasıl çalışır
 
+Watch modu, GitHub repo'sunu periyodik olarak polling yapar ve uygun issue'ları VS Code Chat'e iletir.
+
 1. `ChatForwardWatchSetup`, `%LOCALAPPDATA%\HICDevRelay\watch-forward.json` dosyasını yazar. Dosyada repo, `hic-relay-ready` etiketi ve güvenilir issue yazarı yer alır. Bu adım ağ çağrısı yapmaz.
 2. `ChatForwardWatchOnce`, GitHub API'sine `https://api.github.com/repos/<repo>/issues?state=open&labels=<label>` ile GET yapar. Sonuçlar filtre edilir:
    - PR'lar atlanır.
@@ -44,9 +46,14 @@ powershell -NoProfile -File $relay -Mode ChatForwardOnce
 4. Kalan her issue için `ChatForwardOnce` gibi kayıt oluşturulur ve VS Code Chat'e iletilir. Gönderimler sıra ile yapılır (paralel değil).
 5. Yeniden başlatmada watch modu tekrar gönderimden kaçınır. Veritabanı kalıcıdır ve yeniden başlatma arasında korunur.
 
+### Modu seç
+
+- **ChatForwardWatchOnce**: Bir kez polling, uygun issue'ları ilet, exit.
+- **ChatForwardWatchLoop**: 60 saniye interval'le sürekli polling, Ctrl+C ile gracefully kapat.
+
 ### Kullanım
 
-Önce config oluştur:
+Önce config oluştur (bir kez):
 
 ```powershell
 $relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
@@ -56,17 +63,37 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
   -TrustedAuthor Cabatoy
 ```
 
-Sonra bir kez poll et:
+**Seçenek 1: Bir kez polling (ChatForwardWatchOnce)**
 
 ```powershell
 powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
 ```
 
-Bir terminal penceresini açık tutup, ihtiyaç oldukça tekrar çalıştır. `ChatForwardWatchOnce`'un `exit=0` dönmesi polling başarıya işaret eder; yeniden gönderim yapılmadığını doğrulamak için `ChatForwardWatchOnce` komutunu tekrar çalıştırabilirsin.
+`exit=0` döner, uygun issue'lar iletilir, sonra exit eder.
+
+**Seçenek 2: Sürekli polling (ChatForwardWatchLoop)**
+
+```powershell
+powershell -NoProfile -File $relay -Mode ChatForwardWatchLoop
+```
+
+- 60 saniye interval'le polling başlar.
+- Yeni uygun issue'lar bulunca otomatik iletilir (ikinci komut gerektirmez).
+- Transient GitHub hataları (rate limit, network) otomatik retry edilir.
+- `Ctrl+C` ile gracefully kapatılır.
+
+Yeniden gönderim testi (Once modu):
+
+```powershell
+# İkinci komut aynı issue'lar re-send etmez
+powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
+```
 
 ### Durdurmak
 
-Windows Task Manager'da `code.cmd` veya `node.exe` sürecini sonlandır.
+- **Loop mode**: `Ctrl+C` terminal'dan
+- **Once/Setup**: Otomatik exit
+- **Task Manager**: `code.cmd` veya `node.exe` → End Task
 
 ## Tamamlanma kanıtı değildir
 
