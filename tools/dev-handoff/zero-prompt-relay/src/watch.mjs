@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -98,8 +98,105 @@ export async function recordForwardAttempt({db,dbPath,repository,issueNumber,sta
   const path=dbPath||join(root,'issues.json');
   const tmp=path+'.tmp';
   writeFileSync(tmp,JSON.stringify(db)+'\n',{mode:0o600});
-  const fs=require('node:fs');
-  fs.renameSync(tmp,path);
+  renameSync(tmp,path);
   return db.records[key];
+}
+
+export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateDir(),forwardImpl=null}={}) {
+  // Build chat-forward config from watch config and current issue
+  if(!forwardImpl) fail('forward-impl-required');
+  const chatForwardConfig={
+    version:'hic.dev-chat-forward/1',
+    enabled:true,
+    repository:config.repository,
+    issueNumber:issue.number,
+    trustedAuthor:config.trustedAuthor,
+    codeCommand:process.env.VSCODE_CHAT_COMMAND||'code',
+    chatMode:'ask'
+  };
+  const result=await forwardImpl({config:chatForwardConfig,stateDir});
+  return result;
+}
+
+export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,codeCommand=null}={}) {
+  const c=checkWatchConfig(config);
+  if(!forwardImpl) fail('forward-impl-required');
+  
+  // Resolve codeCommand from env or parameter
+  const resolvedCodeCommand=codeCommand||process.env.VSCODE_CHAT_COMMAND||process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd';
+  
+  // Poll for pending issues
+  const poll=await watchPoll({config:c,stateDir,fetchImpl});
+  if(poll.pending.length===0) {
+    return {status:'no-pending-issues',forwarded:[]};
+  }
+  
+  // Forward pending issues in order
+  const forwarded=[];
+  for(const issue of poll.pending) {
+    try {
+      const fwd=await forwardImpl({config:{
+        version:'hic.dev-chat-forward/1',
+        enabled:true,
+        repository:c.repository,
+        issueNumber:issue.number,
+        trustedAuthor:c.trustedAuthor,
+        codeCommand:resolvedCodeCommand,
+        chatMode:'ask'
+      },stateDir});
+      
+      if(fwd.status==='handed-off-unverified'||fwd.status==='already-forwarded') {
+        await recordForwardAttempt({db:poll.db,dbPath:poll.dbPath,repository:c.repository,issueNumber:issue.number,status:'forwarded',stateDir});
+        forwarded.push({issueNumber:issue.number,status:fwd.status});
+      } else {
+        await recordForwardAttempt({db:poll.db,dbPath:poll.dbPath,repository:c.repository,issueNumber:issue.number,status:'forward-failed',stateDir});
+        forwarded.push({issueNumber:issue.number,status:'forward-failed',error:fwd.status});
+      }
+    } catch(e) {
+      await recordForwardAttempt({db:poll.db,dbPath:poll.dbPath,repository:c.repository,issueNumber:issue.number,status:'forward-error',stateDir});
+      forwarded.push({issueNumber:issue.number,status:'forward-error',error:e.message});
+    }
+  }
+  
+  return {status:'ok',forwarded};
+}
+
+export async function watchLoop({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,intervalMs=60000,codeCommand=null,onError=console.error}={}) {
+  const c=checkWatchConfig(config);
+  if(!forwardImpl) fail('forward-impl-required');
+  
+  let running=true;
+  const handle=async()=>{
+    while(running) {
+      try {
+        const result=await watchOnce({config:c,stateDir,fetchImpl,forwardImpl,codeCommand});
+        if(result.forwarded.length>0) {
+          console.log(`[${new Date().toISOString()}] Forwarded ${result.forwarded.length} issue(s)`);
+        }
+      } catch(e) {
+        const isTransient=/^(github-rate-limited-or-forbidden|github-read-failed|watch-fetch-failed)$/.test(e.message);
+        if(isTransient) {
+          console.log(`[${new Date().toISOString()}] Transient error: ${e.message}, retrying in ${intervalMs/1000}s`);
+        } else {
+          onError(`[${new Date().toISOString()}] Fatal error: ${e.message}`);
+          running=false;
+          break;
+        }
+      }
+      
+      if(running) {
+        await new Promise(r=>setTimeout(r,intervalMs));
+      }
+    }
+  };
+  
+  // Graceful shutdown on SIGINT (Ctrl+C)
+  process.on('SIGINT',()=>{
+    console.log('\n[Ctrl+C] Shutting down gracefully...');
+    running=false;
+  });
+  
+  await handle();
+  console.log('[Done] Watch loop stopped');
 }
 

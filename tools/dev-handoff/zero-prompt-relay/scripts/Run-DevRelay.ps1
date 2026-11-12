@@ -11,10 +11,11 @@ Modes:
  ChatForwardOnce: forward that issue once to `code chat`; a local record prevents re-sending
  ChatForwardWatchSetup: write local opt-in config for polling issues with a label
  ChatForwardWatchOnce: poll once for issues with label; no re-send on restart
+ ChatForwardWatchLoop: poll in a loop every 60 seconds; gracefully shut down with Ctrl+C
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchOnce')]
+  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchOnce','ChatForwardWatchLoop')]
   [string]$Mode='Plan',
   [string]$Repository='',
   [int]$IssueNumber=0,
@@ -43,6 +44,7 @@ switch ($Mode) {
    Write-Host 'ChatForwardOnce: reads that issue anonymously and hands it to VS Code Chat via code chat once; exit code is not completion.'
    Write-Host 'ChatForwardWatchSetup: writes a local config for polling issues with a label on a repo.'
    Write-Host 'ChatForwardWatchOnce: poll once for open issues with label from trusted author; no re-send on restart.'
+   Write-Host 'ChatForwardWatchLoop: poll every 60 seconds; gracefully shut down with Ctrl+C.'
    break
  }
  'ChatForwardSetup' {
@@ -76,8 +78,14 @@ switch ($Mode) {
  }
  'ChatForwardWatchOnce' {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
-   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--enable-watch' '--poll-once' '--config' $watchConfigFile '--state-dir' $stateDir
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--config' $watchConfigFile '--state-dir' $stateDir
    if($LASTEXITCODE -ne 0){throw 'Watch poll failed.'}
+   break
+ }
+ 'ChatForwardWatchLoop' {
+   $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
+   Write-Host 'Starting watch loop. Press Ctrl+C to stop.'
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--config' $watchConfigFile '--state-dir' $stateDir
    break
  }
  'SetupAck' {
