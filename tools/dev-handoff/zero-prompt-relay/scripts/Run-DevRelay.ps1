@@ -7,11 +7,19 @@ Modes:
  ReadOnlyOnce, ReadOnlyWatch: public GET only
  AckOnce, AckWatch: opt-in public GET + POST synthetic receipt to Issue #97
  InstallAutostart: explicit per-user logon task, no administrator required
+ ChatForwardSetup: write local opt-in config naming exactly one GitHub issue for VS Code Chat
+ ChatForwardOnce: forward that issue once to `code chat`; a local record prevents re-sending
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart')]
-  [string]$Mode='Plan'
+  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce')]
+  [string]$Mode='Plan',
+  [string]$Repository='',
+  [int]$IssueNumber=0,
+  [string]$TrustedAuthor='',
+  [ValidateSet('agent','ask','edit')]
+  [string]$ChatMode='agent',
+  [switch]$ReplaceConfig
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -21,12 +29,32 @@ $nodeExe=(Get-Command node.exe -ErrorAction Stop).Source
 $stateDir=Join-Path $env:LOCALAPPDATA 'HICDevRelay'
 $secretFile=Join-Path $stateDir 'ack-token.dpapi'
 $taskName='HIC-Developer-Relay-Ack-OptIn'
+$chatConfigFile=Join-Path $stateDir 'chat-forward.json'
 switch ($Mode) {
  'Plan' {
    Write-Host 'ReadOnlyOnce/Watch: anonymous GitHub GET; no execution.'
    Write-Host 'SetupAck: asks for a fine-grained PAT with Issues read/write ONLY on the single personal repository, DPAPI per user.'
    Write-Host 'AckOnce/Watch: explicitly publishes only synthetic seen-untrusted receipts to Issue #97.'
    Write-Host 'InstallAutostart: requires explicit local confirmation and existing DPAPI secret; at-logon only.'
+   Write-Host 'ChatForwardSetup: writes a local config naming ONE repo/issue/trusted author; no network call.'
+   Write-Host 'ChatForwardOnce: reads that issue anonymously and hands it to VS Code Chat via code chat once; exit code is not completion.'
+   break
+ }
+ 'ChatForwardSetup' {
+   if($Repository -notmatch '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$'){throw 'Pass -Repository owner/name.'}
+   if($IssueNumber -lt 1){throw 'Pass -IssueNumber <n> explicitly.'}
+   if($TrustedAuthor -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Pass -TrustedAuthor <github-login> (issue author allowed to give tasks).'}
+   if((Test-Path -LiteralPath $chatConfigFile) -and -not $ReplaceConfig){throw 'Chat forward config already exists; review it or pass -ReplaceConfig.'}
+   $codeCommand=(Get-Command code.cmd -ErrorAction Stop).Source
+   New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+   $config=[ordered]@{version='hic.dev-chat-forward/1';enabled=$true;repository=$Repository;issueNumber=$IssueNumber;trustedAuthor=$TrustedAuthor;codeCommand=$codeCommand;chatMode=$ChatMode}
+   [System.IO.File]::WriteAllText($chatConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
+   Write-Host "Chat forward config written for $Repository#$IssueNumber. Nothing was sent."
+   break
+ }
+ 'ChatForwardOnce' {
+   & $nodeExe (Join-Path $toolRoot 'src/chat-cli.mjs') '--enable-chat-forward' '--once' '--config' $chatConfigFile '--state-dir' $stateDir
+   if($LASTEXITCODE -ne 0){throw 'Chat forward did not hand off the issue.'}
    break
  }
  'SetupAck' {

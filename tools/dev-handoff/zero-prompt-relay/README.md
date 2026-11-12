@@ -1,12 +1,12 @@
 # HIC Developer Proposal Relay — P0 receive-only
 
-**Developer workstation only; not a HIC product feature.** This package reads an explicit **public GitHub** branch's **unsigned, non-executable** proposals and writes only local `seen-untrusted` receipts. It cannot send to Fusion, start an SDK/model session, execute files/commands, mutate HIC runtime/DB, commit, push, publish PRs, merge or deploy.
+**Developer workstation only; not a HIC product feature.** This package reads an explicit **public GitHub** branch's **unsigned, non-executable** proposals and writes only local `seen-untrusted` receipts. It cannot send to Fusion (except the separate, default-off single-issue VS Code Chat handoff in [CHAT_FORWARD.md](./CHAT_FORWARD.md)), start an SDK/model session, execute files/commands, mutate HIC runtime/DB, commit, push, publish PRs, merge or deploy.
 
 ## Safety contract
 
 - Explicit `--enable-read-only` opt-in. Nothing runs at startup or installation. No plugins, CLI auth, SDK, npm dependencies or GitHub token.
 - **Only** `GET https://api.github.com/repos/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/contents/dev-work-orders/{inbox.json|orders/<uuid>.json}?ref=hic-dev-orders`; no user-controlled URLs, redirection, or write requests. Public API rate limits may apply.
-- A strict bounded inbox (20 entries), SHA-256 raw content check, exact repository/source, expiry, replay protection and review-only validation. No GitHub Issue prose, PR titles, comments or unreviewed content can become an executable prompt.
+- A strict bounded inbox (20 entries), SHA-256 raw content check, exact repository/source, expiry, replay protection and review-only validation. No GitHub Issue prose, PR titles, comments or unreviewed content can become an executable prompt in the receive-only/ack relay; only the opt-in chat handoff forwards one locally chosen issue from a locally configured trusted author.
 - Synthetic ping has no HIC task ID. Review-only proposals do not grant authority and are always recorded as `executionAllowed:false`.
 - Receipts live in the operator's **local** `~/.hic-dev-relay/acks/`. They do **not** leave the machine. They are not a durable HIC task/attempt ledger, remote acknowledgment or proof of model execution. A subsequent independently approved GitHub ack broker is still required for *zero report relay*.
 - One poll per 10 minutes in watch mode; previously acknowledged entries do not refetch the full order. Stop with Ctrl+C.
@@ -47,6 +47,8 @@ node (Join-Path $relayRoot 'tools/dev-handoff/zero-prompt-relay/src/cli.mjs') --
 No scheduled task/Windows service is installed. Do not enable OS autostart yet; independently review first. If the source checkout already exists, **do not** overwrite/recreate it—inspect its branch/HEAD and update with a reviewed fast-forward procedure.
 
 ## Missing pieces
+
+Opt-in single-issue handoff to VS Code Chat (`ChatForwardSetup` / `ChatForwardOnce`) is documented separately in [CHAT_FORWARD.md](./CHAT_FORWARD.md); it is off by default and does not change the ack relay.
 
 This P0 slice proves only **GitHub → local receipt** after one-time startup. It does not prove **local → GitHub ack**, HIC task/run claims, reviewed signing keys, lease recovery, sandbox isolation, SDK login/quota, code/test/CI artifacts or autonomous continuation. Those must be separately implemented and approved under [Issue #93](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/93); existing [#92](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/92) sandbox preflight remains `UNVERIFIED`.
 
