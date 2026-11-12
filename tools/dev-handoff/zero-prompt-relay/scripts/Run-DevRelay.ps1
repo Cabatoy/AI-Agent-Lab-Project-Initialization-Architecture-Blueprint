@@ -9,14 +9,18 @@ Modes:
  InstallAutostart: explicit per-user logon task, no administrator required
  ChatForwardSetup: write local opt-in config naming exactly one GitHub issue for VS Code Chat
  ChatForwardOnce: forward that issue once to `code chat`; a local record prevents re-sending
+ ChatForwardWatchSetup: write local opt-in config for polling issues with a label
+ ChatForwardWatchOnce: poll once for issues with label; no re-send on restart
+ ChatForwardWatchLoop: poll in a loop every 60 seconds; gracefully shut down with Ctrl+C
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce')]
+  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchOnce','ChatForwardWatchLoop')]
   [string]$Mode='Plan',
   [string]$Repository='',
   [int]$IssueNumber=0,
   [string]$TrustedAuthor='',
+  [string]$RelayLabel='',
   [ValidateSet('agent','ask','edit')]
   [string]$ChatMode='agent',
   [switch]$ReplaceConfig
@@ -38,6 +42,9 @@ switch ($Mode) {
    Write-Host 'InstallAutostart: requires explicit local confirmation and existing DPAPI secret; at-logon only.'
    Write-Host 'ChatForwardSetup: writes a local config naming ONE repo/issue/trusted author; no network call.'
    Write-Host 'ChatForwardOnce: reads that issue anonymously and hands it to VS Code Chat via code chat once; exit code is not completion.'
+   Write-Host 'ChatForwardWatchSetup: writes a local config for polling issues with a label on a repo.'
+   Write-Host 'ChatForwardWatchOnce: poll once for open issues with label from trusted author; no re-send on restart.'
+   Write-Host 'ChatForwardWatchLoop: poll every 60 seconds; gracefully shut down with Ctrl+C.'
    break
  }
  'ChatForwardSetup' {
@@ -55,6 +62,31 @@ switch ($Mode) {
  'ChatForwardOnce' {
    & $nodeExe (Join-Path $toolRoot 'src/chat-cli.mjs') '--enable-chat-forward' '--once' '--config' $chatConfigFile '--state-dir' $stateDir
    if($LASTEXITCODE -ne 0){throw 'Chat forward did not hand off the issue.'}
+   break
+ }
+ 'ChatForwardWatchSetup' {
+   if($Repository -notmatch '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$'){throw 'Pass -Repository owner/name.'}
+   if($TrustedAuthor -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Pass -TrustedAuthor <github-login>.'}
+   if($RelayLabel -notmatch '^[a-z-]{1,50}$'){throw 'Pass -RelayLabel <label> (lowercase, hyphens allowed).'}
+   $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
+   if((Test-Path -LiteralPath $watchConfigFile) -and -not $ReplaceConfig){throw 'Watch forward config already exists; review it or pass -ReplaceConfig.'}
+   New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel}
+   [System.IO.File]::WriteAllText($watchConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
+   Write-Host "Watch forward config written for $Repository label=$RelayLabel author=$TrustedAuthor. Nothing was sent."
+   break
+ }
+ 'ChatForwardWatchOnce' {
+   $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--config' $watchConfigFile '--state-dir' $stateDir
+   if($LASTEXITCODE -ne 0){throw 'Watch poll failed.'}
+   break
+ }
+ 'ChatForwardWatchLoop' {
+   $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
+   Write-Host 'Starting watch loop. Press Ctrl+C to stop.'
+   $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
    break
  }
  'SetupAck' {
