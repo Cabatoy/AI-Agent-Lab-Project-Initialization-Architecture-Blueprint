@@ -111,6 +111,57 @@ Sohbet geçmişi Git'e veya `run.me` durum dosyasına yazılmaz. Büyük bir iş
 - Planlama API'si iskelet düzeyinde; dependency graph, topolojik scheduling ve rejection/replanning tamamlanmış kabul edilmemeli.
 - HIC governance/approval sınırları ve provider-neutral routing hedefleri, bu runtime başarısıyla uygulanmış sayılmaz. AWS provisioning ve production deployment yapılmadı.
 
+## HIC Relay Watch Mode Phase 2 — 13 Kasım 2026
+
+Tamamlanan: GitHub issue #120 Phase 2 (ChatForwardWatch Mode)
+
+**Implementasyon:**
+- `tools/dev-handoff/zero-prompt-relay/src/watch.mjs` (88 LOC): GitHub issue polling + per-issue persistent DB
+- `tools/dev-handoff/zero-prompt-relay/src/watch-cli.mjs` (32 LOC): CLI interface
+- `tools/dev-handoff/zero-prompt-relay/test/watch.test.mjs` (50 LOC): Config, filtering, error handling testleri
+- `scripts/Run-DevRelay.ps1`: `ChatForwardWatchSetup` ve `ChatForwardWatchOnce` modları eklendi
+
+**Özellikler:**
+- Yapılandırılan HIC repo'da `hic-relay-ready` etiketi + güvenilir yazar filtrelemesi
+- Per-issue DB (issues.json): yeniden başlatmada tekrar gönderme yok
+- PR otomatik skip, açık olmayan issue'lar atlanıyor
+- Test suite: 32/32 pass (npm run check)
+
+**Belgeler:**
+- `CHAT_FORWARD.md` güncellenmiş: Watch setup, poll (Ask modunda), stop yönetimi
+- `.github/PR-121-SUMMARY.md`: Test sonuçları + PowerShell komutları + stop yöntemi
+
+**PowerShell Launcher (Windows Ask Modu):**
+```powershell
+# Setup (one-time)
+$relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
+powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
+  -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
+  -RelayLabel hic-relay-ready `
+  -TrustedAuthor Cabatoy
+
+# Poll (bir kez, Ask modunda)
+powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
+
+# Stop: Task Manager → node.exe veya code.cmd → End Task
+```
+
+**Branch & PR:**
+- Branch: `feature/hic-relay-watch-polling` (pushed)
+- Base: `feature/hic-relay-vscode-chat-issue` (#118)
+- PR #121: Draft olarak açılmaya hazır
+- Commit'ler: 4 commit (Phase 1 MVP + Phase 2 full impl + docs + summary)
+
+**Scope Dışı (Phase 3):**
+- Polling loop automation
+- Windows Task Scheduler entegrasyonu
+- Multi-issue chaining
+
+**Sonraki Adım:**
+PR #121 web'de draft olarak aç ve Issue #120'ye comment ekle. Canlı deneme (Phase 3): smoke test issue'ları GitHub'da oluştur ve polling + re-send protection doğrulaması yap.
+
+---
+
 ## Önerilen Devam Sırası
 
 Yeni checkout'ta önce dosya denetimini ve handoff karşılaştırmasını tamamlayın; yerel runtime state veya dedicated test credential'ının taşındığını varsaymayın. R1 DB integration kapısı geçti; önerilen tek sonraki mühendislik işi **R1 sonrası izole container E2E doğrulaması** için mevcut verileri koruyan kapsamı hazırlayıp açık runtime onayı almaktır. R2 lease/heartbeat/recovery uygulanmadı; bunlar için ayrıca uygulama onayı gerekir. Bu öneri yeni runtime işlemi veya feature geliştirme izni değildir.
