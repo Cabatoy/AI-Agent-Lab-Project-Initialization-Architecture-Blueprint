@@ -18,7 +18,7 @@ export function checkWatchConfig(x) {
   if(!REPO.test(x.repository)||x.repository.includes('..')) fail('invalid-watch-repository');
   if(!LOGIN.test(x.trustedAuthor)) fail('invalid-watch-author');
   if(!LABEL.test(x.relayLabel)) fail('invalid-watch-label');
-  return {repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel};
+  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel};
 }
 
 export function loadWatchConfig(path) {
