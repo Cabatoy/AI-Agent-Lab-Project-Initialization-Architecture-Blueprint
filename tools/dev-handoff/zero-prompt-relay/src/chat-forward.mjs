@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, posix, win32 } from 'node:path';
 
 export const CONFIG_VERSION='hic.dev-chat-forward/1';
 export const RECORD_VERSION='hic.dev-chat-forward-record/1';
@@ -117,7 +117,9 @@ function writeRecordUpdate(path,record) {
 }
 
 export function buildLaunch(c,promptPath,platform=process.platform) {
-  if(!isAbsolute(promptPath)||!CMD_SAFE.test(promptPath)) fail('unsafe-prompt-path');
+  const abs=(platform==='win32'?win32:posix).isAbsolute;
+  if(!abs(c.codeCommand)||!CMD_SAFE.test(c.codeCommand)) fail('invalid-chat-command');
+  if(!abs(promptPath)||!CMD_SAFE.test(promptPath)) fail('unsafe-prompt-path');
   const args=['chat','-m',c.chatMode,'-r','-a',promptPath,CHAT_PROMPT];
   if(platform!=='win32') return {file:c.codeCommand,args,verbatim:false};
   // code.cmd cannot be spawned without a shell; every argument is validated against CMD_SAFE above.

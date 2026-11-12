@@ -127,12 +127,13 @@ test('issue read is an anonymous GET to the configured issue without redirects',
 });
 
 test('Windows launch line contains only validated arguments',()=>{
-  const c=checkConfig(config({codeCommand:'C:\\Program Files\\Code\\bin\\code.cmd'}));
+  const c={...checkConfig(config()),codeCommand:'C:\\Program Files\\Code\\bin\\code.cmd'};
   const spec=buildLaunch(c,'C:\\Users\\dev\\AppData\\Local\\HICDevRelay\\chat-forward\\prompts\\x.md','win32');
   assert.deepEqual(spec.args.slice(0,3),['/d','/s','/c']);
   assert.equal(spec.args[3],'""C:\\Program Files\\Code\\bin\\code.cmd" chat -m agent -r -a "C:\\Users\\dev\\AppData\\Local\\HICDevRelay\\chat-forward\\prompts\\x.md" "'+CHAT_PROMPT+'""');
   assert.equal(spec.verbatim,true);
   assert.throws(()=>buildLaunch(c,'C:\\Users\\a&b\\x.md','win32'),/unsafe-prompt-path/);
+  assert.throws(()=>buildLaunch({...c,codeCommand:'code.cmd'},'C:\\x.md','win32'),/invalid-chat-command/);
 });
 
 test('CLI requires the opt-in flag and a local config before doing anything',()=>tmp(async dir=>{
