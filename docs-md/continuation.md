@@ -168,26 +168,38 @@ Stop:
 - Task Manager: `code.cmd` veya `node.exe` → End Task
 
 **Branch & PR:**
-- Branch: `feature/hic-relay-watch-polling` (pushed)
+- Branch: `feature/hic-relay-watch-polling` (pushed, updated)
 - Base: `feature/hic-relay-vscode-chat-issue` (#118)
-- Commits: 
-  - `6aa3901`: feat(dev): implement ChatForwardWatchOnce and ChatForwardWatchLoop modes with forwardOnce integration
-  - `683d36f`: docs: update ChatForwardWatch modes documentation with live loop commands
+- Commits (Phase 2 & 3): 
+  - `6aa3901`: feat(dev) — watchOnce + watchLoop + forwardOnce integration
+  - `683d36f`: docs — CHAT_FORWARD.md live loop commands
+  - `49733d9`: fix — version field preservation in checkWatchConfig
+  - `74817ba`: fix — codeCommand precedence + code.cmd to PowerShell launcher
+  - `3f07131`: docs — PR #121 summary with live test results
+
+**Test Results:**
+- npm run check: 32/32 PASS (config, filtering, watchOnce/watchLoop, codeCommand precedence regression)
+- Live PowerShell: ChatForwardWatchLoop başlatıldı, polling aktif, Ctrl+C shutdown işledi
+
+**Windows Ask Modunda Canlı Başlatma:**
+```powershell
+# Setup (one-time)
+$relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
+powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
+  -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
+  -RelayLabel hic-relay-ready `
+  -TrustedAuthor Cabatoy
+
+# Poll once
+powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
+
+# Live loop (Ctrl+C to stop)
+powershell -NoProfile -File $relay -Mode ChatForwardWatchLoop
+```
 
 **Kalan İş (Phase 3):**
-- Live smoke test: GitHub'da uygun/uygun olmayan issue'lar oluştur, watch polling ile doğrula, re-send no-send test
+- Live smoke test: GitHub'da uygun/uygun olmayan issue'lar oluştur, watch polling doğrulaması
 - PR #121 description'ını GitHub UI'dan manuel güncelle (MCP tool yok)
-- Base: `feature/hic-relay-vscode-chat-issue` (#118)
-- PR #121: Draft olarak açılmaya hazır
-- Commit'ler: 4 commit (Phase 1 MVP + Phase 2 full impl + docs + summary)
-
-**Scope Dışı (Phase 3):**
-- Polling loop automation
-- Windows Task Scheduler entegrasyonu
-- Multi-issue chaining
-
-**Sonraki Adım:**
-PR #121 web'de draft olarak aç ve Issue #120'ye comment ekle. Canlı deneme (Phase 3): smoke test issue'ları GitHub'da oluştur ve polling + re-send protection doğrulaması yap.
 
 ---
 
