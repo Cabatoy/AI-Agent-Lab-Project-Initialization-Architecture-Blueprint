@@ -14,6 +14,7 @@ foreach ($node in $ast.EndBlock.Statements) {
 $root = $PSScriptRoot
 $sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\src\ControlPlane\Program.cs'))
 $migrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\002-execution-ownership.sql'
+$outboxMigrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\005-task-enqueue-outbox.sql'
 $versionPath = Join-Path (Split-Path $sourcePath) 'ExecutionSchema.cs'
 $templatePath = Join-Path $root 'compose.json'
 $emptyEnv = Join-Path $root 'empty.env'
@@ -52,6 +53,7 @@ Test-Case 'Static configuration and authoritative base extraction' {
     Validate-Configuration
     Assert-True ($schema.RequiresV2 -and $schema.BaseSql.Contains('create table if not exists execution_plans')) 'Base schema not extracted.'
     Assert-True ($schema.MigrationSql -eq (Get-Content -LiteralPath $migrationPath -Raw)) 'Migration must remain verbatim.'
+    Assert-True ($schema.OutboxMigrationSql -eq (Get-Content -LiteralPath $outboxMigrationPath -Raw)) 'Outbox migration must remain verbatim.'
 }
 Test-Case 'Legacy start rejects R2 before Podman access' {
     Expect-Error { Assert-LegacyStart } 'start-dependencies -> prepare-schema -> start-api'
@@ -59,24 +61,26 @@ Test-Case 'Legacy start rejects R2 before Podman access' {
     try { $schema = [pscustomobject]@{ RequiresV2 = $false }; Assert-LegacyStart } finally { $schema = $old }
 }
 Test-Case 'Missing migration rejected' {
-    Expect-Error { Get-SchemaBundle $sourcePath ($migrationPath + '.missing') $versionPath } 'migration/version source missing'
+    Expect-Error { Get-SchemaBundle $sourcePath ($migrationPath + '.missing') $versionPath $outboxMigrationPath } 'migration/version source missing'
 }
 Test-Case 'Unsupported initializer rejected without schema inference' {
-    Expect-Error { Get-SchemaBundle $versionPath $migrationPath $versionPath } 'Base initializer must be unique'
+    Expect-Error { Get-SchemaBundle $versionPath $migrationPath $versionPath $outboxMigrationPath } 'Base initializer must be unique'
 }
 Test-Case 'Initializer logic change rejected instead of extracting partial SQL' {
     $code = Get-Content -LiteralPath $sourcePath -Raw
     $code = $code.Replace('await connection.ExecuteAsync(@"', 'Console.WriteLine("changed"); await connection.ExecuteAsync(@"')
     With-SourceText $code {
         param($path)
-        Expect-Error { Get-SchemaBundle $path $migrationPath $versionPath } 'Unsupported base initializer shape'
+        Expect-Error { Get-SchemaBundle $path $migrationPath $versionPath $outboxMigrationPath } 'Unsupported base initializer shape'
     }
 }
 Test-Case 'R1 source without v2 gate still extracts base and permits legacy workflow' {
-    $code = (Get-Content -LiteralPath $sourcePath -Raw).Replace('await ExecutionSchema.VerifyAsync(postgresConnectionString);', '')
+    $code = (Get-Content -LiteralPath $sourcePath -Raw).
+        Replace('await ExecutionSchema.VerifyAsync(postgresConnectionString);', '').
+        Replace('await TaskEnqueueOutboxSchema.VerifyAsync(postgresConnectionString);', '')
     With-SourceText $code {
         param($path)
-        $schema = Get-SchemaBundle $path ($migrationPath + '.missing') ($versionPath + '.missing')
+        $schema = Get-SchemaBundle $path ($migrationPath + '.missing') ($versionPath + '.missing') ($outboxMigrationPath + '.missing')
         Assert-LegacyStart
         Assert-True (-not $schema.RequiresV2 -and $schema.MigrationSql -eq '') 'R1 incorrectly requires migration.'
     }
@@ -85,15 +89,15 @@ Test-Case 'Incorrect v2 source version rejected' {
     $code = (Get-Content -LiteralPath $versionPath -Raw).Replace('internal const int Version = 2;', 'internal const int Version = 3;')
     With-SourceText $code {
         param($path)
-        Expect-Error { Get-SchemaBundle $sourcePath $migrationPath $path } 'Unsupported schema version contract'
+        Expect-Error { Get-SchemaBundle $sourcePath $migrationPath $path $outboxMigrationPath } 'Unsupported schema version contract'
     }
     Test-Case 'Unrecognized version gate cannot silently become legacy startup' {
         $code = (Get-Content -LiteralPath $sourcePath -Raw).Replace(
-            'await ExecutionSchema.VerifyAsync(postgresConnectionString);',
-            'await ExecutionSchema.VerifyAsync( postgresConnectionString );')
+            'await TaskEnqueueOutboxSchema.VerifyAsync(postgresConnectionString);',
+            'await TaskEnqueueOutboxSchema.VerifyAsync( postgresConnectionString );')
         With-SourceText $code {
             param($path)
-            Expect-Error { Get-SchemaBundle $path $migrationPath $versionPath } 'Unsupported schema version gate ordering'
+            Expect-Error { Get-SchemaBundle $path $migrationPath $versionPath $outboxMigrationPath } 'Unsupported schema version gate ordering'
         }
     }
 }
@@ -214,6 +218,7 @@ function Assert-DatabaseIdentity { $events.Add('database-identity') }
 function Invoke-Sql {
     param([string]$Sql)
     if ($Sql.Contains('pg_tables')) { if ($unexpectedTables) { return '1' } else { return '0' } }
+    if ($Sql.Contains('task_enqueue_outbox')) { return 'schema-v5-ok' }
     throw 'Unexpected SQL in offline orchestration test.'
 }
 function Invoke-SchemaTransaction {
@@ -221,6 +226,7 @@ function Invoke-SchemaTransaction {
     $script:sqlCalls++
     if ($Sql -ceq $schema.BaseSql) { $events.Add('base-transaction') }
     elseif ($Sql -ceq $schema.MigrationSql) { $events.Add('v2-transaction') }
+    elseif ($Sql -ceq $schema.OutboxMigrationSql) { $events.Add('v5-transaction') }
     else { throw 'Non-authoritative SQL submitted.' }
     if ($sqlCalls -eq $sqlFailure) { throw 'Unknown SQL outcome' }
 }
@@ -228,6 +234,10 @@ function Assert-BaseSchema { $events.Add('base-verified') }
 function Assert-SchemaV2 {
     $events.Add('v2-verified')
     Assert-True (-not $badSchema) 'Schema v2 verification failed'
+}
+function Assert-SchemaV5 {
+    $events.Add('v5-verified')
+    Assert-True (-not $badSchema) 'Schema v5 verification failed'
 }
 function Invoke-Compose {
     param([string[]]$Arguments)
@@ -239,13 +249,13 @@ Test-Case 'Prepare schema preserves transaction and state ordering' {
     $state = New-TestState 'dependencies-ready'
     $events.Clear()
     Prepare-Schema
-    Assert-True (($events -join ',') -eq 'ownership,no-apps,database-identity,state:schema-preparing,base-transaction,base-verified,v2-transaction,v2-verified,state:schema-ready') 'Wrong schema sequence.'
+    Assert-True (($events -join ',') -eq 'ownership,no-apps,database-identity,state:schema-preparing,base-transaction,base-verified,v2-transaction,v2-verified,v5-transaction,v5-verified,state:schema-ready') 'Wrong schema sequence.'
 }
 Test-Case 'Start API gates schema before build and never starts Worker' {
     $state = New-TestState 'schema-ready'
     $events.Clear()
     Start-PreparedApi
-    Assert-True (($events -join ',') -eq 'ownership,no-apps,database-identity,v2-verified,state:api-starting,compose:build control-plane agent-worker,compose:up -d --no-build --no-deps control-plane,api-health,state:api-ready') 'Wrong API sequence.'
+    Assert-True (($events -join ',') -eq 'ownership,no-apps,database-identity,v2-verified,v5-verified,state:api-starting,compose:build control-plane agent-worker,compose:up -d --no-build --no-deps control-plane,api-health,state:api-ready') 'Wrong API sequence.'
 }
 foreach ($failure in @(1, 2)) {
     Test-Case "Unknown SQL outcome at transaction $failure cannot retry" {

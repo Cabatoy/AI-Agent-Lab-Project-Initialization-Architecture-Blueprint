@@ -66,6 +66,13 @@ internal static class TaskTransitionStore
         }, transaction, cancellationToken: cancellationToken));
         if (affected != 1)
             throw new InvalidOperationException("Locked task transition did not update exactly one row.");
+        if (target == TaskStatuses.Approved)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(@"
+                insert into task_enqueue_outbox(task_id) values (@Id)
+                on conflict (task_id) do nothing;",
+                new { Id = id }, transaction, cancellationToken: cancellationToken));
+        }
         if (active is not null)
         {
             var finalized = await connection.ExecuteAsync(new CommandDefinition(@"

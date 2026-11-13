@@ -47,6 +47,7 @@ app.Use(async (context, next) =>
 var redis = await ConnectRedisWithRetryAsync(redisConnectionString, app.Logger);
 var redisDb = redis.GetDatabase();
 const string queueKey = "agentlab:task-queue";
+var taskQueue = new RedisTaskQueuePublisher(redisDb, queueKey);
 
 await InitializeSchemaWithRetryAsync(postgresConnectionString, app.Logger);
 
@@ -138,24 +139,109 @@ app.MapGet("/tasks/{id:guid}", async (Guid id) =>
     .Produces<AgentTask>(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/tasks/{id:guid}/approve", async (Guid id, CancellationToken cancellationToken) =>
+app.MapPost("/tasks/{id:guid}/approve", async (Guid id, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
+    if (localOperatorSessions is null)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var actorId = localOperatorSessions.Authenticate(httpContext.Request.Headers.Authorization);
+    if (actorId is null)
+    {
+        return Results.StatusCode(StatusCodes.Status401Unauthorized);
+    }
+
     var transition = await TaskTransitionStore.ApplyAsync(
         postgresConnectionString, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: cancellationToken);
     if (transition.Outcome != TransitionOutcome.Accepted)
         return TransitionError(transition);
 
-    await redisDb.ListRightPushAsync(queueKey, id.ToString());
+    var enqueue = await TaskEnqueueOutbox.TryEnqueueAsync(
+        postgresConnectionString, id, taskQueue, cancellationToken);
+    if (enqueue == EnqueueAttemptOutcome.RedisUnavailable)
+    {
+        app.Logger.LogWarning("Approved task enqueue is pending Redis recovery. TaskId={TaskId}", id);
+        return Results.Accepted($"/tasks/{id}", new
+        {
+            id,
+            status = TaskStatuses.Approved,
+            queued = false,
+            pendingRecovery = true
+        });
+    }
+    if (enqueue is EnqueueAttemptOutcome.NotFound or EnqueueAttemptOutcome.NotPending)
+    {
+        app.Logger.LogError("Approved task outbox record is unavailable. TaskId={TaskId}", id);
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
 
-    return Results.Ok(new { id, status = TaskStatuses.Approved });
+    return Results.Ok(new { id, status = TaskStatuses.Approved, queued = true });
 })
     .WithName("ApproveTask")
     .WithSummary("Approve a task")
-    .WithDescription("Approves a Draft task and places it on the worker queue.")
+    .WithDescription("Approves a Draft task and places it on the worker queue. Requires Bearer token authorization.")
+    .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status202Accepted)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict)
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status503ServiceUnavailable);
+
+app.MapPost("/tasks/{id:guid}/recover-enqueue", async (Guid id, HttpContext httpContext, CancellationToken cancellationToken) =>
+{
+    if (localOperatorSessions is null)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var actorId = localOperatorSessions.Authenticate(httpContext.Request.Headers.Authorization);
+    if (actorId is null)
+    {
+        return Results.StatusCode(StatusCodes.Status401Unauthorized);
+    }
+
+    // Verify task is in Approved state; if not, this is an error
+    await using var connection = new NpgsqlConnection(postgresConnectionString);
+    await connection.OpenAsync(cancellationToken);
+    var status = await connection.QuerySingleOrDefaultAsync<string>(
+        "select status from tasks where id = @id", new { id });
+    
+    if (status is null)
+        return Results.NotFound(new { id, error = "Task not found" });
+    
+    if (status != TaskStatuses.Approved)
+        return Results.BadRequest(new { id, status, error = "Only Approved tasks can be recovered for enqueue" });
+
+    var enqueue = await TaskEnqueueOutbox.TryEnqueueAsync(
+        postgresConnectionString, id, taskQueue, cancellationToken);
+
+    if (enqueue == EnqueueAttemptOutcome.RedisUnavailable)
+    {
+        app.Logger.LogWarning("Approved task remains pending Redis recovery. TaskId={TaskId}", id);
+        return Results.Json(
+            new { id, status = TaskStatuses.Approved, queued = false, pendingRecovery = true },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    if (enqueue == EnqueueAttemptOutcome.AlreadyClaimed)
+        return Results.Ok(new { id, status = "Executing", queued = false, alreadyClaimed = true });
+    if (enqueue == EnqueueAttemptOutcome.NotFound)
+        return Results.NotFound(new { id, error = "Task not found" });
+    if (enqueue == EnqueueAttemptOutcome.NotPending)
+        return Results.Conflict(new { id, error = "Task has no pending approval delivery." });
+
+    return Results.Ok(new { id, status = TaskStatuses.Approved, queued = true });
+})
+    .WithName("RecoverEnqueue")
+    .WithSummary("Recover approved task enqueue")
+    .WithDescription("Re-attempts to enqueue an Approved task that failed initial enqueue. Requires Bearer token authorization.")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status400BadRequest)
     .Produces(StatusCodes.Status409Conflict)
-    .Produces(StatusCodes.Status404NotFound);
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status503ServiceUnavailable);
 
 app.MapPost("/tasks/{id:guid}/retry", async (Guid id, CancellationToken cancellationToken) =>
 {
@@ -371,6 +457,7 @@ static async Task InitializeSchemaWithRetryAsync(string postgresConnectionString
         try
         {
             await ExecutionSchema.VerifyAsync(postgresConnectionString);
+            await TaskEnqueueOutboxSchema.VerifyAsync(postgresConnectionString);
             await InitializeSchemaAsync(postgresConnectionString);
             return;
         }

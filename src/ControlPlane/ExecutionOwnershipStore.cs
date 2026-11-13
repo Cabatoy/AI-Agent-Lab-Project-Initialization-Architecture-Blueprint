@@ -91,6 +91,10 @@ internal static class ExecutionOwnershipStore
             throw new InvalidOperationException("Locked execution claim did not update exactly one task.");
         await TaskTransitionStore.InsertAuditAsync(connection, transaction, taskId, task.Status,
             TaskStatuses.Executing, "ClaimExecution", request.ExecutionId, cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(@"
+            update task_enqueue_outbox set claimed_at_utc = now()
+            where task_id = @taskId and claimed_at_utc is null;",
+            new { taskId }, transaction, cancellationToken: cancellationToken));
         var execution = await connection.QuerySingleAsync<TaskExecution>(new CommandDefinition(
             $"select {ExecutionColumns} from task_executions where id = @ExecutionId;",
             request, transaction, cancellationToken: cancellationToken));
