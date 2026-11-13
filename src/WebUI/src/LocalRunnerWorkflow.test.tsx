@@ -1,7 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from './api';
+import { useState } from 'react';
+import { api, type OperatorSession } from './api';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
+
+function TestRunner() {
+  const [session, setSession] = useState<OperatorSession | null>(null);
+  return <LocalRunnerWorkflow session={session} onSessionChange={setSession} />;
+}
 
 vi.mock('./api', () => ({
   api: {
@@ -100,7 +106,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('Local Runner workflow', () => {
   it('does not execute before authentication, task selection and explicit intent approval', async () => {
-    render(<LocalRunnerWorkflow />);
+    render(<TestRunner />);
     expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
@@ -127,7 +133,7 @@ describe('Local Runner workflow', () => {
   });
 
   it('keeps task creation and execution unavailable until a local session is authenticated', () => {
-    render(<LocalRunnerWorkflow />);
+    render(<TestRunner />);
     expect(screen.queryByRole('button', { name: 'Approve and run system.health' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Authenticate local operator' })).toBeDisabled();
     expect(api.tasks).not.toHaveBeenCalled();
@@ -137,7 +143,7 @@ describe('Local Runner workflow', () => {
 
   it('shows a real conflict instead of retrying an already claimed run', async () => {
     vi.mocked(api.localHealthRun).mockReset().mockResolvedValue(completed);
-    render(<LocalRunnerWorkflow />);
+    render(<TestRunner />);
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
       target: { value: 'R'.repeat(44) },
     });
@@ -157,7 +163,7 @@ describe('Local Runner workflow', () => {
       .mockResolvedValueOnce(invalidated)
       .mockResolvedValueOnce(invalidated);
     vi.mocked(api.executeLocalHealthRun).mockRejectedValueOnce(new Error('The task or approved run is no longer eligible.'));
-    render(<LocalRunnerWorkflow />);
+    render(<TestRunner />);
     fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
       target: { value: 'R'.repeat(44) },
     });

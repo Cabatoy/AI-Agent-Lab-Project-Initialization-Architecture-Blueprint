@@ -150,6 +150,30 @@ describe('local development proxy', () => {
     expect(received).toHaveLength(before);
   });
 
+  it('only forwards a same-origin authenticated bodyless task approval', async () => {
+    const path = `/api/tasks/${created.id}/approve`;
+    const authorization = 'Bearer ' + 'S'.repeat(44);
+    const headers = { origin, 'x-hic-request': 'task-approval', authorization };
+    const response = await fetch(`${origin}${path}`, { method: 'POST', headers: { ...headers, cookie: 'private=1' } });
+    expect(response.status).toBe(201);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ method: 'POST', url: `/tasks/${created.id}/approve`, body: '' });
+    expect(received[0].headers.authorization).toBe(authorization);
+    expect(received[0].headers.cookie).toBeUndefined();
+    expect(received[0].headers.origin).toBeUndefined();
+
+    for (const [extra, body] of [
+      [{ origin: 'https://attacker.example' }, undefined],
+      [{ 'sec-fetch-site': 'cross-site' }, undefined],
+      [{ authorization: 'Bearer short' }, undefined],
+      [{ 'x-hic-request': 'local-runner' }, undefined],
+      [{ 'content-type': 'application/json' }, '{}'],
+    ] as [Record<string, string>, string | undefined][]) {
+      expect((await fetch(`${origin}${path}`, { method: 'POST', headers: { ...headers, ...extra }, body })).status).toBeGreaterThanOrEqual(400);
+    }
+    expect(received).toHaveLength(1);
+  });
+
   it('forwards one validated POST with a re-serialized body and no client credentials', async () => {
     const response = await post(JSON.stringify({ description: 'Exact\n  request text  ', title: 'Title' }),
       { cookie: 'session=private', 'x-forwarded-for': '10.0.0.1', 'content-type': 'application/json; charset=utf-8' });

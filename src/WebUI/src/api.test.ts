@@ -72,6 +72,36 @@ describe('Control Plane API contract', () => {
     expect(mock.mock.calls.every(call => call[1].method === 'GET')).toBe(true);
   });
 
+  describe('task approval API', () => {
+    const token = 'S'.repeat(44);
+    it('posts the operator session once and validates queued and pending-recovery responses', async () => {
+      const mock = vi.fn()
+        .mockResolvedValueOnce(Response.json({ id: task.id, status: 'Approved', queued: true }))
+        .mockResolvedValueOnce(Response.json({ id: task.id, status: 'Approved', queued: false, pendingRecovery: true }, { status: 202 }));
+      vi.stubGlobal('fetch', mock);
+      expect(await api.approveTask(task.id, token)).toEqual({ id: task.id, status: 'Approved', queued: true });
+      expect(await api.approveTask(task.id, token)).toEqual({ id: task.id, status: 'Approved', queued: false, pendingRecovery: true });
+      expect(mock).toHaveBeenCalledTimes(2);
+      expect(mock.mock.calls[0][0]).toBe(`/api/tasks/${task.id}/approve`);
+      expect(mock.mock.calls[0][1]).toMatchObject({ method: 'POST', credentials: 'omit',
+        headers: { 'X-HIC-Request': 'task-approval', Authorization: `Bearer ${token}` } });
+      expect(mock.mock.calls[0][1].body).toBeUndefined();
+    });
+    it('reports server errors and treats ambiguous writes and invalid success responses as uncertain', async () => {
+      const mock = vi.fn()
+        .mockResolvedValueOnce(Response.json({ error: 'Conflict' }, { status: 409 }))
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+        .mockResolvedValueOnce(Response.json({ id: task.id, status: 'Approved', queued: false }, { status: 202 }))
+        .mockRejectedValueOnce(new Error('offline'));
+      vi.stubGlobal('fetch', mock);
+      await expect(api.approveTask(task.id, token)).rejects.toMatchObject({ status: 409, outcomeUnknown: false, message: expect.stringContaining('Conflict') });
+      await expect(api.approveTask(task.id, token)).rejects.toMatchObject({ status: 503, outcomeUnknown: true });
+      await expect(api.approveTask(task.id, token)).rejects.toMatchObject({ kind: 'invalid', outcomeUnknown: true });
+      await expect(api.approveTask(task.id, token)).rejects.toMatchObject({ kind: 'network', outcomeUnknown: true });
+      expect(mock).toHaveBeenCalledTimes(4);
+    });
+  });
+
   it('accepts empty lists', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(Response.json([]))));
     expect(await api.tasks()).toEqual([]);
