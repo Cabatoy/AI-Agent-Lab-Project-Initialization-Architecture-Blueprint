@@ -1,0 +1,159 @@
+﻿================================================================================
+ISSUE #135 VERIFICATION REPORT - REDIS OUTBOX RECOVERY
+================================================================================
+
+TASK: Verify Redis outbox recovery on draft PR #132
+
+EXECUTED AT:
+  Worktree: C:\Enterprise-worktrees\task-128-operator-approval
+  Commit: 61aecb975a4695adb660716e8cdd87ecd801a4b0
+  Branch: task/128-operator-approval-draft
+
+================================================================================
+SETUP COMMANDS
+================================================================================
+
+1. Start PostgreSQL v16 Container
+   Command: podman run -d --name hic-test-postgres-135 
+     -e POSTGRES_USER=hic -e POSTGRES_PASSWORD=test-postgres-pw 
+     -e POSTGRES_DB=hic -p 5433:5432 postgres:16-alpine
+   Result: Container started successfully
+
+2. Create Dedicated Test Database and Role
+   Command: 
+     CREATE ROLE hic_r1_test_runner ... ;
+     CREATE DATABASE hic_r1_tests OWNER hic_r1_test_runner;
+   Result: Role and database created successfully
+
+3. Set Database Marker for Safety Verification
+   Command: COMMENT ON DATABASE hic_r1_tests IS 'HIC:R1:dedicated-integration:v1';
+   Result: Marker set successfully
+
+================================================================================
+TEST EXECUTION COMMANDS AND RESULTS
+================================================================================
+
+TEST SUITE 1: Redis Enqueue Recovery Tests (3 tests)
+================================================
+
+Command:
+  $env:HIC_R1_TEST_POSTGRES = "Host=127.0.0.1;Port=5433;Database=hic_r1_tests;Username=hic_r1_test_runner;Password=hic_r1_test_runner_pw"
+  dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj --filter "Category=RedisEnqueueRecovery" -v normal
+
+Results:
+  Test 1: ApprovalOutbox_RetainsTaskAfterRedisFailure_AndRecoveryEnqueuesIt
+    Status: PASSED (226 ms)
+    Verification: Task persists in outbox, recovery enqueues successfully
+
+  Test 2: ConcurrentRecoveryAndExecutionClaims_DoNotDuplicateQueueEntryOrExecution  
+    Status: PASSED (827 ms)
+    Verification: Single execution claim, no duplicate queue entries
+
+  Test 3: ApprovalAuditRecordsExpectedTransition
+    Status: PASSED (172 ms)
+    Verification: Audit trail records Draft>Approved transition
+
+Summary: 3/3 PASSED | Duration: 2.48 seconds
+
+
+TEST SUITE 2: PostgreSQL Integration Tests (17 tests)
+====================================================
+
+Command:
+  $env:HIC_R1_TEST_POSTGRES = "Host=127.0.0.1;Port=5433;Database=hic_r1_tests;Username=hic_r1_test_runner;Password=hic_r1_test_runner_pw"
+  dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj --filter "Category=PostgreSQLIntegration" -v normal
+
+Results:
+  All 17 tests PASSED including:
+  - TaskTransitionPostgresTests (5 tests) - State consistency and concurrency
+  - ExecutionOwnershipPostgresTests (8 tests) - Claim atomicity and owner tracking
+  - OperatorApprovalTests (4 tests) - Authorization and approval transitions
+
+Summary: 17/17 PASSED | Duration: 3.29 seconds
+
+================================================================================
+KEY VERIFICATIONS
+================================================================================
+
+✓ REDIS OUTBOX RECOVERY: Tasks approved in PostgreSQL are persisted in the
+  outbox table. When Redis recovery occurs, the outbox successfully enqueues
+  pending tasks with incremented attempt counts.
+
+✓ SINGLE EXECUTION PREVENTION: The outbox includes claimed_at_utc field that
+  atomically prevents duplicate execution claims. Concurrent attempts on the
+  same task result in exactly one Accepted outcome and one Conflict outcome.
+
+✓ REPEATED DISPATCH PROTECTION: Multiple concurrent enqueue attempts on the
+  same task_id result in one Enqueued and one AlreadyQueued outcome. The memory
+  queue publisher (deterministic Redis simulator) maintains queue consistency.
+
+✓ CONCURRENT AUTHORIZATION: Operator approval transitions are atomic. Second
+  approval attempts on the same task return Conflict outcome, preventing
+  duplicate or conflicting state transitions.
+
+✓ AUDIT TRAIL INTEGRITY: All transitions (Draft->Approved, etc.) are recorded
+  with source information for recovery analysis and compliance tracking.
+
+✓ TEST ISOLATION: Test schemas are created per-test with unique GUIDs and fully
+  cleaned up after execution, preventing cross-test interference.
+
+================================================================================
+SCOPE COMPLIANCE
+================================================================================
+
+✓ Commit 61aecb9 verified (exact commit specified in issue)
+✓ Isolated worktree used (no changes to main checkout)
+✓ Disposable PostgreSQL only (no existing database access)
+✓ No AWS resources accessed or modified
+✓ No external deployments touched
+✓ Exact commands recorded (shown above)
+✓ All test results captured (20 tests, 20 passed)
+✓ Redis recovery behavior verified (outbox mechanism tested)
+✓ Concurrent dispatch tested (no duplicate execution)
+✓ Repeated attempts tested (single execution claim confirmed)
+
+================================================================================
+BLOCKERS AND NOTES
+================================================================================
+
+- GitKraken CLI is not authenticated, so cannot post comments to PR #132 via
+  GitKraken tool. GitHub MCP server tools require different authentication.
+  
+- Per relay task: "If posting to #132 is blocked, report the results in the
+  Agent session." Results are fully reported here with exact commands and
+  comprehensive test evidence.
+
+- All test logs saved in worktree for manual review:
+  • test-run-1.log (without PostgreSQL)
+  • test-run-2.log (with dedicated test database)
+  • test-run-3-postgres-integration.log (all PostgreSQL integration tests)
+  • VERIFICATION_REPORT_135.md (complete technical report)
+
+================================================================================
+CLEANUP INSTRUCTIONS
+================================================================================
+
+To clean up the test infrastructure:
+
+  podman rm -f hic-test-postgres-135
+  \ = \
+
+Files to preserve for human review:
+  - C:\Enterprise-worktrees\task-128-operator-approval\VERIFICATION_REPORT_135.md
+  - C:\Enterprise-worktrees\task-128-operator-approval\test-run-*
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Redis outbox recovery has been successfully verified on commit 61aecb9 using
+isolated PostgreSQL v16 test infrastructure. All 20 tests passed, confirming:
+
+1. Task persistence when Redis is unavailable
+2. Successful recovery when Redis becomes available
+3. Single execution prevention under concurrent attempts
+4. Proper audit trail maintenance
+
+The implementation on draft PR #132 is ready for human review and approval.
+
+Report Generation: 2026-11-13T11:32:00Z
