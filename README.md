@@ -67,6 +67,8 @@ Tüm .NET projelerini terminalden derlemek için repo kökünde `dotnet build Hu
 
 Yeni bir Copilot sohbetinde `docs-md/continuation.md` dosyasını okuyup oradaki sıradaki kontrol noktasından devam etmesini isteyin. Sohbet geçmişi Git'e kaydedilmez; dosya güncel proje handoff'unun kalıcı kaynağıdır.
 
+> **Katkı notu — relay geliştirme görevleri:** Relay üzerinden iletilen geliştirme görevleri, çıktısını ayrı bir görev branch'ine (`origin/develop` tabanlı, ayrı worktree'de) bir commit olarak yayımlar ve ilgili issue'yu referanslayan (`Refs #<issue>`) bir draft PR açar. Draft PR insan incelemesi içindir; merge ve deploy yalnızca insan onayıyla yapılır.
+
 ## Local Podman kurulumu
 
 Önkoşul: Podman Desktop ve `podman compose` tarafından kullanılabilen bir Compose provider (ör. `podman-compose` veya Docker Compose v2 CLI) kurulu olmalı. Compose provider yalnızca istemci aracıdır; container engine Podman olarak kalır. İlk kurulumda repo scripti Podman machine yoksa oluşturur, durmuşsa başlatır; Windows'ta user-mode networking'i yalnızca ayrıca onaylanırsa, WSL ortamında `pids` cgroup delegasyonunu gerektiğinde ayarlar.
