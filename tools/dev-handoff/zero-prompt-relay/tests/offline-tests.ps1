@@ -107,19 +107,19 @@ foreach ($invalid in $invalidTokens) {
 Write-Host "Test: Output Redaction"
 
 # Test token redaction
-$tokenPattern = "token=ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+$tokenPattern = "token=SYNTHETIC_TEST_CREDENTIAL_NOT_A_REAL_SECRET_1234567890"
 $redacted = $tokenPattern -replace '[a-zA-Z0-9_-]{40,}', '***REDACTED***'
 Assert-Contains -Haystack $redacted -Needle "***REDACTED***" -Message "Token pattern redacted"
-Assert-NotContains -Haystack $redacted -Needle "ghp_" -Message "Original token removed after redaction"
+Assert-NotContains -Haystack $redacted -Needle "SYNTHETIC_TEST_CREDENTIAL" -Message "Original token removed after redaction"
 
 # Test Authorization header redaction
-$authHeader = "Authorization: token ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+$authHeader = "Authorization: token SYNTHETIC_TEST_CREDENTIAL_NOT_A_REAL_SECRET_1234567890"
 $redactedAuth = $authHeader -replace 'Authorization[=:]*\s*[^\s]+', 'Authorization: ***REDACTED***'
 Assert-Contains -Haystack $redactedAuth -Needle "Authorization: ***REDACTED***" -Message "Authorization header redacted"
-Assert-NotContains -Haystack $redactedAuth -Needle "token ghp" -Message "Credential removed from auth header"
+Assert-NotContains -Haystack $redactedAuth -Needle "token SYNTHETIC_TEST_CREDENTIAL" -Message "Credential removed from auth header"
 
 # Test Bearer token redaction
-$bearerToken = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+$bearerToken = "Bearer SYNTHETIC_TEST_CREDENTIAL_NOT_A_REAL_SECRET_1234567890"
 $redactedBearer = $bearerToken -replace '[Bb]earer\s+[^\s]+', 'Bearer ***REDACTED***'
 Assert-Contains -Haystack $redactedBearer -Needle "Bearer ***REDACTED***" -Message "Bearer token redacted"
 
@@ -178,7 +178,7 @@ Assert-True -Condition $isRateLimit -Message "Status 429 is rate limit"
 Write-Host "Test: No Credential Leakage in Errors"
 
 $errorMessages = @(
-    "Request failed with token ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+    "Request failed with token SYNTHETIC_TEST_CREDENTIAL_NOT_A_REAL_SECRET_1234567890",
     "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9",
     "password=mytoken123456789012345678901234567890",
     "github_token ghp_abcdef1234567890abcdef1234567890abcd"
@@ -192,8 +192,8 @@ foreach ($msg in $errorMessages) {
     $redacted = $redacted -replace 'github_token\s+\S+', 'github_token ***REDACTED***'
     
     # Verify token not in redacted message
-    Assert-NotContains -Haystack $redacted -Needle "ghp_" -Message "No PAT in error: $msg"
-    Assert-NotContains -Haystack $redacted -Needle "eyJhbGci" -Message "No JWT in error: $msg"
+    Assert-NotContains -Haystack $redacted -Needle "SYNTHETIC_TEST_CREDENTIAL" -Message "No PAT in error: $msg"
+    Assert-NotContains -Haystack $redacted -Needle "SYNTHETIC_TEST_CREDENTIAL" -Message "No JWT in error: $msg"
 }
 
 # ============ TEST: Git Credential Manager Command ============
