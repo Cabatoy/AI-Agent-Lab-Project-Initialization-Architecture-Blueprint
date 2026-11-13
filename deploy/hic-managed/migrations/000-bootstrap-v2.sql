@@ -54,3 +54,4 @@ CREATE INDEX ix_execution_plans_created_at
 
 -- Reuse the original R2-owned migration resource exactly; do not maintain a copy.
 \i /control-plane-migrations/002-execution-ownership.sql
+\i /control-plane-migrations/005-task-enqueue-outbox.sql

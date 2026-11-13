@@ -19,6 +19,7 @@ $template = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json
 $services = @('postgres', 'redis', 'model-stub', 'control-plane', 'agent-worker')
 $sourcePath = [IO.Path]::GetFullPath((Join-Path $root '..\..\src\ControlPlane\Program.cs'))
 $migrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\002-execution-ownership.sql'
+$outboxMigrationPath = Join-Path (Split-Path $sourcePath) 'Migrations\005-task-enqueue-outbox.sql'
 $versionPath = Join-Path (Split-Path $sourcePath) 'ExecutionSchema.cs'
 
 function Assert-True {
@@ -27,7 +28,7 @@ function Assert-True {
 }
 
 function Get-SchemaBundle {
-    param([string]$Source, [string]$Migration, [string]$Version)
+    param([string]$Source, [string]$Migration, [string]$Version, [string]$OutboxMigration)
     $code = Get-Content -LiteralPath $Source -Raw
     $signature = 'static async Task InitializeSchemaAsync(string postgresConnectionString)'
     Assert-True ([regex]::Matches($code, [regex]::Escape($signature)).Count -eq 1) 'Base initializer must be unique.'
@@ -41,22 +42,30 @@ function Get-SchemaBundle {
     }
     $requiresV2 = $code -match '\bExecutionSchema\b'
     if ($requiresV2) {
-        Assert-True ($code -match '(?s)await ExecutionSchema\.VerifyAsync\(postgresConnectionString\);\s*await InitializeSchemaAsync\(postgresConnectionString\);') 'Unsupported schema version gate ordering.'
-        Assert-True ((Test-Path -LiteralPath $Migration) -and (Test-Path -LiteralPath $Version)) 'R2 migration/version source missing.'
+        Assert-True ($code -match '(?s)await ExecutionSchema\.VerifyAsync\(postgresConnectionString\);\s*await TaskEnqueueOutboxSchema\.VerifyAsync\(postgresConnectionString\);\s*await InitializeSchemaAsync\(postgresConnectionString\);') 'Unsupported schema version gate ordering.'
+        Assert-True ((Test-Path -LiteralPath $Migration) -and (Test-Path -LiteralPath $Version) -and
+            (Test-Path -LiteralPath $OutboxMigration)) 'R2 migration/version source missing.'
         $versionCode = Get-Content -LiteralPath $Version -Raw
         Assert-True ($versionCode -match 'internal const int Version = 2;' -and
             $versionCode.Contains('where version = @Version')) 'Unsupported schema version contract.'
         $migrationSql = Get-Content -LiteralPath $Migration -Raw
         Assert-True ($migrationSql -match 'insert into app_schema_versions\(version\) values \(2\)') 'Unexpected migration version.'
+        $outboxMigrationSql = Get-Content -LiteralPath $OutboxMigration -Raw
+        Assert-True ($outboxMigrationSql -match 'insert into app_schema_versions\(version\) values \(5\)') 'Unexpected outbox migration version.'
     } else {
         $migrationSql = ''
+        $outboxMigrationSql = ''
     }
     return [pscustomobject]@{
         BaseSql = $sql
         MigrationSql = $migrationSql
+        OutboxMigrationSql = $outboxMigrationSql
         RequiresV2 = $requiresV2
         SourceHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
-        MigrationHash = if ($requiresV2) { (Get-FileHash -LiteralPath $Migration -Algorithm SHA256).Hash } else { '' }
+        MigrationHash = if ($requiresV2) {
+            (Get-FileHash -LiteralPath $Migration -Algorithm SHA256).Hash + ':' +
+            (Get-FileHash -LiteralPath $OutboxMigration -Algorithm SHA256).Hash
+        } else { '' }
     }
 }
 
@@ -75,7 +84,7 @@ function Assert-LegacyStart {
 }
 
 function Validate-Configuration {
-    $script:schema = Get-SchemaBundle $sourcePath $migrationPath $versionPath
+    $script:schema = Get-SchemaBundle $sourcePath $migrationPath $versionPath $outboxMigrationPath
     Assert-True (@(Get-Content -LiteralPath $emptyEnv | Where-Object { $_ -match '^\s*[^#\s]' }).Count -eq 0) 'Environment file must be empty.'
     foreach ($service in $template.services.PSObject.Properties) {
         $value = $service.Value
@@ -307,7 +316,7 @@ function Assert-SchemaV2 {
     $result = Invoke-Sql @'
 SELECT CASE WHEN
     (SELECT count(*) FROM app_schema_versions WHERE version=2)=1
-    AND (SELECT count(*) FROM app_schema_versions)=1
+    AND (SELECT count(*) FROM app_schema_versions WHERE version NOT IN (2,5))=0
     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public'
         AND table_name='tasks' AND column_name='execution_generation' AND data_type='bigint' AND is_nullable='NO')
     AND to_regclass('public.task_executions') IS NOT NULL
@@ -342,6 +351,18 @@ THEN 'schema-v2-ok' ELSE 'invalid' END;
     Assert-True ($result -eq 'schema-v2-ok') 'Schema v2 version/columns/constraints/index verification failed.'
 }
 
+function Assert-SchemaV5 {
+    $result = Invoke-Sql @'
+SELECT CASE WHEN
+    (SELECT count(*) FROM app_schema_versions WHERE version=5)=1
+    AND to_regclass('public.task_enqueue_outbox') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM pg_index WHERE indexrelid='public.ix_task_enqueue_outbox_pending'::regclass
+        AND indisvalid AND pg_get_expr(indpred,indrelid)='(claimed_at_utc IS NULL)')
+THEN 'schema-v5-ok' ELSE 'invalid' END;
+'@
+    Assert-True ($result -eq 'schema-v5-ok') 'Schema v5 outbox table/index verification failed.'
+}
+
 function Invoke-SchemaTransaction {
     param([string]$Sql)
     $null = Invoke-Native -Arguments @('exec', '-i', (Get-ContainerId 'postgres'), 'psql',
@@ -360,9 +381,11 @@ function Prepare-Schema {
     Assert-BaseSchema
     Invoke-SchemaTransaction $schema.MigrationSql
     Assert-SchemaV2
+    Invoke-SchemaTransaction $schema.OutboxMigrationSql
+    Assert-SchemaV5
     $state.stage = 'schema-ready'
     Save-State
-    Write-Host 'Authoritative base schema and explicit v2 migration verified; applications have not started.'
+    Write-Host 'Authoritative base schema and explicit v2/v5 migrations verified; applications have not started.'
 }
 
 function Start-PreparedApi {
@@ -371,6 +394,7 @@ function Start-PreparedApi {
     Assert-NoApplications
     Assert-DatabaseIdentity
     Assert-SchemaV2
+    Assert-SchemaV5
     $state.stage = 'api-starting'
     Save-State
     Invoke-Compose @('build', 'control-plane', 'agent-worker')

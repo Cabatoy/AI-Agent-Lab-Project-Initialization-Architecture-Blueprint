@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Migrations\002-execution-ownership.sql" LogicalName="ExecutionOwnershipMigration" />
+    <EmbeddedResource Include="Migrations\005-task-enqueue-outbox.sql" LogicalName="TaskEnqueueOutboxMigration" />
   </ItemGroup>
 
   <ItemGroup>

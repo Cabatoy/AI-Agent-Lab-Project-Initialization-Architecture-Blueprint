@@ -104,6 +104,7 @@ public class TaskTransitionPostgresTests
                     changed_at_utc timestamptz not null, note text);", transaction: setup);
             await admin.ExecuteAsync($"set local search_path to {schema};", transaction: setup);
             await admin.ExecuteAsync(ExecutionSchema.MigrationSql, transaction: setup);
+            await admin.ExecuteAsync(TaskEnqueueOutboxSchema.MigrationSql, transaction: setup);
             identity = await ReadFixture(admin, schema, setup);
             if (identity is null || identity.Marker != marker)
                 throw new InvalidOperationException("Fixture initialization identity mismatch.");
@@ -125,11 +126,12 @@ public class TaskTransitionPostgresTests
             await VerifyTarget(admin);
             await using var cleanup = await admin.BeginTransactionAsync();
             await admin.ExecuteAsync(
-                $"lock table {schema}.tasks, {schema}.task_status_transitions, {schema}.task_executions, {schema}.app_schema_versions in access exclusive mode;",
+                $"lock table {schema}.tasks, {schema}.task_status_transitions, {schema}.task_executions, {schema}.task_enqueue_outbox, {schema}.app_schema_versions in access exclusive mode;",
                 transaction: cleanup);
             PostgresFixtureSafety.Cleanup(identity,
                 await ReadFixture(admin, schema, cleanup));
             await admin.ExecuteAsync($@"
+                drop table {schema}.task_enqueue_outbox restrict;
                 drop table {schema}.task_status_transitions restrict;
                 drop table {schema}.task_executions restrict;
                 drop table {schema}.app_schema_versions restrict;
@@ -157,14 +159,16 @@ public class TaskTransitionPostgresTests
             select n.nspname::text as Schema, pg_get_userbyid(n.nspowner) as Owner,
                    obj_description(n.oid, 'pg_namespace') as Marker, n.oid::bigint as SchemaOid,
                    t.oid::bigint as TasksOid, a.oid::bigint as AuditOid,
-                   e.oid::bigint as ExecutionOid, v.oid::bigint as VersionOid
+                   e.oid::bigint as ExecutionOid, v.oid::bigint as VersionOid,
+                   o.oid::bigint as OutboxOid
             from pg_namespace n
             join pg_class t on t.relnamespace = n.oid and t.relname = 'tasks' and t.relkind = 'r'
             join pg_class a on a.relnamespace = n.oid and a.relname = 'task_status_transitions' and a.relkind = 'r'
             join pg_class e on e.relnamespace = n.oid and e.relname = 'task_executions' and e.relkind = 'r'
             join pg_class v on v.relnamespace = n.oid and v.relname = 'app_schema_versions' and v.relkind = 'r'
+            join pg_class o on o.relnamespace = n.oid and o.relname = 'task_enqueue_outbox' and o.relkind = 'r'
             where n.nspname = @schema
               and t.relowner = n.nspowner and a.relowner = n.nspowner
-              and e.relowner = n.nspowner and v.relowner = n.nspowner;",
+              and e.relowner = n.nspowner and v.relowner = n.nspowner and o.relowner = n.nspowner;",
             new { schema }, transaction);
 }

@@ -1,42 +1,105 @@
+using System.Collections.Concurrent;
 using Dapper;
 using Npgsql;
 
 namespace ControlPlane.Api.Tests;
 
 /// <summary>
-/// RedisEnqueueRecovery tests validate that approved tasks can be re-enqueued after transient Redis failures,
-/// preventing task loss and duplicate execution. Redis-dependent tests require live connection at localhost:6379.
-/// PostgreSQL integration tests verify state consistency when enqueue fails.
+/// PostgreSQL integration tests for durable approval delivery and single execution claims.
+/// The queue publisher is deterministic so these tests do not require a live Redis service.
 /// </summary>
 [Trait("Category", "RedisEnqueueRecovery")]
 public class RedisEnqueueRecoveryTests
 {
     [PostgresFact]
-    public async Task ApproveTask_WithRedisEnqueueFailure_RecordsApprovalInPostgres()
+    public async Task ApprovalOutbox_RetainsTaskAfterRedisFailure_AndRecoveryEnqueuesIt()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
-            var bootstrap = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var actorId = Guid.NewGuid().ToString();
-            var sessions = LocalOperatorSessions.Create(bootstrap, actorId);
-            Assert.NotNull(sessions);
-            var sessionToken = sessions.IssueSessionToken(bootstrap);
-
             await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
                 new { Status = TaskStatuses.Draft, Id = id });
 
-            // Approve task (PostgreSQL transition succeeds)
+            var transition = await TaskTransitionStore.ApplyAsync(
+                cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
+            Assert.Equal(TransitionOutcome.Accepted, transition.Outcome);
+
+            var queue = new MemoryTaskQueuePublisher(failuresRemaining: 1);
+            var failedAttempt = await TaskEnqueueOutbox.TryEnqueueAsync(cs, id, queue);
+            Assert.Equal(EnqueueAttemptOutcome.RedisUnavailable, failedAttempt);
+            Assert.Equal(TaskStatuses.Approved,
+                await db.QuerySingleAsync<string>("select status from tasks where id = @id", new { id }));
+
+            var pending = await db.QuerySingleAsync<OutboxState>(@"
+                select attempt_count as AttemptCount, last_enqueued_at_utc as LastEnqueuedAtUtc,
+                       claimed_at_utc as ClaimedAtUtc
+                from task_enqueue_outbox where task_id = @id;", new { id });
+            Assert.Equal(1, pending.AttemptCount);
+            Assert.Null(pending.LastEnqueuedAtUtc);
+            Assert.Null(pending.ClaimedAtUtc);
+
+            var recoveredAttempt = await TaskEnqueueOutbox.TryEnqueueAsync(cs, id, queue);
+            Assert.Equal(EnqueueAttemptOutcome.Enqueued, recoveredAttempt);
+            Assert.True(queue.Contains(id));
+
+            var delivered = await db.QuerySingleAsync<OutboxState>(@"
+                select attempt_count as AttemptCount, last_enqueued_at_utc as LastEnqueuedAtUtc,
+                       claimed_at_utc as ClaimedAtUtc
+                from task_enqueue_outbox where task_id = @id;", new { id });
+            Assert.Equal(2, delivered.AttemptCount);
+            Assert.NotNull(delivered.LastEnqueuedAtUtc);
+            Assert.Null(delivered.ClaimedAtUtc);
+        });
+    }
+
+    [PostgresFact]
+    public async Task ConcurrentRecoveryAndExecutionClaims_DoNotDuplicateQueueEntryOrExecution()
+    {
+        await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
+        {
+            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
+                new { Status = TaskStatuses.Draft, Id = id });
+            var approval = await TaskTransitionStore.ApplyAsync(
+                cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
+            Assert.Equal(TransitionOutcome.Accepted, approval.Outcome);
+
+            var queue = new MemoryTaskQueuePublisher();
+            var enqueueAttempts = await Task.WhenAll(
+                TaskEnqueueOutbox.TryEnqueueAsync(cs, id, queue),
+                TaskEnqueueOutbox.TryEnqueueAsync(cs, id, queue));
+            Assert.Single(enqueueAttempts, result => result == EnqueueAttemptOutcome.Enqueued);
+            Assert.Single(enqueueAttempts, result => result == EnqueueAttemptOutcome.AlreadyQueued);
+            Assert.Equal(1, queue.Count);
+
+            var claims = await Task.WhenAll(
+                ExecutionOwnershipStore.ClaimAsync(cs, id,
+                    new ClaimExecutionRequest(Guid.NewGuid(), Guid.NewGuid())),
+                ExecutionOwnershipStore.ClaimAsync(cs, id,
+                    new ClaimExecutionRequest(Guid.NewGuid(), Guid.NewGuid())));
+            Assert.Single(claims, claim => claim.Outcome == TransitionOutcome.Accepted);
+            Assert.Single(claims, claim => claim.Outcome == TransitionOutcome.Conflict);
+
+            var outbox = await db.QuerySingleAsync<OutboxState>(@"
+                select attempt_count as AttemptCount, last_enqueued_at_utc as LastEnqueuedAtUtc,
+                       claimed_at_utc as ClaimedAtUtc
+                from task_enqueue_outbox where task_id = @id;", new { id });
+            Assert.NotNull(outbox.ClaimedAtUtc);
+            Assert.Equal(1, await db.QuerySingleAsync<int>(
+                "select count(*) from task_executions where task_id = @id", new { id }));
+        });
+    }
+
+    [PostgresFact]
+    public async Task ApprovalAuditRecordsExpectedTransition()
+    {
+        await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
+        {
+            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
+                new { Status = TaskStatuses.Draft, Id = id });
+
             var transition = await TaskTransitionStore.ApplyAsync(
                 cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
 
             Assert.Equal(TransitionOutcome.Accepted, transition.Outcome);
-
-            // Verify task is Approved in PostgreSQL
-            var status = await db.QuerySingleAsync<string>(
-                "select status from tasks where id = @id", new { id });
-            Assert.Equal(TaskStatuses.Approved, status);
-
-            // Verify audit trail records approval
             var audit = await db.QuerySingleAsync<string>(
                 "select from_status || '>' || to_status from task_status_transitions where source = 'ApproveTask' and task_id = @id",
                 new { id });
@@ -44,74 +107,31 @@ public class RedisEnqueueRecoveryTests
         });
     }
 
-    [PostgresFact]
-    public async Task ApprovalRecoveryWorkflow_DraftToApprovedIdempotent_WithConcurrentAttempts()
-    {
-        await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
-        {
-            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
-                new { Status = TaskStatuses.Draft, Id = id });
+    private sealed record OutboxState(int AttemptCount, DateTime? LastEnqueuedAtUtc, DateTime? ClaimedAtUtc);
 
-            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            async Task<TransitionResult> Approve()
+    private sealed class MemoryTaskQueuePublisher(int failuresRemaining = 0) : ITaskQueuePublisher
+    {
+        private readonly ConcurrentDictionary<Guid, byte> _queued = new();
+        private int _failuresRemaining = failuresRemaining;
+
+        internal int Count => _queued.Count;
+
+        internal bool Contains(Guid taskId) => _queued.ContainsKey(taskId);
+
+        public Task<QueuePublishOutcome> EnqueueIfAbsentAsync(Guid taskId)
+        {
+            while (true)
             {
-                await start.Task;
-                return await TaskTransitionStore.ApplyAsync(
-                    cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
+                var remaining = Volatile.Read(ref _failuresRemaining);
+                if (remaining == 0)
+                    break;
+                if (Interlocked.CompareExchange(ref _failuresRemaining, remaining - 1, remaining) == remaining)
+                    return Task.FromResult(QueuePublishOutcome.Unavailable);
             }
-            var first = Approve();
-            var second = Approve();
-            start.SetResult();
-            var approvals = await Task.WhenAll(first, second);
-            Assert.Single(approvals, result => result.Outcome == TransitionOutcome.Accepted);
-            Assert.Single(approvals, result => result.Outcome == TransitionOutcome.Conflict);
 
-            // Step 2: Verify PostgreSQL state after approval
-            var status = await db.QuerySingleAsync<string>(
-                "select status from tasks where id = @id", new { id });
-            Assert.Equal(TaskStatuses.Approved, status);
-
-            // Replaying the approval after both contenders finish must also be rejected.
-            var secondApprove = await TaskTransitionStore.ApplyAsync(
-                cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
-            Assert.Equal(TransitionOutcome.Conflict, secondApprove.Outcome);
-
-            // Step 4: Verify audit shows single approval (no duplicates in audit trail)
-            var auditCount = await db.QuerySingleAsync<int>(
-                "select count(*) as cnt from task_status_transitions where source = 'ApproveTask' and task_id = @id",
-                new { id });
-            Assert.Equal(1, auditCount);
-        });
-    }
-
-    [PostgresFact]
-    public async Task ApprovalRecoveryWorkflow_PreservesOperatorAuthorization()
-    {
-        await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
-        {
-            var bootstrap = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var operatorId = Guid.NewGuid().ToString();
-            var sessions = LocalOperatorSessions.Create(bootstrap, operatorId);
-            Assert.NotNull(sessions);
-            var sessionToken = sessions.IssueSessionToken(bootstrap);
-
-            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
-                new { Status = TaskStatuses.Draft, Id = id });
-
-            // Approve with authorization
-            var transition = await TaskTransitionStore.ApplyAsync(
-                cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
-
-            Assert.Equal(TransitionOutcome.Accepted, transition.Outcome);
-
-            // Verify operator identity is preserved in audit
-            var auditRecord = await db.QuerySingleOrDefaultAsync<(string? source, Guid? executionId)>(
-                "select source, execution_id from task_status_transitions where task_id = @id order by changed_at_utc desc limit 1",
-                new { id });
-            
-            Assert.Equal("ApproveTask", auditRecord.source);
-            // executionId is null for approval (no execution context yet)
-            Assert.Null(auditRecord.executionId);
-        });
+            return Task.FromResult(_queued.TryAdd(taskId, 0)
+                ? QueuePublishOutcome.Enqueued
+                : QueuePublishOutcome.AlreadyQueued);
+        }
     }
 }

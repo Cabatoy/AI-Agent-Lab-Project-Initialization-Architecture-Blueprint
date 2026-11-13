@@ -102,5 +102,5 @@ public class PostgresFixtureSafetyTests
 
     private static FixtureIdentity ValidFixture() =>
         new("hic_r1_" + new string('a', 32), PostgresFixtureSafety.Role,
-            "HIC:R1:fixture:" + new string('b', 32), 1, 2, 3, 4, 5);
+            "HIC:R1:fixture:" + new string('b', 32), 1, 2, 3, 4, 5, 6);
 }

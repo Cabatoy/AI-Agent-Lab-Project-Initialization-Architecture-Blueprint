@@ -352,7 +352,8 @@ if ($managedSource.IndexOf('run --rm schema-init', $cpLast) -ne -1) {
 $sql = Get-Content -Raw (Join-Path (Join-Path $PSScriptRoot '..') 'deploy/hic-managed/migrations/000-bootstrap-v2.sql')
 if ($sql -notmatch 'RAISE EXCEPTION' -or
     $sql -notmatch 'schema is not empty' -or
-    $sql -notmatch '002-execution-ownership\.sql') {
-    throw 'Fresh database SQL must refuse a nonempty schema and reuse the canonical v2 migration.'
+    $sql -notmatch '002-execution-ownership\.sql' -or
+    $sql -notmatch '005-task-enqueue-outbox\.sql') {
+    throw 'Fresh database SQL must refuse a nonempty schema and reuse the canonical v2 and v5 migrations.'
 }
 Write-Host 'HIC greenfield-only schema bootstrap ordering/guard: PASS'
