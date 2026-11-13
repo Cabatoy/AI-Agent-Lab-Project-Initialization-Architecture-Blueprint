@@ -6,7 +6,7 @@ import { UNSENT_DRAFT_KEY } from './unsentDraft';
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn(), inspectNativeWorkspace: vi.fn() } };
+  return { ...actual, api: { health: vi.fn(), tasks: vi.fn(), task: vi.fn(), plans: vi.fn(), createTask: vi.fn(), localDiagnostics: vi.fn(), inspectNativeWorkspace: vi.fn(), approveTask: vi.fn(), createLocalRunnerSession: vi.fn(), localRunnerCapabilities: vi.fn() } };
 });
 const item = {
   id: '01234567-89ab-cdef-0123-456789abcdef', title: 'Actual task', description: 'Actual description',
@@ -92,6 +92,131 @@ describe('dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
     expect((await screen.findAllByText('Unavailable')).length).toBeGreaterThan(0);
     expect(screen.queryByText('Not yet available')).not.toBeInTheDocument();
+  });
+});
+
+describe('operator task approval', () => {
+  const draft = { ...item, status: 'Draft', attemptCount: 0, result: null };
+  const token = 'S'.repeat(44);
+  const capability = { actorId: item.id, action: 'system.health' as const,
+    scope: 'control-plane:health:read' as const, worker: 'not-used' as const, provider: 'not-used' as const };
+
+  async function authenticate() {
+    fireEvent.click(screen.getByRole('button', { name: 'Local Runner' }));
+    fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), { target: { value: 'R'.repeat(44) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Authenticate local operator' }));
+    await screen.findByText('Authenticated local actor');
+  }
+  async function openDetail() {
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    fireEvent.click(await screen.findByRole('button', { name: draft.title }));
+    await screen.findByText(draft.description);
+  }
+  beforeEach(() => {
+    vi.mocked(api.tasks).mockResolvedValue([draft]);
+    vi.mocked(api.task).mockResolvedValue(draft);
+    vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: token, expiresInSeconds: 900 });
+    vi.mocked(api.localRunnerCapabilities).mockResolvedValue(capability);
+  });
+
+  it('only exposes approval for a Draft with a live operator session', async () => {
+    render(<App />);
+    await screen.findByText('Connected');
+    await openDetail();
+    expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument();
+    await authenticate();
+    await openDetail();
+    expect(screen.getByRole('button', { name: 'Approve & run' })).toBeEnabled();
+    vi.mocked(api.task).mockResolvedValue({ ...draft, status: 'Completed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail' }));
+    await openDetail();
+    expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument();
+    expect(api.approveTask).not.toHaveBeenCalled();
+  });
+
+  it('submits once on repeated clicks and refreshes the approved task', async () => {
+    let resolve!: (value: { id: string; status: 'Approved'; queued: true }) => void;
+    vi.mocked(api.approveTask).mockReturnValue(new Promise(res => { resolve = res; }));
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    const button = screen.getByRole('button', { name: 'Approve & run' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(api.approveTask).toHaveBeenCalledTimes(1);
+    expect(api.approveTask).toHaveBeenCalledWith(draft.id, token);
+    expect(screen.getByRole('button', { name: 'Approving…' })).toBeDisabled();
+    vi.mocked(api.task).mockResolvedValue({ ...draft, status: 'Approved' });
+    await act(async () => resolve({ id: draft.id, status: 'Approved', queued: true }));
+    expect(await screen.findByText('Approval was saved and the task was queued.')).toBeInTheDocument();
+    expect(api.task).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument();
+  });
+
+  it('keeps pending recovery visible and does not approve again even if refresh fails', async () => {
+    vi.mocked(api.approveTask).mockResolvedValue({ id: draft.id, status: 'Approved', queued: false, pendingRecovery: true });
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    vi.mocked(api.task).mockRejectedValueOnce(new Error('offline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & run' }));
+    expect(await screen.findByText(/queue delivery is pending recovery/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Task refresh failed: offline');
+    expect(screen.getByRole('button', { name: 'Approve & run' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail' }));
+    await openDetail();
+    expect(screen.getByRole('button', { name: 'Approve & run' })).toBeDisabled();
+    expect(api.approveTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the task after a pending-recovery response without another approval', async () => {
+    vi.mocked(api.approveTask).mockResolvedValue({ id: draft.id, status: 'Approved', queued: false, pendingRecovery: true });
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    vi.mocked(api.task).mockResolvedValue({ ...draft, status: 'Approved' });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & run' }));
+    expect(await screen.findByText(/queue delivery is pending recovery/)).toBeInTheDocument();
+    await waitFor(() => expect(api.task).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument();
+    expect(api.approveTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes approval when the shared session expires', async () => {
+    vi.mocked(api.createLocalRunnerSession).mockResolvedValue({ accessToken: token, expiresInSeconds: 1 });
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    expect(screen.getByRole('button', { name: 'Approve & run' })).toBeEnabled();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument(), { timeout: 2500 });
+    expect(api.approveTask).not.toHaveBeenCalled();
+  });
+
+  it('shows API errors and locks ambiguous outcomes without retrying', async () => {
+    vi.mocked(api.approveTask).mockRejectedValue(new ApiError('http', 'Task approval returned HTTP 503. Approval may have been saved.', 503, true));
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & run' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 503');
+    expect(screen.getByRole('button', { name: 'Approve & run' })).toBeDisabled();
+    expect(api.approveTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes an invalid session after a 401 response', async () => {
+    vi.mocked(api.approveTask).mockRejectedValue(new ApiError('http', 'Task approval returned HTTP 401.', 401));
+    render(<App />);
+    await screen.findByText('Connected');
+    await authenticate();
+    await openDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & run' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 401');
+    expect(screen.queryByRole('button', { name: 'Approve & run' })).not.toBeInTheDocument();
   });
 });
 

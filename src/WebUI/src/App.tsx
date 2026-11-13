@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api, type Health, type Plan, type Task } from './api';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { api, ApiError, type Health, type OperatorSession, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
@@ -50,10 +50,16 @@ function TaskTable({ tasks, onSelect }: { tasks: Task[], onSelect: (id: string) 
   </table></div>;
 }
 
-function Detail({ id, onClose }: { id: string, onClose: () => void }) {
+function Detail({ id, onClose, session, clearSession, approvalLocks, onTaskUpdated }: {
+  id: string; onClose: () => void; session: OperatorSession | null; clearSession: () => void;
+  approvalLocks: MutableRefObject<Set<string>>; onTaskUpdated: (task: Task) => void;
+}) {
   const [detail, setDetail] = useState<Resource<Task>>(initial);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
+  const [approving, setApproving] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -65,6 +71,34 @@ function Detail({ id, onClose }: { id: string, onClose: () => void }) {
     return () => { active = false; };
   }, [id, retry]);
   const task = detail.data;
+  async function approve() {
+    if (!session || session.expiresAt <= Date.now() || task?.status !== 'Draft' || approvalLocks.current.has(id)) return;
+    approvalLocks.current.add(id);
+    setApproving(true);
+    setApprovalError(null);
+    setApprovalNotice(null);
+    try {
+      const result = await api.approveTask(id, session.accessToken);
+      setApprovalNotice(result.queued
+        ? 'Approval was saved and the task was queued.'
+        : 'Approval was saved; queue delivery is pending recovery. Do not approve this task again.');
+      try {
+        const updated = await api.task(id);
+        setDetail({ data: updated, error: null });
+        onTaskUpdated(updated);
+      } catch (reason) {
+        setApprovalError(`Task refresh failed: ${message(reason)} Do not approve again.`);
+      }
+    } catch (reason) {
+      const failure = reason instanceof ApiError ? reason : new ApiError('network',
+        'Approval may have been saved. Check the task status; do not approve it again.', undefined, true);
+      if (!failure.outcomeUnknown) approvalLocks.current.delete(id);
+      if (failure.status === 401) clearSession();
+      setApprovalError(failure.message);
+    } finally {
+      setApproving(false);
+    }
+  }
   return <section className="panel detail" aria-labelledby="detail-title">
     <div className="panel-heading"><div><p className="eyebrow">TASK DETAIL</p><h2 id="detail-title">{task?.title ?? 'Task detail'}</h2></div>
       <button className="secondary" onClick={onClose}>Close detail</button></div>
@@ -79,6 +113,16 @@ function Detail({ id, onClose }: { id: string, onClose: () => void }) {
     <div className="detail-block"><span className="label">Description</span><p>{task.description || 'No description provided.'}</p></div>
     <div className="detail-block"><span className="label">Result</span><p className="preserve">{task.result ?? 'Not available.'}</p></div>
     <div className="detail-block"><span className="label">Error message</span><p className="preserve">{task.errorMessage ?? 'Not available.'}</p></div>
+    {task.status === 'Draft' && session && session.expiresAt > Date.now() && <p className="muted small">
+      Approval queues this task for the Agent Worker and may trigger model execution.
+    </p>}
+    {task.status === 'Draft' && session && session.expiresAt > Date.now() &&
+      <button className="primary" type="button" disabled={approving || approvalLocks.current.has(id)} onClick={() => void approve()}>
+        {approving ? 'Approving…' : 'Approve & run'}
+      </button>}
+    {approving && <p className="notice" role="status">Recording approval…</p>}
+    {approvalNotice && <p className="notice" role="status">{approvalNotice}</p>}
+    {approvalError && <p className="notice error" role="alert">{approvalError}</p>}
     <p className="muted small">Execution history and audit events are not exposed by this API.</p></>}
   </section>;
 }
@@ -103,6 +147,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(null);
+  const approvalLocks = useRef(new Set<string>());
+  useEffect(() => {
+    if (!operatorSession) return;
+    const remaining = operatorSession.expiresAt - Date.now();
+    const timer = setTimeout(() => setOperatorSession(null), Math.max(0, Math.min(remaining, 2147483647)));
+    return () => clearTimeout(timer);
+  }, [operatorSession]);
   const refresh = useCallback(async () => {
     setLoading(true);
     const [h, t, p] = await Promise.allSettled([api.health(), api.tasks(), api.plans()]);
@@ -132,7 +184,7 @@ export default function App() {
     </aside>
     <main id="main" className="main" tabIndex={-1}>
       <header className="topbar"><div><span className="breadcrumb">HIC / WORKSPACE /</span> <span>{page.toUpperCase()}</span></div>
-        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : page === 'Local Runner' ? 'HUMAN-APPROVED LOCAL RUN' : 'READ ONLY'}</span>
+        <div className="top-actions"><span className="read-only"><span>●</span> {page === 'Command Center' ? 'DRAFT CREATION ONLY' : page === 'Local Runner' ? 'HUMAN-APPROVED LOCAL RUN' : page === 'Tasks' ? 'OPERATOR APPROVAL AVAILABLE' : 'READ ONLY'}</span>
           {page !== 'Command Center' && <button className="secondary" onClick={() => navigate('Command Center')}>＋ New task</button>}
           <button className="refresh" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : '↻  Refresh'}</button></div></header>
       <div className="content"><div className="page-heading"><div><p className="eyebrow">HUMAN IN CONTROL</p>
@@ -140,7 +192,7 @@ export default function App() {
         <div className="last-refresh"><span>LAST SUCCESSFUL REFRESH</span><strong>{lastRefresh ? displayDate(lastRefresh.toISOString()) : 'Not yet available'}</strong></div></div>
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
-      {page === 'Local Runner' && <LocalRunnerWorkflow />}
+      {page === 'Local Runner' && <LocalRunnerWorkflow session={operatorSession} onSessionChange={setOperatorSession} />}
       {page === 'Planning' && <PlanningWorkflow />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
@@ -157,15 +209,17 @@ export default function App() {
             : !Object.keys(counts).length ? <div className="notice">No task statuses to display.</div>
               : <div className="status-list">{Object.entries(counts).map(([status, count]) => <div key={status}><Status value={status} /><strong>{count}</strong></div>)}</div>}</section>
           <section className="panel"><p className="eyebrow">SYSTEM BOUNDARY</p><h2>Operational state</h2>
-            <p className="muted">This dashboard reads existing Control Plane data and can create Draft tasks from the Command Center. Outside the fixed Local Runner health action, it cannot approve, dispatch or execute tasks.</p>
+            <p className="muted">This dashboard can create Draft tasks and, with an authenticated operator session, explicitly approve a Draft task for the Worker queue.</p>
             <div className="boundary"><span>API health</span><strong>{health.error ? 'Unavailable' : health.data ? (connected ? 'Responding' : 'Unexpected response') : 'Checking'}</strong></div>
             <div className="boundary"><span>Task creation</span><strong>Draft only</strong></div>
             <div className="boundary"><span>Recovery (R3 / R4)</span><strong>Pending</strong></div>
-            <div className="boundary"><span>General task approval</span><strong>Not implemented</strong></div></section></div>
+            <div className="boundary"><span>General task approval</span><strong>Operator session required</strong></div></section></div>
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">LATEST ACTIVITY</p><h2>Recent tasks</h2></div><button className="text-button" onClick={() => setPage('Tasks')}>View all →</button></div>
           <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>
       </>}
-      {page === 'Tasks' && <>{selected && <Detail id={selected} onClose={() => setSelected(null)} />}<section className="panel">
+      {page === 'Tasks' && <>{selected && <Detail key={selected} id={selected} onClose={() => setSelected(null)}
+        session={operatorSession} clearSession={() => setOperatorSession(null)} approvalLocks={approvalLocks}
+        onTaskUpdated={updated => setTasks(current => ({ ...current, data: current.data?.map(item => item.id === updated.id ? updated : item) ?? null }))} />}<section className="panel">
         <div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>All tasks</h2></div><span className="outline-badge">{tasks.data ? `${tasks.data.length} TASKS` : 'UNAVAILABLE'}</span></div>
         <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data} onSelect={selectTask} />}</State></section></>}
       {page === 'Plans' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Execution plans</h2></div><span className="outline-badge">READ ONLY</span></div>

@@ -7,14 +7,16 @@ Bu yerel HIC ekranı, mevcut Control Plane'in task ve plan bilgilerini gösterir
 durumunda task oluşturulur. **Local Runner**, yapılandırılmış yerel operatör
 oturumu ve manuel schema v4 kurulumu mevcutsa, Draft task için yalnızca sabit
 `system.health` eylemini gösterir, açık onay alır ve güvenli sonucu aynı ekranda
-gösterir. Task Worker kuyruğuna girmez; Worker, model, shell veya repository
+gösterir. Bu Local Runner akışında task Worker kuyruğuna girmez; Worker, model, shell veya repository
 değişikliği kullanılmaz. Control Plane tek task ve run otoritesidir; bu UI
 ayrı bir task deposu ya da scheduler eklemez. Bu dar akış tam P9 approval
 workflow veya production readiness değildir. **Planning** ekranı Native Host'un tek yapılandırılmış
 workspace'ini salt okunur kontrol eder ve yalnız tarayıcı belleğinde sürümlü plan
 önizlemesi üretir; bu plan Control Plane'e yazılmaz ve çalıştırılamaz. Genel
-plan için kimliği doğrulanmış onay ve kalıcı audit uygulanmamıştır; yalnız
-sabit `system.health` için dar local runner otoritesi vardır. R3/R4 recovery ve
+plan için kimliği doğrulanmış onay uygulanmamıştır. Task detayında, aynı kısa
+ömürlü operator session ile Draft task için ayrı, açık `Approve & run` onayı
+verilebilir; bu işlem Agent Worker kuyruğunu ve model çalışmasını tetikleyebilir.
+R3/R4 recovery ve
 tam P9 approval workflow hâlâ açıktır.
 
 ## Teknik ek
@@ -60,8 +62,9 @@ erişimi ayrıca mevcut değilse altyapıyı değiştirmeden API erişimi kullan
 Geliştirme proxy'si yalnız şu GET isteklerini iletir: `/health`, `/tasks`,
 `/tasks/{guid}` ve `/plans`. `POST /api/tasks` yalnız Draft oluşturur. Local
 Runner için yalnız session açma, capability/intent/run okuma, exact intent
-onayı ve allowlist edilmiş run başlatma yolları eklenmiştir. Diğer yöntemler,
-yollar (ör. Worker `/approve` ve `/retry`) ve query string'ler reddedilir;
+onayı ve allowlist edilmiş run başlatma yolları eklenmiştir. Ek olarak
+`POST /api/tasks/{guid}/approve` yalnız operator session ile iletilir. Diğer
+yöntemler, yollar (ör. `/retry`) ve query string'ler reddedilir;
 cookie ve istenmeyen istemci başlıkları upstream'e aktarılmaz. Tüm `/api`
 isteklerinde `Host` başlığı `127.0.0.1:<port>` olmalıdır (DNS rebinding
 koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
@@ -79,12 +82,21 @@ koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
 - Ret yanıtları `text/plain` ve `X-HIC-Proxy-Error: rejected` başlığıyla döner;
   kullanıcı girdisi yanıtta tekrarlanmaz.
 
+Task onayı aynı origin ve site kontrollerine, `X-HIC-Request: task-approval`
+başlığına ve Bearer session token'a tabidir. İstek gövdesi kabul edilmez;
+yalnız yetkilendirme başlığı upstream'e aktarılır. `202 pendingRecovery`,
+onayın kaydedildiğini fakat kuyruk tesliminin beklediğini gösterir; yeniden
+onay gönderilmez. Bağlantı kesilmesi, 5xx veya geçersiz yanıt gibi belirsiz
+sonuçlarda UI aynı sayfa oturumu boyunca ikinci onayı engeller; task durumu
+Control Plane'den kontrol edilmelidir. Yenileme başarısız olsa bile doğrulanmış
+onay tekrarlanmaz.
+
 Upstream ve gövde okuma zaman aşımı 8 saniyedir; bağlantı kurulamazsa 502
 (`unreachable`), bağlantı yarıda kesilirse 502 (`interrupted`), zaman aşımında
 504 döner. Bu proxy genel bir authentication veya authorization mekanizması
 değildir; Control Plane'i doğrudan erişime karşı korumaz. Genel Control Plane
-API'si kimlik doğrulamasızdır; API ve UI loopback dışına açılmamalıdır. Local
-Runner'a özel API ayrıca `HIC_LOCAL_OPERATOR_TOKEN` ile açılan 15 dakikalık
+API'sinin diğer yolları kimlik doğrulamasız olabilir; API ve UI loopback dışına açılmamalıdır. Local
+Runner ve task onayı `HIC_LOCAL_OPERATOR_TOKEN` ile açılan 15 dakikalık
 operator session'ı ister ve actor kimliğini `HIC_LOCAL_OPERATOR_ID` üzerinden
 bağlar. Bootstrap token yalnız yerel proxy üzerinden gönderilir, browser
 storage'a veya task/audit kayıtlarına yazılmaz. Session token yalnız sayfa
@@ -163,13 +175,16 @@ Testler sentetik yanıtlarla ve sahte upstream sunucusuyla çalışır; gerçek 
   üç isteğin tümünün son başarılı refresh zamanı. Health yalnız API'nin health
   yanıtıdır, PostgreSQL/Redis/Worker sağlık garantisi değildir.
 - **Tasks:** `/tasks` ve `/tasks/{id}`; mevcut durum, deneme sayısı, sonuç ve
-  hata alanları. Audit/execution geçmişi bu read API'de mevcut değildir.
+  hata alanları. Geçerli Local Runner operator session'ı olan kullanıcı Draft
+  detayında Worker kuyruğu için açık onay verebilir. Onay sonrası task yeniden
+  okunur; `202` kuyruk teslimi bekliyor demektir. Audit/execution geçmişi bu
+  read API'de mevcut değildir.
 - **Plans:** `/plans`; gerçek plan alanları. Plan–task ilişkileri ve dependency
   graph API tarafından sunulmaz.
 - **Agents**, **Models & Providers**, **Approvals:** yalnız gelecek yetenekleri
   açıklayan placeholder ekranlar; onay/ret düğmesi veya model çağrısı yoktur.
-- Local Runner'daki sabit, insan-onaylı `system.health` run'ı dışında task
-  mutasyonu (Worker approve, retry, dispatch), LLM çağrısı, GitHub yazma
+- Task detayındaki açık Worker onayı ve Local Runner'daki sabit, insan-onaylı
+  `system.health` run'ı dışında task mutasyonu (retry dahil), LLM çağrısı, GitHub yazma
   işlemi, secret/token/maliyet ölçümü, repository editing, genel komut
   execution veya deployment yapılmaz.
 

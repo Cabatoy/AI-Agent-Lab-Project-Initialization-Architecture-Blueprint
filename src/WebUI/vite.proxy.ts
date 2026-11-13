@@ -4,6 +4,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
+const taskApprovalPath = /^\/api\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/approve$/i;
 const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
@@ -143,6 +144,25 @@ function validRunnerAuthorization(value: string | undefined): value is string {
   return value !== undefined && /^Bearer [A-Za-z0-9+/_=-]{40,128}$/.test(value);
 }
 
+async function approveTask(
+  req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string,
+  path: string, timeouts: Required<ProxyOptions>,
+) {
+  const site = header(req, 'sec-fetch-site');
+  if (header(req, 'origin') !== origin || (site !== undefined && site !== 'same-origin') ||
+      header(req, 'x-hic-request') !== 'task-approval' ||
+      header(req, 'proxy-authorization') !== undefined ||
+      !validRunnerAuthorization(header(req, 'authorization')))
+    return reject(res, 403, 'Task approval request was rejected.', true);
+  if ((Number(header(req, 'content-length') ?? '0') || 0) > 0 ||
+      header(req, 'transfer-encoding') !== undefined || header(req, 'content-type') !== undefined)
+    return reject(res, 400, 'Task approval does not accept a body.', true);
+  const received = await readBody(req, timeouts.bodyTimeoutMs);
+  if (!received.ok || received.body.length !== 0)
+    return reject(res, 400, 'Task approval does not accept a body.', true);
+  forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs, undefined, header(req, 'authorization'));
+}
+
 async function localRunnerRequest(
   req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string,
   path: string, timeouts: Required<ProxyOptions>,
@@ -242,6 +262,10 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
         }
         if (localRunnerPath.test(path)) {
           void localRunnerRequest(req, res, target, origin, path, timeouts);
+          return;
+        }
+        if (req.method === 'POST' && taskApprovalPath.test(path)) {
+          void approveTask(req, res, target, origin, path, timeouts);
           return;
         }
         if (req.method === 'POST' && path === createPath) {

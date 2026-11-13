@@ -30,6 +30,13 @@ export interface LocalRunnerCapability {
   worker: 'not-used';
   provider: 'not-used';
 }
+export interface OperatorSession {
+  accessToken: string;
+  expiresAt: number;
+  capability: LocalRunnerCapability;
+}
+export type TaskApproval = { id: string; status: 'Approved'; queued: true } |
+  { id: string; status: 'Approved'; queued: false; pendingRecovery: true };
 export interface LocalHealthIntent {
   taskId: string;
   taskTitle: string;
@@ -306,6 +313,41 @@ async function createLocalRunnerSession(bootstrapToken: string): Promise<LocalRu
   }
 }
 
+async function approveTask(id: string, token: string): Promise<TaskApproval> {
+  if (!guid(id) || !/^[A-Za-z0-9+/_=-]{40,128}$/.test(token))
+    throw new ApiError('invalid', 'Invalid task identifier or operator session.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  const unknown = 'Approval may have been saved. Check the task status; do not approve it again.';
+  try {
+    let response: Response;
+    try {
+      response = await fetch(`/api/tasks/${id}/approve`, {
+        method: 'POST', signal: controller.signal, cache: 'no-store', credentials: 'omit',
+        headers: { Accept: 'application/json', 'X-HIC-Request': 'task-approval', Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network', unknown, undefined, true);
+    }
+    if (response.status !== 200 && response.status !== 202) {
+      const proxyError = response.headers.get('X-HIC-Proxy-Error');
+      const uncertain = proxyError !== 'rejected' && proxyError !== 'unreachable' && response.status >= 500;
+      const detail = await serverMessage(response);
+      throw new ApiError('http', `Task approval returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}${uncertain ? ` ${unknown}` : ''}`,
+        response.status, uncertain);
+    }
+    let data: unknown;
+    try { data = await response.json(); }
+    catch { throw new ApiError('invalid', `Invalid approval response. ${unknown}`, response.status, true); }
+    if (!object(data) || data.id !== id || data.status !== 'Approved' ||
+        (response.status === 200 ? data.queued !== true : data.queued !== false || data.pendingRecovery !== true))
+      throw new ApiError('invalid', `Unexpected approval response. ${unknown}`, response.status, true);
+    return response.status === 200
+      ? { id, status: 'Approved', queued: true }
+      : { id, status: 'Approved', queued: false, pendingRecovery: true };
+  } finally { clearTimeout(timer); }
+}
+
 async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspaceInspection> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -331,6 +373,7 @@ async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspace
 
 export const api = {
   inspectNativeWorkspace,
+  approveTask,
   createLocalRunnerSession,
   localRunnerCapabilities: (token: string) =>
     localRunnerRequest('/capabilities', localRunnerCapability, token, 'GET'),

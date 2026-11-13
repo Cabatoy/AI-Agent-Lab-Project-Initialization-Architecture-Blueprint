@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { api, type LocalHealthIntent, type LocalHealthRunSnapshot, type LocalRunnerCapability, type Task } from './api';
+import { api, type LocalHealthIntent, type LocalHealthRunSnapshot, type OperatorSession, type Task } from './api';
 
 const delay = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'Unexpected local runner error.';
 
-export function LocalRunnerWorkflow() {
+export function LocalRunnerWorkflow({ session, onSessionChange }: {
+  session: OperatorSession | null; onSessionChange: (session: OperatorSession | null) => void;
+}) {
   const [bootstrapToken, setBootstrapToken] = useState('');
-  const [sessionToken, setSessionToken] = useState('');
-  const [capability, setCapability] = useState<LocalRunnerCapability | null>(null);
+  const sessionToken = session?.accessToken ?? '';
+  const capability = session?.capability ?? null;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskId, setTaskId] = useState('');
   const [intent, setIntent] = useState<LocalHealthIntent | null>(null);
@@ -25,10 +27,12 @@ export function LocalRunnerWorkflow() {
     setError(null);
     setNotice(null);
     try {
-      const session = await api.createLocalRunnerSession(bootstrapToken);
-      const registered = await api.localRunnerCapabilities(session.accessToken);
-      setSessionToken(session.accessToken);
-      setCapability(registered);
+      const startedAt = Date.now();
+      const issued = await api.createLocalRunnerSession(bootstrapToken);
+      const registered = await api.localRunnerCapabilities(issued.accessToken);
+      const expiresAt = startedAt + issued.expiresInSeconds * 1000;
+      if (expiresAt <= Date.now()) throw new Error('The local operator session expired during authentication.');
+      onSessionChange({ accessToken: issued.accessToken, expiresAt, capability: registered });
       setBootstrapToken('');
       setTaskId('');
       setIntent(null);
@@ -150,8 +154,7 @@ export function LocalRunnerWorkflow() {
           <span className="label">Authenticated local actor</span>
           <p>{capability?.actorId ?? 'Loading…'} · session expires after 15 minutes</p>
           <button className="text-button" type="button" onClick={() => {
-            setSessionToken('');
-            setCapability(null);
+            onSessionChange(null);
             setTasks([]);
             setTaskId('');
             setIntent(null);

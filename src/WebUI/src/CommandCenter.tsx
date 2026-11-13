@@ -153,7 +153,7 @@ export function CommandCenter({ hidden, onCreated, onViewTask, onCheckTasks }: P
         <div><span className="label">Status</span>{created.status}</div>
         <div><span className="label">Attempts</span>{created.attemptCount}</div>
       </div>
-      <p className="muted small">No approval, dispatch or agent execution was triggered. The task stays in Draft until a separate, explicit approval step exists.</p>
+      <p className="muted small">No approval, dispatch or agent execution was triggered. A separate, explicit operator approval is required.</p>
       <div className="form-actions">
         <button type="button" className="primary" onClick={() => onViewTask(created.id)}>View task</button>
         <button type="button" className="secondary" onClick={() => { setCreated(null); requestRef.current?.focus(); }}>Dismiss</button>
