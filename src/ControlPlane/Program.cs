@@ -138,8 +138,19 @@ app.MapGet("/tasks/{id:guid}", async (Guid id) =>
     .Produces<AgentTask>(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status404NotFound);
 
-app.MapPost("/tasks/{id:guid}/approve", async (Guid id, CancellationToken cancellationToken) =>
+app.MapPost("/tasks/{id:guid}/approve", async (Guid id, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
+    if (localOperatorSessions is null)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var actorId = localOperatorSessions.Authenticate(httpContext.Request.Headers.Authorization);
+    if (actorId is null)
+    {
+        return Results.StatusCode(StatusCodes.Status401Unauthorized);
+    }
+
     var transition = await TaskTransitionStore.ApplyAsync(
         postgresConnectionString, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: cancellationToken);
     if (transition.Outcome != TransitionOutcome.Accepted)
@@ -151,11 +162,13 @@ app.MapPost("/tasks/{id:guid}/approve", async (Guid id, CancellationToken cancel
 })
     .WithName("ApproveTask")
     .WithSummary("Approve a task")
-    .WithDescription("Approves a Draft task and places it on the worker queue.")
+    .WithDescription("Approves a Draft task and places it on the worker queue. Requires Bearer token authorization.")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status400BadRequest)
     .Produces(StatusCodes.Status409Conflict)
-    .Produces(StatusCodes.Status404NotFound);
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status503ServiceUnavailable);
 
 app.MapPost("/tasks/{id:guid}/retry", async (Guid id, CancellationToken cancellationToken) =>
 {
