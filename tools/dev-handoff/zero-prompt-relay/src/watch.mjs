@@ -8,6 +8,7 @@ export const WATCH_DB_VERSION='hic.dev-watch-db/1';
 const REPO=/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const LOGIN=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const LABEL=/^[a-z-]{1,50}$/i;
+const CHAT_MODE=/^(ask|agent)$/;
 const fail=code=>{throw new Error(code);};
 const isObject=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
 
@@ -18,7 +19,8 @@ export function checkWatchConfig(x) {
   if(!REPO.test(x.repository)||x.repository.includes('..')) fail('invalid-watch-repository');
   if(!LOGIN.test(x.trustedAuthor)) fail('invalid-watch-author');
   if(!LABEL.test(x.relayLabel)) fail('invalid-watch-label');
-  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel};
+  const agentModeOptIn=x.agentModeOptIn===true?true:false;
+  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,agentModeOptIn};
 }
 
 export function loadWatchConfig(path) {
@@ -105,6 +107,7 @@ export async function recordForwardAttempt({db,dbPath,repository,issueNumber,sta
 export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateDir(),forwardImpl=null}={}) {
   // Build chat-forward config from watch config and current issue
   if(!forwardImpl) fail('forward-impl-required');
+  const chatMode=config.agentModeOptIn?'agent':'ask';
   const chatForwardConfig={
     version:'hic.dev-chat-forward/1',
     enabled:true,
@@ -112,7 +115,7 @@ export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateD
     issueNumber:issue.number,
     trustedAuthor:config.trustedAuthor,
     codeCommand:process.env.VSCODE_CHAT_COMMAND||'code',
-    chatMode:'ask'
+    chatMode
   };
   const result=await forwardImpl({config:chatForwardConfig,stateDir});
   return result;
@@ -124,6 +127,9 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
   
   // Resolve codeCommand: explicit parameter > env VSCODE_CHAT_COMMAND > fallback code.cmd
   const resolvedCodeCommand=codeCommand||(process.env.VSCODE_CHAT_COMMAND||(process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd'));
+  
+  // Determine chat mode: Ask (default) unless agentModeOptIn is explicitly true
+  const chatMode=c.agentModeOptIn?'agent':'ask';
   
   // Poll for pending issues
   const poll=await watchPoll({config:c,stateDir,fetchImpl});
@@ -142,7 +148,7 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
         issueNumber:issue.number,
         trustedAuthor:c.trustedAuthor,
         codeCommand:resolvedCodeCommand,
-        chatMode:'ask'
+        chatMode
       },stateDir});
       
       if(fwd.status==='handed-off-unverified'||fwd.status==='already-forwarded') {

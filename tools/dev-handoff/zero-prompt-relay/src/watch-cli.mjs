@@ -8,14 +8,17 @@ const cmd=args[0];
 
 if(cmd==='--help'||!cmd) {
   console.log('Usage:');
-  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--config <path>] [--state-dir <path>]');
-  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--agent-mode] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--agent-mode] [--config <path>] [--state-dir <path>]');
   process.exitCode=cmd?0:2;
 } else if(cmd==='--poll-once') {
   const stateDir=value('--state-dir')??defaultStateDir();
   try {
     const watchConfigPath=value('--config')??join(stateDir,'watch-forward.json');
-    const config=loadWatchConfig(watchConfigPath);
+    let config=loadWatchConfig(watchConfigPath);
+    if(args.includes('--agent-mode')) {
+      config={...config,agentModeOptIn:true};
+    }
     const codeCommand=value('--code-command')||process.env.VSCODE_CHAT_COMMAND||undefined;
     const result=await watchOnce({config,stateDir,forwardImpl:forwardOnce,codeCommand});
     console.log(JSON.stringify({status:result.status,forwarded:result.forwarded}));
@@ -36,7 +39,10 @@ if(cmd==='--help'||!cmd) {
   } else {
     try {
       const watchConfigPath=value('--config')??join(stateDir,'watch-forward.json');
-      const config=loadWatchConfig(watchConfigPath);
+      let config=loadWatchConfig(watchConfigPath);
+      if(args.includes('--agent-mode')) {
+        config={...config,agentModeOptIn:true};
+      }
       await watchLoop({config,stateDir,forwardImpl:forwardOnce,intervalMs,codeCommand});
     } catch(error) {
       const allow=/^(invalid-|unsafe-|watch-|github-|forward-|chat-)/;
