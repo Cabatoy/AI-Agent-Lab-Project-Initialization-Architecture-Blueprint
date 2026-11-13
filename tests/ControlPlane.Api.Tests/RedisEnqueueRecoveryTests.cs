@@ -19,6 +19,7 @@ public class RedisEnqueueRecoveryTests
             var bootstrap = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             var actorId = Guid.NewGuid().ToString();
             var sessions = LocalOperatorSessions.Create(bootstrap, actorId);
+            Assert.NotNull(sessions);
             var sessionToken = sessions.IssueSessionToken(bootstrap);
 
             await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
@@ -48,21 +49,29 @@ public class RedisEnqueueRecoveryTests
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
-            var bootstrap = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var actorId = Guid.NewGuid().ToString();
-            var sessions = LocalOperatorSessions.Create(bootstrap, actorId);
+            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
+                new { Status = TaskStatuses.Draft, Id = id });
 
-            // Step 1: Approve task (PostgreSQL succeeds)
-            var approveTransition = await TaskTransitionStore.ApplyAsync(
-                cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
-            Assert.Equal(TransitionOutcome.Accepted, approveTransition.Outcome);
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task<TransitionResult> Approve()
+            {
+                await start.Task;
+                return await TaskTransitionStore.ApplyAsync(
+                    cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
+            }
+            var first = Approve();
+            var second = Approve();
+            start.SetResult();
+            var approvals = await Task.WhenAll(first, second);
+            Assert.Single(approvals, result => result.Outcome == TransitionOutcome.Accepted);
+            Assert.Single(approvals, result => result.Outcome == TransitionOutcome.Conflict);
 
             // Step 2: Verify PostgreSQL state after approval
             var status = await db.QuerySingleAsync<string>(
                 "select status from tasks where id = @id", new { id });
             Assert.Equal(TaskStatuses.Approved, status);
 
-            // Step 3: Verify concurrent re-approval is rejected (idempotency - prevents duplicate execution)
+            // Replaying the approval after both contenders finish must also be rejected.
             var secondApprove = await TaskTransitionStore.ApplyAsync(
                 cs, id, TaskStatuses.Approved, "ApproveTask", cancellationToken: CancellationToken.None);
             Assert.Equal(TransitionOutcome.Conflict, secondApprove.Outcome);
@@ -83,6 +92,7 @@ public class RedisEnqueueRecoveryTests
             var bootstrap = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             var operatorId = Guid.NewGuid().ToString();
             var sessions = LocalOperatorSessions.Create(bootstrap, operatorId);
+            Assert.NotNull(sessions);
             var sessionToken = sessions.IssueSessionToken(bootstrap);
 
             await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
