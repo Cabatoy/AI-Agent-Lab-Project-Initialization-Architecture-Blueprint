@@ -156,17 +156,92 @@ app.MapPost("/tasks/{id:guid}/approve", async (Guid id, HttpContext httpContext,
     if (transition.Outcome != TransitionOutcome.Accepted)
         return TransitionError(transition);
 
-    await redisDb.ListRightPushAsync(queueKey, id.ToString());
+    var enqueued = await RedisEnqueueRecovery.TryEnqueueApprovedTaskAsync(redisDb, queueKey, id);
+    if (!enqueued)
+    {
+        // Task moved to dead-letter; return 202 Accepted (state committed, delivery pending)
+        return Results.Accepted($"/tasks/{id}", new { id, status = TaskStatuses.Approved, queued = false, note = "Task approved but enqueue failed; queued for recovery" });
+    }
 
-    return Results.Ok(new { id, status = TaskStatuses.Approved });
+    return Results.Ok(new { id, status = TaskStatuses.Approved, queued = true });
 })
     .WithName("ApproveTask")
     .WithSummary("Approve a task")
     .WithDescription("Approves a Draft task and places it on the worker queue. Requires Bearer token authorization.")
     .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status202Accepted)
     .Produces(StatusCodes.Status400BadRequest)
     .Produces(StatusCodes.Status409Conflict)
     .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status503ServiceUnavailable);
+
+app.MapPost("/tasks/{id:guid}/recover-enqueue", async (Guid id, HttpContext httpContext, CancellationToken cancellationToken) =>
+{
+    if (localOperatorSessions is null)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var actorId = localOperatorSessions.Authenticate(httpContext.Request.Headers.Authorization);
+    if (actorId is null)
+    {
+        return Results.StatusCode(StatusCodes.Status401Unauthorized);
+    }
+
+    // Verify task is in Approved state; if not, this is an error
+    await using var connection = new NpgsqlConnection(postgresConnectionString);
+    await connection.OpenAsync(cancellationToken);
+    var status = await connection.QuerySingleOrDefaultAsync<string>(
+        "select status from tasks where id = @id", new { id });
+    
+    if (status is null)
+        return Results.NotFound(new { id, error = "Task not found" });
+    
+    if (status != TaskStatuses.Approved)
+        return Results.BadRequest(new { id, status, error = "Only Approved tasks can be recovered for enqueue" });
+
+    var enqueued = await RedisEnqueueRecovery.TryEnqueueApprovedTaskAsync(redisDb, queueKey, id);
+    
+    if (!enqueued)
+    {
+        return Results.Json(
+            new { id, status = TaskStatuses.Approved, queued = false, error = "Failed to enqueue after retries; moved to dead-letter" },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    return Results.Ok(new { id, status = TaskStatuses.Approved, queued = true, message = "Task recovered and enqueued for execution" });
+})
+    .WithName("RecoverEnqueue")
+    .WithSummary("Recover approved task enqueue")
+    .WithDescription("Re-attempts to enqueue an Approved task that failed initial enqueue. Requires Bearer token authorization.")
+    .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status503ServiceUnavailable);
+
+app.MapGet("/tasks/dead-letter", async (HttpContext httpContext) =>
+{
+    if (localOperatorSessions is null)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var actorId = localOperatorSessions.Authenticate(httpContext.Request.Headers.Authorization);
+    if (actorId is null)
+    {
+        return Results.StatusCode(StatusCodes.Status401Unauthorized);
+    }
+
+    var deadLetterTasks = await RedisEnqueueRecovery.ListDeadLetterTasksAsync(redisDb, queueKey);
+    
+    return Results.Ok(new { deadLetter = deadLetterTasks, count = deadLetterTasks.Count });
+})
+    .WithName("ListDeadLetter")
+    .WithSummary("List tasks in dead-letter queue")
+    .WithDescription("Lists tasks that failed to enqueue and were moved to dead-letter. Requires Bearer token authorization.")
+    .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status401Unauthorized)
     .Produces(StatusCodes.Status503ServiceUnavailable);
 
