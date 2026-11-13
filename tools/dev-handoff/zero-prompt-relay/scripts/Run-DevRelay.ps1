@@ -71,14 +71,21 @@ switch ($Mode) {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    if((Test-Path -LiteralPath $watchConfigFile) -and -not $ReplaceConfig){throw 'Watch forward config already exists; review it or pass -ReplaceConfig.'}
    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel}
+   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;agentModeOptIn=$($ChatMode -eq 'agent')}
    [System.IO.File]::WriteAllText($watchConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
-   Write-Host "Watch forward config written for $Repository label=$RelayLabel author=$TrustedAuthor. Nothing was sent."
+   $modeLabel=if($ChatMode -eq 'agent'){'Agent'}else{'Ask (default)'}
+   Write-Host "Watch forward config written: repository=$Repository label=$RelayLabel author=$TrustedAuthor chatMode=$modeLabel"
    break
  }
  'ChatForwardWatchOnce' {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
-   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--config' $watchConfigFile '--state-dir' $stateDir
+   $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
+   $agentModeFlag=if($ChatMode -eq 'agent'){'--agent-mode'}else{''}
+   if($agentModeFlag) {
+     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' $agentModeFlag '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
+   } else {
+     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
+   }
    if($LASTEXITCODE -ne 0){throw 'Watch poll failed.'}
    break
  }
@@ -86,7 +93,12 @@ switch ($Mode) {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    Write-Host 'Starting watch loop. Press Ctrl+C to stop.'
    $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
-   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
+   $agentModeFlag=if($ChatMode -eq 'agent'){'--agent-mode'}else{''}
+   if($agentModeFlag) {
+     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' $agentModeFlag '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
+   } else {
+     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
+   }
    break
  }
  'SetupAck' {

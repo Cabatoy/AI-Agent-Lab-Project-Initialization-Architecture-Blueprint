@@ -10,7 +10,7 @@ Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` da
 
 ### Nasıl çalışır
 
-1. `ChatForwardSetup`, `%LOCALAPPDATA%\HICDevRelay\chat-forward.json` dosyasını yazar. Dosyada repo, issue numarası, güvenilir issue yazarı, `code.cmd` yolu ve Chat modu yer alır. Varsayılan mod `agent`dır. Bu adım ağ çağrısı yapmaz. Mevcut ayarın üzerine yalnızca `-ReplaceConfig` ile yazılır.
+1. `ChatForwardSetup`, `%LOCALAPPDATA%\HICDevRelay\chat-forward.json` dosyasını yazar. Dosyada repo, issue numarası, güvenilir issue yazarı, `code.cmd` yolu ve Chat modu yer alır. `-ChatMode ask` ile Ask modunu seçebilirsin; varsayılan `agent`dır. Bu adım ağ çağrısı yapmaz. Mevcut ayarın üzerine yalnızca `-ReplaceConfig` ile yazılır.
 2. `ChatForwardOnce`, önce yerel gönderim kaydına bakar. Kayıt varsa GitHub'a bile gitmeden `already-forwarded` döner.
 3. Kayıt yoksa `GET https://api.github.com/repos/<repo>/issues/<n>` ile issue anonim olarak okunur. Yönlendirme takip edilmez. Yalnızca şu koşullar sağlanırsa devam edilir:
    - Issue açık olmalı ve PR olmamalı.
@@ -37,7 +37,7 @@ powershell -NoProfile -File $relay -Mode ChatForwardOnce
 
 Watch modu, GitHub repo'sunu periyodik olarak polling yapar ve uygun issue'ları VS Code Chat'e iletir.
 
-1. `ChatForwardWatchSetup`, `%LOCALAPPDATA%\HICDevRelay\watch-forward.json` dosyasını yazar. Dosyada repo, `hic-relay-ready` etiketi ve güvenilir issue yazarı yer alır. Bu adım ağ çağrısı yapmaz.
+1. `ChatForwardWatchSetup`, `%LOCALAPPDATA%\HICDevRelay\watch-forward.json` dosyasını yazar. Dosyada repo, `hic-relay-ready` etiketi, güvenilir issue yazarı ve (isteğe bağlı) `agentModeOptIn` boolean bayrağı yer alır. `-ChatMode agent` ile Agent modunu opt-in edebilirsin; varsayılan Ask modudur. Bu adım ağ çağrısı yapmaz.
 2. `ChatForwardWatchOnce`, GitHub API'sine `https://api.github.com/repos/<repo>/issues?state=open&labels=<label>` ile GET yapar. Sonuçlar filtre edilir:
    - PR'lar atlanır.
    - Yalnızca açık issue'lar seçilir.
@@ -57,10 +57,18 @@ Watch modu, GitHub repo'sunu periyodik olarak polling yapar ve uygun issue'ları
 
 ```powershell
 $relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
+# Ask modu (varsayılan):
 powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
   -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
   -RelayLabel hic-relay-ready `
   -TrustedAuthor Cabatoy
+
+# Veya Agent modunu opt-in et:
+powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
+  -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
+  -RelayLabel hic-relay-ready `
+  -TrustedAuthor Cabatoy `
+  -ChatMode agent
 ```
 
 **Seçenek 1: Bir kez polling (ChatForwardWatchOnce)**
