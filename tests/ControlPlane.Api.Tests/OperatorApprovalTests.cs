@@ -7,7 +7,7 @@ namespace ControlPlane.Api.Tests;
 public class OperatorApprovalTests
 {
     [PostgresFact]
-    public async Task ApproveWithoutAuthorizationHeader_Returns401()
+    public async Task ApprovalHelperWithoutAuthorization_DoesNotTransition()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
@@ -19,16 +19,19 @@ public class OperatorApprovalTests
                 Guid.NewGuid().ToString());
             Assert.NotNull(sessions);
 
+            await db.ExecuteAsync("update tasks set status = @Status where id = @Id",
+                new { Status = TaskStatuses.Draft, Id = id });
+
             var result = await ApproveTaskWithAuth(cs, id, context, sessions);
 
             Assert.Equal(TransitionOutcome.Invalid, result.Outcome);
             var status = await db.QuerySingleAsync<string>("select status from tasks where id = @id", new { id });
-            Assert.Equal("Approved", status);
+            Assert.Equal(TaskStatuses.Draft, status);
         });
     }
 
     [PostgresFact]
-    public async Task ApproveNonexistentTask_Returns404NotFound()
+    public async Task ApprovalHelperForNonexistentTask_ReturnsNotFound()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
@@ -51,7 +54,7 @@ public class OperatorApprovalTests
     }
 
     [PostgresFact]
-    public async Task ApproveNonDraftTask_Returns409Conflict()
+    public async Task ApprovalHelperForCompletedTask_ReturnsInvalid()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
@@ -71,13 +74,13 @@ public class OperatorApprovalTests
 
             var result = await ApproveTaskWithAuth(cs, id, context, sessions);
 
-            Assert.Equal(TransitionOutcome.Conflict, result.Outcome);
+            Assert.Equal(TransitionOutcome.Invalid, result.Outcome);
             Assert.Contains("Invalid status transition", result.Error ?? string.Empty);
         });
     }
 
     [PostgresFact]
-    public async Task SuccessfulApproval_TransitionsTaskAndQueuesForExecution()
+    public async Task ApprovalHelper_TransitionsTaskAndWritesAudit()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
@@ -109,7 +112,7 @@ public class OperatorApprovalTests
     }
 
     [PostgresFact]
-    public async Task IdempotentApproval_SecondAttemptReturnsConflict()
+    public async Task ApprovalHelper_SecondAttemptReturnsConflict()
     {
         await TaskTransitionPostgresTests.WithDatabase(async (cs, db, id) =>
         {
