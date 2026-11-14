@@ -443,4 +443,70 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void ReadOnlyCleanupPreflightRequiresPrivateEmptyUnchangedProbe()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            var probePath = Path.Combine(root, manifest.ProbeId.ToString("N"));
+            Assert.True(receipt.PassesReadOnlyCleanupPreflight());
+            File.WriteAllText(Path.Combine(probePath, "unexpected"), "preserve");
+            Assert.False(receipt.PassesReadOnlyCleanupPreflight());
+            Assert.True(File.Exists(Path.Combine(probePath, "unexpected")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReadOnlyCleanupPreflightRejectsChangedPermissionsAndReplacement()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            var probePath = Path.Combine(root, manifest.ProbeId.ToString("N"));
+            Directory.SetUnixFileMode(probePath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupWrite);
+            Assert.False(receipt.PassesReadOnlyCleanupPreflight());
+            Directory.SetUnixFileMode(probePath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Assert.True(receipt.PassesReadOnlyCleanupPreflight());
+            Directory.Move(probePath, Path.Combine(root, "moved-original"));
+            Directory.CreateDirectory(probePath);
+            Assert.False(receipt.PassesReadOnlyCleanupPreflight());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReadOnlyCleanupPreflightRejectsDisposedReceipt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            receipt.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => receipt.PassesReadOnlyCleanupPreflight());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
