@@ -72,4 +72,16 @@ public sealed class SyntheticStagingObservationProjectionTests
         Assert.Equal("staging-blocked", view.State);
         Assert.False(view.AgentExecutionAllowed);
     }
+    [Fact]
+    public void InvalidManifestDigestAndMalformedBlockingReasonsAreRejected()
+    {
+        var (task, probe, digest, observation) = Valid();
+        Assert.Null(Read(observation, task, probe, "sha256:" + new string('g', 64)));
+        Assert.Null(Read(observation, task, probe, "sha256:" + new string('A', 64)));
+        Assert.Null(Read(observation, task, probe, "sha256:" + new string('a', 63)));
+        Assert.Null(Read(observation with { BlockingReasons = new[]
+            { "runtime-isolation-unverified", "agent-execution-disabled", "" } }, task, probe, digest));
+        Assert.Null(Read(observation with { BlockingReasons = new[]
+            { "runtime-isolation-unverified", "agent-execution-disabled", new string('x', 129) } }, task, probe, digest));
+    }
 }
