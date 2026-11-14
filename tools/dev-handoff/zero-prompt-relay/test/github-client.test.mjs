@@ -190,7 +190,8 @@ test('GCM provider reads only the password field without prompting',async()=>{
   assert.equal(await gcmTokenProvider({spawnImpl:fakeSpawn('',128)})(),null);
   assert.equal(await gcmTokenProvider({spawnImpl:fakeSpawn('username=x\n',0)})(),null);
   const pinned={};
-  await gcmTokenProvider({username:'Cabatoy',spawnImpl:fakeSpawn('password='+TOKEN+'\n',0,pinned)})();
-  assert.equal(pinned.input,'protocol=https\nhost=github.com\nusername=Cabatoy\n\n','GCM is asked for the pinned account');
+  const pinnedReply=fakeSpawn('password='+TOKEN+'\n',0,pinned);
+  await gcmTokenProvider({username:'pinned-login',spawnImpl:pinnedReply})();
+  assert.equal(pinned.input,'protocol=https\nhost=github.com\nusername=pinned-login\n\n','GCM is asked for the pinned account');
   assert.throws(()=>gcmTokenProvider({username:'x\nhost=evil.example'}),/invalid-github-login/);
 });
