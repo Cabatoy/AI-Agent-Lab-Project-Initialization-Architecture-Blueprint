@@ -16,12 +16,16 @@ internal sealed record SyntheticStagingTaskView(
 
 internal static class SyntheticStagingObservationProjection
 {
+    private static bool IsSha256Digest(string? value) =>
+        value is { Length: 71 } && value.StartsWith("sha256:", StringComparison.Ordinal) &&
+        value.AsSpan(7).IndexOfAnyExcept("0123456789abcdef") < 0;
+
     internal static SyntheticStagingTaskView? TryRead(
         string? json, Guid expectedTaskId, Guid expectedProbeId, string expectedManifestDigest)
     {
         if (string.IsNullOrWhiteSpace(json) || json.Length > 8192 ||
             expectedTaskId == Guid.Empty || expectedProbeId == Guid.Empty ||
-            string.IsNullOrWhiteSpace(expectedManifestDigest)) return null;
+            !IsSha256Digest(expectedManifestDigest)) return null;
 
         try
         {
@@ -35,7 +39,8 @@ internal static class SyntheticStagingObservationProjection
                 observation.InputVerified != (observation.State == "staging-verified") ||
                 observation.RuntimeIsolationVerified || observation.AgentExecutionAllowed ||
                 observation.ObservedAtUtc.Offset != TimeSpan.Zero ||
-                observation.BlockingReasons is null || observation.BlockingReasons.Count > 16 ||
+                observation.BlockingReasons is null || observation.BlockingReasons.Count is < 2 or > 16 ||
+                observation.BlockingReasons.Any(reason => string.IsNullOrWhiteSpace(reason) || reason.Length > 128) ||
                 !observation.BlockingReasons.Contains("runtime-isolation-unverified") ||
                 !observation.BlockingReasons.Contains("agent-execution-disabled") ||
                 (!observation.InputVerified &&
