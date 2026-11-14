@@ -257,6 +257,50 @@ internal static class LinuxSyntheticStagingRoot
             WriteFixture(input, "fixture", bytes, maximumBytes);
         }
 
+        /// <summary>
+        /// Read-only verification of the staged fixture via fd-relative,
+        /// no-follow access. Returns false for missing, replaced or tampered
+        /// input; never treats a successful check as execution authorization.
+        /// </summary>
+        internal bool VerifyStagedInput(
+            SandboxProbeManifest manifest, int maximumBytes, DateTimeOffset nowUtc)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            ArgumentNullException.ThrowIfNull(manifest);
+            if (manifest.ProbeId != ProbeId || maximumBytes < 0 ||
+                !MatchesCurrentDirectoryEntry()) return false;
+            try { RequireValidOfflineManifest(manifest, nowUtc); }
+            catch (InvalidOperationException) { return false; }
+
+            try
+            {
+                using var input = OpenDirectory(directory, "input");
+                var fd = OpenAt(input.DangerousGetHandle().ToInt32(), "fixture",
+                    O_RDONLY | O_NOFOLLOW | O_CLOEXEC, 0);
+                if (fd < 0) return false;
+                using var handle = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+                using var stream = new FileStream(handle, FileAccess.Read);
+                // Bound memory use even if a fixture was replaced with a large file.
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[8192];
+                long total = 0;
+                int count;
+                while ((count = stream.Read(buffer)) != 0)
+                {
+                    total += count;
+                    if (total > maximumBytes) return false;
+                    hash.AppendData(buffer, 0, count);
+                }
+                var digest = "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                return string.Equals(digest, manifest.StagedInputDigest, StringComparison.Ordinal) &&
+                    MatchesCurrentDirectoryEntry();
+            }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (Win32Exception) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
+
         internal bool IsEmptyForCleanupInspection()
         {
             if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
