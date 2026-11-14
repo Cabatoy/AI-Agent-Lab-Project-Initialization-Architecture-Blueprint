@@ -40,4 +40,4 @@ export async function main(argv=process.argv.slice(2)){
     process.exitCode=1;
   }
 }
-if(process.argv[1] && import.meta.url===new URL('file://'+process.argv[1].replace(/\\/g,'/')).href)await main();
+if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href)await main();
