@@ -40,7 +40,16 @@ internal static class SyntheticStagingOwnershipPolicy
         return layout.RelativeProbeRoot == expectedRoot &&
             layout.RelativeInputDirectory == expectedRoot + "/input" &&
             layout.RelativeOutputDirectory == expectedRoot + "/output" &&
-            layout.RelativeInputFile.StartsWith(expectedRoot + "/input/", StringComparison.Ordinal) &&
+            IsValidInputFile(layout.RelativeInputFile, expectedRoot) &&
             receipt.RelativeProbeRoot == expectedRoot;
+    }
+
+    private static bool IsValidInputFile(string? inputFile, string root)
+    {
+        var prefix = root + "/input/";
+        if (inputFile is null || !inputFile.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        var name = inputFile[prefix.Length..];
+        return Regex.IsMatch(name, "^[a-z0-9][a-z0-9_-]{0,63}$", RegexOptions.CultureInvariant);
     }
 }
