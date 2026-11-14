@@ -1,8 +1,27 @@
 using Microsoft.Win32.SafeHandles;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using Xunit;
 
 public sealed class LinuxSyntheticStagingRootTests
 {
+    // Test-only directory fd: File.OpenHandle is for regular files on Linux.
+    // O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, with read-only access.
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int Open(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+
+    private static SafeFileHandle OpenTestDirectory(string path)
+    {
+        const int O_DIRECTORY = 0x10000;
+        const int O_NOFOLLOW = 0x20000;
+        const int O_CLOEXEC = 0x80000;
+        var fd = Open(path, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Cannot open test staging directory.");
+        return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+    }
+
     [Fact]
     public void CreatesPrivateFdRelativeDirectoriesAndFixture()
     {
@@ -11,8 +30,7 @@ public sealed class LinuxSyntheticStagingRootTests
         Directory.CreateDirectory(root);
         try
         {
-            using var parent = File.OpenHandle(root, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
+            using var parent = OpenTestDirectory(root);
             var probe = Guid.NewGuid();
             using var probeFd = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probe);
             using var input = LinuxSyntheticStagingRoot.CreateChildDirectory(probeFd, "input");
@@ -34,8 +52,7 @@ public sealed class LinuxSyntheticStagingRootTests
         Directory.CreateDirectory(root);
         try
         {
-            using var parent = File.OpenHandle(root, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
+            using var parent = OpenTestDirectory(root);
             using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, Guid.NewGuid());
             Assert.Throws<ArgumentException>(() =>
                 LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "../escape"));
@@ -53,8 +70,7 @@ public sealed class LinuxSyntheticStagingRootTests
         Directory.CreateDirectory(root);
         try
         {
-            using var parent = File.OpenHandle(root, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
+            using var parent = OpenTestDirectory(root);
             var id = Guid.NewGuid();
             using var first = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, id);
             Assert.ThrowsAny<Exception>(() => LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, id));
