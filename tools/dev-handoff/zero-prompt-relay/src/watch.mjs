@@ -22,10 +22,13 @@ export function checkWatchConfig(x) {
   if(!LABEL.test(x.relayLabel)) fail('invalid-watch-label');
   const agentModeOptIn=x.agentModeOptIn===true?true:false;
   const githubAuth=checkAuthMode(x.githubAuth);
-  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,agentModeOptIn,githubAuth};
+  // Authenticated polling must name the GitHub account the credential is expected to belong to.
+  const githubLogin=x.githubLogin??null;
+  if(githubAuth==='none'?githubLogin!==null:(typeof githubLogin!=='string'||!LOGIN.test(githubLogin))) fail('invalid-watch-github-login');
+  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,agentModeOptIn,githubAuth,githubLogin};
 }
 
-const clientFor=(c,fetchImpl,github)=>github??createGitHubClient({auth:c.githubAuth,fetchImpl});
+const clientFor=(c,fetchImpl,github)=>github??createGitHubClient({auth:c.githubAuth,fetchImpl,expectedLogin:c.githubLogin});
 
 export function loadWatchConfig(path) {
   let st;try{st=lstatSync(path)}catch{fail('watch-config-not-found')}
@@ -89,6 +92,15 @@ export async function watchPoll({config,stateDir=defaultStateDir(),fetchImpl=fet
   }
   
   return {config:c,pending,dbPath,db};
+}
+
+// Polling-only verification: reads the issue list through the configured client and reports what would be
+// forwarded, without forwarding, opening Chat or writing the dedup DB.
+export async function watchCheck({config,stateDir=defaultStateDir(),fetchImpl=fetch,github=null}={}) {
+  const c=checkWatchConfig(config);
+  const client=clientFor(c,fetchImpl,github);
+  const poll=await watchPoll({config:c,stateDir,fetchImpl,github:client});
+  return {status:'check-only',githubAuth:client.auth,githubLogin:c.githubLogin,pending:poll.pending.map(x=>x.number)};
 }
 
 export async function recordForwardAttempt({db,dbPath,repository,issueNumber,status='pending',stateDir=defaultStateDir()}={}) {

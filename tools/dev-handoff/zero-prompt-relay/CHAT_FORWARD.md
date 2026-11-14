@@ -96,16 +96,20 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchLoop
 Anonim GitHub API limiti saatte 60 istektir. 60 saniyelik polling ve iletim öncesi issue okuması bu sınırı aşar ve eski sürümde tek bir `watch-fetch-failed` hatası olarak görünürdü. Kimliği doğrulanmış polling açıkça seçilir:
 
 ```powershell
-powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup -ReplaceConfig `
-  -Repository owner/repo -TrustedAuthor <login> -RelayLabel hic-relay-ready -GitHubAuth gcm
+powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup -ReplaceConfig -ChatMode ask `
+  -Repository owner/repo -TrustedAuthor <login> -RelayLabel hic-relay-ready -GitHubAuth gcm -GitHubLogin <login>
+# Yalnızca polling doğrulaması: hiçbir issue iletilmez, Chat açılmaz, dedup DB yazılmaz
+powershell -NoProfile -File $relay -Mode ChatForwardWatchCheck
 ```
 
 - `githubAuth: "none"` (varsayılan): eski anonim davranış.
-- `githubAuth: "gcm"`: token, `git credential fill` ile Git Credential Manager'dan, istem açmadan (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`) okunur.
+- `githubAuth: "gcm"`: token, `git credential fill` ile Git Credential Manager'dan, istem açmadan (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`) okunur. GCM'den `githubLogin` hesabı istenir; o hesap GCM'de kayıtlı değilse başka hesaba geçilmez, `github-auth-unavailable` ile durulur.
 - `githubAuth: "env"`: token yalnızca `HIC_RELAY_GITHUB_TOKEN` ortam değişkeninden okunur.
+- `gcm` ve `env` için `githubLogin` zorunludur. İlk istekten önce `GET /user` ile token'ın bu hesaba ait olduğu doğrulanır; farklı bir hesapsa (ör. kurumsal hesap) issue listesi okunmadan `github-identity-mismatch` ile durulur.
 - Kimlik doğrulama yapılandırılmışsa ama credential yoksa anonim isteğe **geri düşülmez**; hiç istek gönderilmeden `github-auth-unavailable` ile durulur.
-- Token yalnızca `https://api.github.com` isteklerine, `redirect: manual` ile eklenir; log ve hata çıktılarında yalnızca durum kodu, kalan kota, reset zamanı, bekleme süresi ve request id görünür.
-- `--github-auth none|gcm|env` CLI bayrağı yapılandırmayı geçici olarak geçersiz kılar.
+- Token yalnızca `https://api.github.com` isteklerine, `redirect: manual` ile eklenir; log ve hata çıktılarında yalnızca durum kodu, kalan kota, reset zamanı, bekleme süresi, request id ve beklenen/gerçek login görünür.
+- `--github-auth none|gcm|env` ve `--github-login <login>` CLI bayrakları yapılandırmayı geçici olarak geçersiz kılar; `--poll-check` yalnızca polling doğrulaması yapar.
+- Launcher'da `-ChatMode` varsayılanı `agent`'tır; ilk doğrulamada `-ChatMode ask` açıkça verilmelidir.
 
 Yeniden gönderim testi (Once modu):
 

@@ -202,7 +202,7 @@ Passed!  —  X passed, 0 failed
 
 ### ✅ Opt-in Impact on Current Relay
 
-- The Node watcher uses authenticated polling only when `githubAuth` is set to `gcm` or `env`; the default `none` keeps anonymous behaviour
+- The Node watcher uses authenticated polling only when `githubAuth` is set to `gcm` or `env` together with a `githubLogin` pin (verified via `GET /user`); the default `none` keeps anonymous behaviour
 - A running watcher picks this up only after a reviewed source update and restart
 - No automatic enablement or machine-wide permission changes
 - Explicit approval required before activating in production

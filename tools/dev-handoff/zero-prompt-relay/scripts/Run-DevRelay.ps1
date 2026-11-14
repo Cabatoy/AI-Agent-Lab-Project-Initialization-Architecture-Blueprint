@@ -10,12 +10,13 @@ Modes:
  ChatForwardSetup: write local opt-in config naming exactly one GitHub issue for VS Code Chat
  ChatForwardOnce: forward that issue once to `code chat`; a local record prevents re-sending
  ChatForwardWatchSetup: write local opt-in config for polling issues with a label
+ ChatForwardWatchCheck: polling-only verification; never forwards or opens Chat
  ChatForwardWatchOnce: poll once for issues with label; no re-send on restart
  ChatForwardWatchLoop: poll in a loop every 60 seconds; gracefully shut down with Ctrl+C
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchOnce','ChatForwardWatchLoop')]
+  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchCheck','ChatForwardWatchOnce','ChatForwardWatchLoop')]
   [string]$Mode='Plan',
   [string]$Repository='',
   [int]$IssueNumber=0,
@@ -25,6 +26,7 @@ param(
   [string]$ChatMode='agent',
   [ValidateSet('none','gcm','env')]
   [string]$GitHubAuth='none',
+  [string]$GitHubLogin='',
   [switch]$ReplaceConfig
 )
 Set-StrictMode -Version Latest
@@ -44,7 +46,8 @@ switch ($Mode) {
    Write-Host 'InstallAutostart: requires explicit local confirmation and existing DPAPI secret; at-logon only.'
    Write-Host 'ChatForwardSetup: writes a local config naming ONE repo/issue/trusted author; no network call.'
    Write-Host 'ChatForwardOnce: reads that issue anonymously and hands it to VS Code Chat via code chat once; exit code is not completion.'
-   Write-Host 'ChatForwardWatchSetup: writes a local config for polling issues with a label on a repo; -GitHubAuth gcm|env opts into authenticated polling (fails closed if the credential is unavailable).'
+   Write-Host 'ChatForwardWatchSetup: writes a local config for polling issues with a label on a repo; -GitHubAuth gcm|env -GitHubLogin <login> opts into authenticated polling pinned to that account (fails closed if the credential is unavailable or belongs to another account).'
+   Write-Host 'ChatForwardWatchCheck: polling-only verification; lists issues that would be forwarded; never forwards, opens Chat or writes the dedup DB.'
    Write-Host 'ChatForwardWatchOnce: poll once for open issues with label from trusted author; no re-send on restart.'
    Write-Host 'ChatForwardWatchLoop: poll every 60 seconds with bounded rate-limit backoff; stops on auth/permission errors; Ctrl+C to stop.'
    break
@@ -70,13 +73,22 @@ switch ($Mode) {
    if($Repository -notmatch '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$'){throw 'Pass -Repository owner/name.'}
    if($TrustedAuthor -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Pass -TrustedAuthor <github-login>.'}
    if($RelayLabel -notmatch '^[a-z-]{1,50}$'){throw 'Pass -RelayLabel <label> (lowercase, hyphens allowed).'}
+   if($GitHubAuth -ne 'none' -and $GitHubLogin -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Authenticated polling requires -GitHubLogin <login> (the account the credential must belong to).'}
+   if($GitHubAuth -eq 'none' -and $GitHubLogin){throw '-GitHubLogin applies only with -GitHubAuth gcm|env.'}
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    if((Test-Path -LiteralPath $watchConfigFile) -and -not $ReplaceConfig){throw 'Watch forward config already exists; review it or pass -ReplaceConfig.'}
    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
    $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;agentModeOptIn=$($ChatMode -eq 'agent');githubAuth=$GitHubAuth}
+   if($GitHubAuth -ne 'none'){ $config.githubLogin=$GitHubLogin }
    [System.IO.File]::WriteAllText($watchConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
    $modeLabel=if($ChatMode -eq 'agent'){'Agent'}else{'Ask (default)'}
-   Write-Host "Watch forward config written: repository=$Repository label=$RelayLabel author=$TrustedAuthor chatMode=$modeLabel githubAuth=$GitHubAuth"
+   Write-Host "Watch forward config written: repository=$Repository label=$RelayLabel author=$TrustedAuthor chatMode=$modeLabel githubAuth=$GitHubAuth githubLogin=$GitHubLogin"
+   break
+ }
+ 'ChatForwardWatchCheck' {
+   $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-check' '--config' $watchConfigFile '--state-dir' $stateDir
+   if($LASTEXITCODE -ne 0){throw 'Watch check failed closed; see the blocked reason above.'}
    break
  }
  'ChatForwardWatchOnce' {

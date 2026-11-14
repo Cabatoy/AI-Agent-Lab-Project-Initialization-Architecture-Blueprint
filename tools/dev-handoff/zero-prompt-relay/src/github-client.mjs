@@ -21,8 +21,13 @@ export function envTokenProvider(env=process.env) {
   return async()=>env[TOKEN_ENV]||null;
 }
 
+const LOGIN=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+
 // Reads the github.com credential from Git Credential Manager without prompting (fails closed when absent).
-export function gcmTokenProvider({spawnImpl=spawn,timeoutMs=15000}={}) {
+// `username` asks GCM for that specific stored account instead of its default github.com account.
+export function gcmTokenProvider({spawnImpl=spawn,timeoutMs=15000,username=null}={}) {
+  if(username!==null&&!LOGIN.test(username)) throw new Error('invalid-github-login');
+  const request='protocol=https\nhost=github.com\n'+(username?'username='+username+'\n':'')+'\n';
   return ()=>new Promise(resolve=>{
     let child,out='',done=false;
     const finish=v=>{if(!done){done=true;clearTimeout(timer);resolve(v)}};
@@ -39,7 +44,7 @@ export function gcmTokenProvider({spawnImpl=spawn,timeoutMs=15000}={}) {
       finish(line?line.slice('password='.length):null);
     });
     child.stdin.on('error',()=>{});
-    child.stdin.end('protocol=https\nhost=github.com\n\n');
+    child.stdin.end(request);
   });
 }
 
@@ -57,10 +62,13 @@ export function rateLimitInfo(response,clock=Date.now) {
   return {remaining,resetAt:resetEpoch!==null?new Date(resetEpoch*1000).toISOString():null,retryAfterMs};
 }
 
-export function createGitHubClient({auth='none',fetchImpl=fetch,tokenProvider,clock=Date.now,timeoutMs=10000,userAgent='HIC-watch/0.2'}={}) {
+// expectedLogin pins the credential to one GitHub account: GET /user must return that login before any other
+// request is sent with the token, so a wrong (e.g. corporate) account fails closed instead of polling.
+export function createGitHubClient({auth='none',fetchImpl=fetch,tokenProvider,clock=Date.now,timeoutMs=10000,userAgent='HIC-watch/0.2',expectedLogin=null}={}) {
   const mode=checkAuthMode(auth);
-  const provider=tokenProvider??(mode==='gcm'?gcmTokenProvider():mode==='env'?envTokenProvider():null);
-  let cached=null;
+  if(expectedLogin!==null&&(mode==='none'||!LOGIN.test(expectedLogin))) throw new Error('invalid-github-login');
+  const provider=tokenProvider??(mode==='gcm'?gcmTokenProvider({username:expectedLogin}):mode==='env'?envTokenProvider():null);
+  let cached=null,verified=false;
 
   async function authorization() {
     if(mode==='none') return null;
@@ -68,16 +76,32 @@ export function createGitHubClient({auth='none',fetchImpl=fetch,tokenProvider,cl
       let token=null;
       try{token=await provider()}catch{token=null}
       if(typeof token!=='string'||!TOKEN.test(token)) throw new GitHubError('github-auth-unavailable',{authMode:mode});
-      cached=token;
+      cached=token;verified=false;
     }
     return 'Bearer '+cached;
+  }
+
+  async function verifyIdentity(authz) {
+    if(!expectedLogin||verified) return;
+    const {json}=await request(new URL(API_ORIGIN+'/user'),authz,64*1024);
+    const actual=typeof json?.login==='string'&&LOGIN.test(json.login)?json.login:null;
+    if(!actual||actual.toLowerCase()!==expectedLogin.toLowerCase()) {
+      cached=null;
+      throw new GitHubError('github-identity-mismatch',{authMode:mode,expectedLogin,actualLogin:actual});
+    }
+    verified=true;
   }
 
   async function getJson(url,{maxBytes=2*1024*1024}={}) {
     const target=new URL(url);
     if(target.origin!==API_ORIGIN) throw new GitHubError('github-url-not-allowed',{authMode:mode});
-    const headers={Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':userAgent};
     const authz=await authorization();
+    await verifyIdentity(authz);
+    return request(target,authz,maxBytes);
+  }
+
+  async function request(target,authz,maxBytes) {
+    const headers={Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':userAgent};
     if(authz) headers.Authorization=authz;
     let response;
     try {
@@ -101,7 +125,7 @@ export function createGitHubClient({auth='none',fetchImpl=fetch,tokenProvider,cl
     try{return {json:JSON.parse(text),diagnostic}}catch{throw new GitHubError('invalid-github-response',diagnostic)}
   }
 
-  return {auth:mode,getJson};
+  return {auth:mode,expectedLogin,getJson};
 }
 
 export const TRANSIENT_GITHUB_ERRORS=new Set(['github-rate-limited','github-read-failed','github-timeout','github-network-error']);
@@ -110,7 +134,7 @@ export const TRANSIENT_GITHUB_ERRORS=new Set(['github-rate-limited','github-read
 export function describeGitHubError(e) {
   const d=e?.diagnostic??{};
   const parts=[typeof e?.message==='string'?e.message:'error'];
-  for(const k of ['authMode','status','rateLimitRemaining','rateLimitResetAt','retryAfterMs','requestId']) {
+  for(const k of ['authMode','expectedLogin','actualLogin','status','rateLimitRemaining','rateLimitResetAt','retryAfterMs','requestId']) {
     const v=d[k];
     if(v!==null&&v!==undefined&&/^[A-Za-z0-9:._-]{1,64}$/.test(String(v))) parts.push(k+'='+v);
   }

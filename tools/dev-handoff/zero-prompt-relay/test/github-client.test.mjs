@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGitHubClient, describeGitHubError, gcmTokenProvider } from '../src/github-client.mjs';
-import { MAX_BACKOFF_MS, WATCH_VERSION, checkWatchConfig, nextDelayMs, watchLoop, watchOnce, watchPoll } from '../src/watch.mjs';
+import { MAX_BACKOFF_MS, WATCH_VERSION, checkWatchConfig, nextDelayMs, watchCheck, watchLoop, watchOnce, watchPoll } from '../src/watch.mjs';
 import { CONFIG_VERSION, fetchIssue, checkConfig } from '../src/chat-forward.mjs';
 
 // Synthetic, credential-shaped marker only; never a real token.
 const TOKEN='synthetic_marker_'+'x'.repeat(24);
 const NOW=Date.parse('2026-11-14T12:00:00Z');
 const REPO='Cabatoy/test-repo';
-const config=(over={})=>({version:WATCH_VERSION,repository:REPO,trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready',githubAuth:'gcm',...over});
+const config=(over={})=>({version:WATCH_VERSION,repository:REPO,trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready',githubAuth:'gcm',githubLogin:'Cabatoy',...over});
 const issues=[
   {number:101,title:'Valid',body:'b',updated_at:'2026-11-13T01:00:00Z',state:'open',user:{login:'Cabatoy'}},
   {number:102,title:'PR',body:'',updated_at:'2026-11-13T01:00:00Z',state:'open',user:{login:'Cabatoy'},pull_request:{}},
@@ -122,8 +122,44 @@ test('client refuses non-api.github.com URLs so the token cannot leak',async()=>
 });
 
 test('watch config defaults to anonymous and rejects unknown auth modes',()=>{
-  assert.equal(checkWatchConfig(config({githubAuth:undefined})).githubAuth,'none');
+  assert.equal(checkWatchConfig(config({githubAuth:undefined,githubLogin:undefined})).githubAuth,'none');
   assert.throws(()=>checkWatchConfig(config({githubAuth:'token'})),/invalid-github-auth/);
+});
+
+test('authenticated watch config must pin the expected GitHub login',()=>{
+  assert.equal(checkWatchConfig(config()).githubLogin,'Cabatoy');
+  for(const githubLogin of [undefined,'','bad login','-x']) assert.throws(()=>checkWatchConfig(config({githubAuth:'env',githubLogin})),/invalid-watch-github-login/);
+  assert.throws(()=>checkWatchConfig(config({githubAuth:'none'})),/invalid-watch-github-login/,'a pin without auth is a misconfiguration');
+});
+
+test('credential of a different GitHub account fails closed before the issue list is read',async()=>{
+  const calls=[];
+  const c=client(scripted([respond(200,{login:'corporate-account'})],calls),{expectedLogin:'Cabatoy'});
+  const e=await c.getJson('https://api.github.com/repos/'+REPO+'/issues').catch(x=>x);
+  assert.equal(e.message,'github-identity-mismatch');
+  assert.deepEqual(calls.map(x=>x.url),['https://api.github.com/user']);
+  assert.equal(describeGitHubError(e),'github-identity-mismatch authMode=gcm expectedLogin=Cabatoy actualLogin=corporate-account');
+
+  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>assert.fail('must not forward'),github:client(scripted([respond(200,{login:'corporate-account'})]),{expectedLogin:'Cabatoy'}),sleep:async()=>{},maxPolls:3,...quiet});
+  assert.deepEqual(r,{status:'blocked',reason:'github-identity-mismatch',polls:1});
+});
+
+test('matching GitHub login is verified once and then polling proceeds',async()=>{
+  const calls=[];
+  const c=client(scripted([respond(200,{login:'cabatoy'}),respond(200,[]),respond(200,[])],calls),{expectedLogin:'Cabatoy'});
+  await c.getJson('https://api.github.com/a');
+  await c.getJson('https://api.github.com/b');
+  assert.deepEqual(calls.map(x=>x.url),['https://api.github.com/user','https://api.github.com/a','https://api.github.com/b']);
+  assert.ok(calls.every(x=>x.opts.headers.Authorization==='Bearer '+TOKEN));
+  assert.throws(()=>createGitHubClient({auth:'none',expectedLogin:'Cabatoy'}),/invalid-github-login/);
+});
+
+test('poll-check reports pending issues without forwarding or writing the dedup DB',async()=>{
+  await tmp(async dir=>{
+    const r=await watchCheck({config:config({agentModeOptIn:true}),stateDir:dir,github:client(scripted([respond(200,issues)]))});
+    assert.deepEqual(r,{status:'check-only',githubAuth:'gcm',githubLogin:'Cabatoy',pending:[101]});
+    assert.equal(existsSync(join(dir,'watch-forward','issues.json')),false);
+  });
 });
 
 test('chat-forward issue read uses the supplied authenticated client',async()=>{
@@ -153,4 +189,8 @@ test('GCM provider reads only the password field without prompting',async()=>{
   assert.equal(seen.input,'protocol=https\nhost=github.com\n\n');
   assert.equal(await gcmTokenProvider({spawnImpl:fakeSpawn('',128)})(),null);
   assert.equal(await gcmTokenProvider({spawnImpl:fakeSpawn('username=x\n',0)})(),null);
+  const pinned={};
+  await gcmTokenProvider({username:'Cabatoy',spawnImpl:fakeSpawn('password='+TOKEN+'\n',0,pinned)})();
+  assert.equal(pinned.input,'protocol=https\nhost=github.com\nusername=Cabatoy\n\n','GCM is asked for the pinned account');
+  assert.throws(()=>gcmTokenProvider({username:'x\nhost=evil.example'}),/invalid-github-login/);
 });

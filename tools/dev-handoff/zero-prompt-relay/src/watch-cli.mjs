@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { defaultStateDir, loadWatchConfig, watchOnce, watchLoop } from './watch.mjs';
+import { defaultStateDir, loadWatchConfig, watchCheck, watchOnce, watchLoop } from './watch.mjs';
 import { checkAuthMode, describeGitHubError } from './github-client.mjs';
 import { forwardOnce } from './chat-forward.mjs';
 
@@ -9,7 +9,8 @@ const cmd=args[0];
 const withOverrides=config=>{
   let c=config;
   if(args.includes('--agent-mode')) c={...c,agentModeOptIn:true};
-  if(args.includes('--github-auth')) c={...c,githubAuth:checkAuthMode(value('--github-auth')??'')};
+  if(args.includes('--github-auth')) {const auth=checkAuthMode(value('--github-auth')??'');c={...c,githubAuth:auth,...(auth==='none'?{githubLogin:null}:{})};}
+  if(args.includes('--github-login')) c={...c,githubLogin:value('--github-login')??''};
   return c;
 };
 const reportBlocked=error=>{
@@ -22,9 +23,19 @@ const reportBlocked=error=>{
 
 if(cmd==='--help'||!cmd) {
   console.log('Usage:');
-  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--config <path>] [--state-dir <path>]');
-  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-check [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
   process.exitCode=cmd?0:2;
+} else if(cmd==='--poll-check') {
+  const stateDir=value('--state-dir')??defaultStateDir();
+  try {
+    const watchConfigPath=value('--config')??join(stateDir,'watch-forward.json');
+    const config=withOverrides(loadWatchConfig(watchConfigPath));
+    console.log(JSON.stringify(await watchCheck({config,stateDir})));
+  } catch(error) {
+    reportBlocked(error);
+  }
 } else if(cmd==='--poll-once') {
   const stateDir=value('--state-dir')??defaultStateDir();
   try {
