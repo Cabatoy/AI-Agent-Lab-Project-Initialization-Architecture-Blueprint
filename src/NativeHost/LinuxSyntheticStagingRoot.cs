@@ -35,8 +35,7 @@ internal static class LinuxSyntheticStagingRoot
     private static string Segment(string name)
     {
         if (string.IsNullOrEmpty(name) || name.Length > 64 ||
-            name[0] is < 'a' or > 'z' &&
-            name[0] is < '0' or > '9' ||
+            !(name[0] is >= 'a' and <= 'z' or >= '0' and <= '9') ||
             name.Any(c => !(c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-')))
             throw new ArgumentException("Unsafe staging segment.", nameof(name));
         return name;
