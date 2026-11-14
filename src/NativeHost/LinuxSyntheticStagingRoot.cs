@@ -27,6 +27,31 @@ internal static class LinuxSyntheticStagingRoot
     [DllImport("libc", SetLastError = true, EntryPoint = "unlinkat")]
     private static extern int UnlinkAt(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
 
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct StatxData
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(20)] public uint Uid;
+        [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
+    }
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "statx")]
+    private static extern int Statx(int dirfd,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int flags, uint mask, out StatxData result);
+
+    private static StatxData DirectoryIdentity(int fd, string name, int flags)
+    {
+        if (Statx(fd, name, flags, 0x7ff, out var data) != 0)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "statx failed.");
+        if ((data.Mask & 0x103) != 0x103 || (data.Mode & 0xf000) != 0x4000 || data.Inode == 0)
+            throw new InvalidOperationException("Incomplete directory identity.");
+        return data;
+    }
+
     private static void RequireLinux()
     {
         if (!OperatingSystem.IsLinux())
@@ -125,15 +150,41 @@ internal static class LinuxSyntheticStagingRoot
     internal sealed class CreatedProbeReceipt : IDisposable
     {
         private readonly SafeFileHandle directory;
+        private readonly SafeFileHandle parent;
+        private readonly StatxData identity;
         private bool disposed;
 
-        internal CreatedProbeReceipt(Guid probeId, SafeFileHandle directory)
+        internal CreatedProbeReceipt(Guid probeId, SafeFileHandle directory, SafeFileHandle parent)
         {
             ProbeId = probeId;
             this.directory = directory;
+            this.parent = parent;
+            identity = DirectoryIdentity(directory.DangerousGetHandle().ToInt32(), "", 0x1000);
         }
 
         internal Guid ProbeId { get; }
+
+        /// <summary>
+        /// Snapshot comparison only. A later path swap can invalidate the result.
+        /// Never use this method alone to authorize unlinkat or recursive cleanup.
+        /// </summary>
+        internal bool MatchesCurrentDirectoryEntry()
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            var opened = DirectoryIdentity(directory.DangerousGetHandle().ToInt32(), "", 0x1000);
+            try
+            {
+                var current = DirectoryIdentity(parent.DangerousGetHandle().ToInt32(),
+                    ProbeId.ToString("N"), 0x100);
+                return SameIdentity(identity, opened) && SameIdentity(identity, current);
+            }
+            catch (Win32Exception) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
+
+        private static bool SameIdentity(StatxData a, StatxData b) =>
+            a.Inode == b.Inode && a.DeviceMajor == b.DeviceMajor &&
+            a.DeviceMinor == b.DeviceMinor && a.Uid == b.Uid && a.Mode == b.Mode;
 
         /// <summary>
         /// Inspects a child relative to the originally created probe handle.
@@ -170,7 +221,8 @@ internal static class LinuxSyntheticStagingRoot
         DateTimeOffset nowUtc)
     {
         var directory = CreateManifestProbeDirectory(trustedParent, manifest, nowUtc);
-        return new CreatedProbeReceipt(manifest.ProbeId, directory);
+        try { return new CreatedProbeReceipt(manifest.ProbeId, directory, trustedParent); }
+        catch { directory.Dispose(); throw; }
     }
 
     private static void RequireValidOfflineManifest(
