@@ -477,11 +477,11 @@ public sealed class LinuxSyntheticStagingRootTests
             var manifest = ManifestFor("fixture"u8.ToArray(), now);
             using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
             var probePath = Path.Combine(root, manifest.ProbeId.ToString("N"));
-            Directory.SetUnixFileMode(probePath,
+            File.SetUnixFileMode(probePath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                 UnixFileMode.GroupWrite);
             Assert.False(receipt.PassesReadOnlyCleanupPreflight());
-            Directory.SetUnixFileMode(probePath,
+            File.SetUnixFileMode(probePath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             Assert.True(receipt.PassesReadOnlyCleanupPreflight());
             Directory.Move(probePath, Path.Combine(root, "moved-original"));
