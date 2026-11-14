@@ -104,6 +104,30 @@ internal static class LinuxSyntheticStagingRoot
         stream.Flush(flushToDisk: true);
     }
     /// <summary>
+    /// Binds the staging directory name to the manifest probe ID before any creation.
+    /// The trusted parent directory must be opened and verified by the caller.
+    /// </summary>
+    internal static SafeFileHandle CreateManifestProbeDirectory(
+        SafeFileHandle trustedParent,
+        SandboxProbeManifest manifest,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        RequireValidOfflineManifest(manifest, nowUtc);
+        return CreateProbeDirectory(trustedParent, manifest.ProbeId);
+    }
+
+    private static void RequireValidOfflineManifest(
+        SandboxProbeManifest manifest, DateTimeOffset nowUtc)
+    {
+        var report = RootlessPodmanSandboxPreflight.Evaluate(manifest, null, null, nowUtc);
+        if (report.AgentCodeExecutionAllowed ||
+            report.SanitizedReasons.Count != 1 ||
+            report.SanitizedReasons[0] != "runtime-evidence-unavailable")
+            throw new InvalidOperationException("Manifest invalid or expired.");
+    }
+
+    /// <summary>
     /// Writes only a fixture whose bytes match the immutable manifest input digest.
     /// This is NOT an authorization or filesystem ownership check.
     /// </summary>
@@ -116,11 +140,7 @@ internal static class LinuxSyntheticStagingRoot
         DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        var report = RootlessPodmanSandboxPreflight.Evaluate(manifest, null, null, nowUtc);
-        if (report.AgentCodeExecutionAllowed ||
-            report.SanitizedReasons.Count != 1 ||
-            report.SanitizedReasons[0] != "runtime-evidence-unavailable")
-            throw new InvalidOperationException("Manifest invalid or expired.");
+        RequireValidOfflineManifest(manifest, nowUtc);
 
         if (maximumBytes < 0 || bytes.Length > maximumBytes)
             throw new ArgumentException("Fixture exceeds allowed size.", nameof(bytes));
