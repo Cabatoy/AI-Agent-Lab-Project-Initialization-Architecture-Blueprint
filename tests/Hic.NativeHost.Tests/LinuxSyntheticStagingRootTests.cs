@@ -509,4 +509,73 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void ReceiptStagesOnlyManifestMatchingFixtureInItsOwnInputDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var bytes = "synthetic-only"u8.ToArray();
+            var manifest = ManifestFor(bytes, now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            receipt.StageManifestInput(manifest, bytes, 128, now);
+            var input = Path.Combine(root, manifest.ProbeId.ToString("N"), "input", "fixture");
+            Assert.Equal(bytes, File.ReadAllBytes(input));
+            Assert.ThrowsAny<Exception>(() => receipt.StageManifestInput(manifest, bytes, 128, now));
+            Assert.Equal(bytes, File.ReadAllBytes(input));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReceiptRejectsForeignManifestBeforeCreatingInputDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var bytes = "fixture"u8.ToArray();
+            var manifest = ManifestFor(bytes, now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            var other = ManifestFor(bytes, now);
+            Assert.Throws<InvalidOperationException>(() => receipt.StageManifestInput(other, bytes, 128, now));
+            Assert.False(Directory.Exists(Path.Combine(root, manifest.ProbeId.ToString("N"), "input")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReceiptRejectsTamperedFixtureAndReplacedProbeBeforeStaging()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var bytes = "expected"u8.ToArray();
+            var manifest = ManifestFor(bytes, now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            Assert.Throws<InvalidOperationException>(() =>
+                receipt.StageManifestInput(manifest, "tampered"u8, 128, now));
+            var original = Path.Combine(root, manifest.ProbeId.ToString("N"));
+            Assert.False(Directory.Exists(Path.Combine(original, "input")));
+            Directory.Move(original, Path.Combine(root, "moved-original"));
+            Directory.CreateDirectory(original);
+            Assert.Throws<InvalidOperationException>(() =>
+                receipt.StageManifestInput(manifest, bytes, 128, now));
+            Assert.False(Directory.Exists(Path.Combine(original, "input")));
+            Assert.False(Directory.Exists(Path.Combine(root, "moved-original", "input")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
