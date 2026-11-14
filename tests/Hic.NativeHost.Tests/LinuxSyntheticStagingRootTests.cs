@@ -321,4 +321,49 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void ReceiptInspectsOnlyItsOriginalProbeAfterDirectoryEntryReplacement()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            var original = Path.Combine(root, manifest.ProbeId.ToString("N"));
+            var moved = Path.Combine(root, "moved-original");
+            Directory.Move(original, moved);
+            Directory.CreateDirectory(original);
+            Directory.CreateDirectory(Path.Combine(original, "replacement"));
+            Directory.CreateDirectory(Path.Combine(moved, "original-child"));
+
+            using var originalChild = receipt.OpenChildForInspection("original-child");
+            Assert.True(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(originalChild));
+            Assert.ThrowsAny<Exception>(() => receipt.OpenChildForInspection("replacement"));
+            Assert.False(receipt.IsEmptyForCleanupInspection());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReceiptRejectsChildInspectionAfterDisposal()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            receipt.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => receipt.OpenChildForInspection("input"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
