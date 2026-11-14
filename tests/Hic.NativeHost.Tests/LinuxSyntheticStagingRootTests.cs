@@ -1,4 +1,5 @@
 using Microsoft.Win32.SafeHandles;
+using System.Security.Cryptography;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Xunit;
@@ -77,4 +78,73 @@ public sealed class LinuxSyntheticStagingRootTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+    private static SandboxProbeManifest ManifestFor(byte[] bytes, DateTimeOffset now) =>
+        RootlessPodmanSandboxPreflight.CreateManifest(
+            "sha256:" + new string('a', 64),
+            "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+            new SandboxResourceLimits(50000, 100000, 134217728, 32, 10, 65536),
+            now.AddMinutes(-1), now.AddMinutes(1));
+
+    [Fact]
+    public void ManifestFixtureWritesMatchingBytes()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var probeId = Guid.NewGuid();
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probeId);
+            using var input = LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "input");
+            var now = DateTimeOffset.UtcNow;
+            var bytes = "verified fixture"u8.ToArray();
+            var manifest = ManifestFor(bytes, now);
+            LinuxSyntheticStagingRoot.WriteManifestFixture(input, "fixture", bytes, 128, manifest, now);
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(root, probeId.ToString("N"), "input", "fixture")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ManifestFixtureRejectsMismatchWithoutCreatingFile()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var probeId = Guid.NewGuid();
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probeId);
+            using var input = LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "input");
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("expected"u8.ToArray(), now);
+            Assert.Throws<InvalidOperationException>(() =>
+                LinuxSyntheticStagingRoot.WriteManifestFixture(input, "fixture", "tampered"u8, 128, manifest, now));
+            Assert.False(File.Exists(Path.Combine(root, probeId.ToString("N"), "input", "fixture")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ManifestFixtureRejectsExpiredManifest()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, Guid.NewGuid());
+            using var input = LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "input");
+            var now = DateTimeOffset.UtcNow;
+            var bytes = "fixture"u8.ToArray();
+            var manifest = ManifestFor(bytes, now);
+            Assert.Throws<InvalidOperationException>(() =>
+                LinuxSyntheticStagingRoot.WriteManifestFixture(input, "fixture", bytes, 128, manifest, manifest.ExpiresAtUtc));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
