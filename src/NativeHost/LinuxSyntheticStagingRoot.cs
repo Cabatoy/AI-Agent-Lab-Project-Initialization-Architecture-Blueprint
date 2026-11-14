@@ -231,6 +231,32 @@ internal static class LinuxSyntheticStagingRoot
             return OpenChildDirectoryForInspection(directory, name);
         }
 
+        /// <summary>
+        /// Stages manifest-matching input only beneath the originally created
+        /// probe fd. Rejects a missing/replaced probe entry and pre-existing
+        /// input directory. Never accepts a caller-selected input directory fd.
+        /// This does not authorize agent execution or cleanup.
+        /// </summary>
+        internal void StageManifestInput(
+            SandboxProbeManifest manifest, ReadOnlySpan<byte> bytes,
+            int maximumBytes, DateTimeOffset nowUtc)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            ArgumentNullException.ThrowIfNull(manifest);
+            if (manifest.ProbeId != ProbeId ||
+                !MatchesCurrentDirectoryEntry())
+                throw new InvalidOperationException("Probe identity mismatch.");
+            // Verify all fixture constraints before creating any directory.
+            RequireValidOfflineManifest(manifest, nowUtc);
+            if (maximumBytes < 0 || bytes.Length > maximumBytes)
+                throw new ArgumentException("Fixture exceeds allowed size.", nameof(bytes));
+            var digest = "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            if (!string.Equals(digest, manifest.StagedInputDigest, StringComparison.Ordinal))
+                throw new InvalidOperationException("Fixture SHA-256 does not match manifest.");
+            using var input = CreateChildDirectory(directory, "input");
+            WriteFixture(input, "fixture", bytes, maximumBytes);
+        }
+
         internal bool IsEmptyForCleanupInspection()
         {
             if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
