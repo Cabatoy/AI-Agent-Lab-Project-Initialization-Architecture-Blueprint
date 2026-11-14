@@ -4,7 +4,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, 
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const createPath = '/api/tasks';
-const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
+const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|staging-observations|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
 
@@ -159,7 +159,7 @@ async function localRunnerRequest(
   }
   const isSession = path === '/api/local-runner/session';
   const isRead = req.method === 'GET' &&
-    (/^\/api\/local-runner\/(?:capabilities|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
+    (/^\/api\/local-runner\/(?:capabilities|staging-observations|tasks\/[0-9a-f-]+\/intent|runs\/[0-9a-f-]+)$/i.test(path));
   const isApprove = req.method === 'POST' &&
     /^\/api\/local-runner\/tasks\/[0-9a-f-]+\/approve$/i.test(path);
   const isExecute = req.method === 'POST' &&
