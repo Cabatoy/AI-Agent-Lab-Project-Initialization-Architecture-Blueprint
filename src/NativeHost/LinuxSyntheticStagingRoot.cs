@@ -117,6 +117,51 @@ internal static class LinuxSyntheticStagingRoot
         return CreateProbeDirectory(trustedParent, manifest.ProbeId);
     }
 
+    /// <summary>
+    /// In-process creation receipt. Issued only after exclusive mkdirat and
+    /// no-follow open. Holds the original directory handle, not a path string.
+    /// This is not durable, transferable or sufficient for deletion.
+    /// </summary>
+    internal sealed class CreatedProbeReceipt : IDisposable
+    {
+        private readonly SafeFileHandle directory;
+        private bool disposed;
+
+        internal CreatedProbeReceipt(Guid probeId, SafeFileHandle directory)
+        {
+            ProbeId = probeId;
+            this.directory = directory;
+        }
+
+        internal Guid ProbeId { get; }
+
+        internal bool IsEmptyForCleanupInspection()
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            return IsEmptyDirectoryForCleanup(directory);
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            directory.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Issues a non-transferable in-process receipt from actual creation,
+    /// never from a caller-supplied path or claimed ownership metadata.
+    /// </summary>
+    internal static CreatedProbeReceipt CreateManifestProbeWithReceipt(
+        SafeFileHandle trustedParent,
+        SandboxProbeManifest manifest,
+        DateTimeOffset nowUtc)
+    {
+        var directory = CreateManifestProbeDirectory(trustedParent, manifest, nowUtc);
+        return new CreatedProbeReceipt(manifest.ProbeId, directory);
+    }
+
     private static void RequireValidOfflineManifest(
         SandboxProbeManifest manifest, DateTimeOffset nowUtc)
     {
