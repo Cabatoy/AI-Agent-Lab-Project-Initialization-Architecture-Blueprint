@@ -54,8 +54,8 @@ internal static class StagingObservationEndpoints
             using var document = JsonDocument.Parse(File.ReadAllBytes(path), new JsonDocumentOptions { MaxDepth = 3 });
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 4 ||
-                !root.TryGetProperty("orderId", out var orderId) || orderId.GetString() != name[..^5] ||
-                !root.TryGetProperty("status", out var status) || status.GetString() != "observed-untrusted" ||
+                !root.TryGetProperty("orderId", out var orderId) || orderId.ValueKind != JsonValueKind.String || orderId.GetString() != name[..^5] ||
+                !root.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.String || status.GetString() != "observed-untrusted" ||
                 !root.TryGetProperty("executionAllowed", out var allowed) || allowed.ValueKind != JsonValueKind.False ||
                 !root.TryGetProperty("observedAt", out var at) || at.ValueKind != JsonValueKind.String ||
                 !DateTimeOffset.TryParse(at.GetString(), out var timestamp))
