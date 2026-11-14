@@ -83,6 +83,8 @@ If 2xx: return IssueResponse
 
 ### Integration with Existing Relay
 
+> **Update:** The live watcher is Node (`src/watch.mjs`), so the polling path now uses the Node port in `src/github-client.mjs` (same auth/rate-limit/redaction semantics; no .NET runtime required). Unlike the "graceful fallback" below, the watcher **fails closed** when `githubAuth` is configured and no credential is available. See [CHAT_FORWARD.md](./CHAT_FORWARD.md). The C# client and wrapper below remain as the reference implementation.
+
 The Relay watcher currently uses `curl` or .NET HTTP for API calls. To integrate:
 
 1. **Create a wrapper CLI tool** that accepts:
@@ -198,10 +200,10 @@ Passed!  —  X passed, 0 failed
 
 ## Rollback & Safety
 
-### ✅ Zero Impact on Current Relay
+### ✅ Opt-in Impact on Current Relay
 
-- This implementation is **standalone**, not integrated into the live Relay yet
-- Existing `scripts/hic-relay.ps1` or watch loop remains unchanged
+- The Node watcher uses authenticated polling only when `githubAuth` is set to `gcm` or `env`; the default `none` keeps anonymous behaviour
+- A running watcher picks this up only after a reviewed source update and restart
 - No automatic enablement or machine-wide permission changes
 - Explicit approval required before activating in production
 
@@ -257,7 +259,7 @@ This implementation is a foundation for Issue #144 ("HIC unattended development 
 - [x] Output redactor for all sensitive data
 - [x] Offline test suite (fake HTTP, fake credentials)
 - [x] Setup and integration documentation
-- [x] Zero impact on current Relay
+- [x] Opt-in only impact on current Relay (`githubAuth` default `none`)
 - [x] No automatic enablement or machine-wide changes
 
 **PR Status:** Draft (ready for review, not for merge)  

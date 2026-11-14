@@ -36,6 +36,7 @@ HIC, kullanıcı talebini kontrollü bir işe dönüştürür; plan ve onayı g�
 - [Mimari ve sınırlar](./ARCHITECTURE.md)
 - [Yol haritası ve kabul ölçütleri](./ROADMAP.md)
 - [Token ve maliyet ekonomisi](./TOKEN_ECONOMY.md)
+- Değerlendirilecek feature: ücretsiz bulut API ve yerel uzman model havuzu ([TR](./features/tr/HYBRID_MODEL_POOL_EVALUATION.md), [EN](./features/en/HYBRID_MODEL_POOL_EVALUATION.md))
 - [Entegrasyon sözleşmeleri](./INTEGRATION_CONTRACTS.md)
 - [Agent Bridge B0 tasarımı ve entegrasyon değerlendirmesi](./AGENT_BRIDGE.md)
 - Mevcut proje bağlamı: [README](../../README.md), [mimari ilkeler](../../docs-md/01-architecture-principles.md), [mevcut kararlar](../../docs-md/02-current-decisions.md), [açık sorular](../../docs-md/03-open-questions.md) ve [devam noktası](../../docs-md/continuation.md).

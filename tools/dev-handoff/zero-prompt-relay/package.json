@@ -1,0 +1,12 @@
+{
+  "name": "hic-dev-proposal-watcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "scripts": {
+    "check": "node --test test/*.test.mjs",
+    "once": "node src/cli.mjs --enable-read-only --once",
+    "watch": "node src/cli.mjs --enable-read-only --watch"
+  }
+}

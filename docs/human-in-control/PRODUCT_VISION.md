@@ -143,3 +143,25 @@ routing ve Web UI bu checkpoint'in uygulama kapsamı dışındadır.
 Development branch push onayı, snapshot candidate digest'inin export onayı
 değildir. Gerçek snapshot yayını exact candidate ve remote revision için
 ayrı insan kararı gerektirir.
+
+
+---
+
+## 8. Expanded North Star — adaptive digital work (2026-11-08 proposal)
+
+> **Product direction update; not yet delivered.** HIC is not limited to an AI Software Factory. It aims to become a **local-first, user-shaped AI platform able to learn to perform any authorized digital task**, with a web workspace as the initial user-facing product. Software engineering remains the **first vertical slice**, not the permanent limit. Existing implementation/verification tables above are historical checkpoints and do not imply that this expanded vision is already implemented.
+
+The LLM is **replaceable**. HIC's identity, architecture, verified capability descriptions, project/team/user context, decisions, task/audit history and approvals remain durable HIC-owned data, not hidden provider conversation state. Switching models reconstructs concise, versioned, permission-scoped context with trusted provenance and on-demand references; it must neither reset knowledge nor broaden authority. See [Self-Knowledge & Model Bootstrap Design](./SELF_KNOWLEDGE_DESIGN.md).
+
+Every installation chooses local or explicitly approved cloud models and its own connectors. HIC can propose missing integration/skill/agent capabilities and, after user-approved isolated development and testing, let users retain them privately or explicitly offer reviewed upstream PR contributions. Keep the core small and stable; extensions never silently acquire secrets, permissions or deployment rights. Personal, project and team memories stay isolated and user-reviewable.
+
+**Immediate delivery order is unchanged:** [#42](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/42) and downstream [#52](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/52) first prove real HIC UI -> authorized repository -> model coding -> tests -> scoped commit/push -> draft PR on an isolated test repository. [#55](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/55) only captures architecture/roadmap for now. No new task state machine, runtime deployment, self-installation, extension marketplace or model training is authorized by these documents.
+
+
+## 9. Portable AI identity and workspace — cross-device North Star (2026-11-09)
+
+> **Future product direction; not a currently shipped capability.** A person's HIC account and authorized workspace should be accessible across their devices. Agent definitions, preferences and scoped model-independent memory can travel with their user/project/team identity, while locally installed models, private files, connector credentials and execution permissions remain bound to their explicitly trusted hosts. Cross-device login must **not** imply data synchronization, remote shell/LLM access or approval authority.
+
+HIC should support local-only, self-hosted and later optional managed synchronization choices without requiring a central cloud account for basic use. Separate **identity, workspace knowledge, compute and device trust**. The current local operator bootstrap mechanism is not intended to become HIC's permanent portable identity layer. Preserve authentication, audit and scoped approvals in today's P0; do not expand implementation scope until the security and migration design is reviewed.
+
+Architecture contract and phased roadmap: [Portable Identity & Workspace](./PORTABLE_IDENTITY_WORKSPACE.md). This extends the model-independent [Self-Knowledge Design](./SELF_KNOWLEDGE_DESIGN.md) and does not change the immediate #42/#52 delivery priorities.

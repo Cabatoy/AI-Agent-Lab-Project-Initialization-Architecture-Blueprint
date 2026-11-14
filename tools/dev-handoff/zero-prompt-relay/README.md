@@ -1,128 +1,59 @@
-# HIC Relay — Authenticated GitHub API Client
+# HIC Developer Proposal Relay — P0 receive-only
 
-**Issue:** #142  
-**Branch:** `feature/issue-142-relay-auth-rate-limit`  
-**Status:** Draft PR — Ready for Review (No Merge)
+**Developer workstation only; not a HIC product feature.** This package reads an explicit **public GitHub** branch's **unsigned, non-executable** proposals and writes only local `seen-untrusted` receipts. It cannot send to Fusion (except the separate, default-off single-issue VS Code Chat handoff in [CHAT_FORWARD.md](./CHAT_FORWARD.md)), start an SDK/model session, execute files/commands, mutate HIC runtime/DB, commit, push, publish PRs, merge or deploy.
 
-## What's Included
+## Safety contract
 
-This implementation addresses GitHub Issue #142 by providing a robust, secure GitHub REST API client for the HIC Relay watcher with:
+- Explicit `--enable-read-only` opt-in. Nothing runs at startup or installation. No plugins, CLI auth, SDK, npm dependencies or GitHub token.
+- **Only** `GET https://api.github.com/repos/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/contents/dev-work-orders/{inbox.json|orders/<uuid>.json}?ref=hic-dev-orders`; no user-controlled URLs, redirection, or write requests. Public API rate limits may apply.
+- A strict bounded inbox (20 entries), SHA-256 raw content check, exact repository/source, expiry, replay protection and review-only validation. No GitHub Issue prose, PR titles, comments or unreviewed content can become an executable prompt in the receive-only/ack relay; only the opt-in chat handoff forwards one locally chosen issue from a locally configured trusted author.
+- Synthetic ping has no HIC task ID. Review-only proposals do not grant authority and are always recorded as `executionAllowed:false`.
+- Receipts live in the operator's **local** `~/.hic-dev-relay/acks/`. They do **not** leave the machine. They are not a durable HIC task/attempt ledger, remote acknowledgment or proof of model execution. A subsequent independently approved GitHub ack broker is still required for *zero report relay*.
+- One poll per 10 minutes in watch mode; previously acknowledged entries do not refetch the full order. Stop with Ctrl+C.
+- This branch is a Draft PR; review and CI before local acceptance. Never use a real HIC production task while the receive-only boundary is unproven.
 
-### 🔐 Security
-- **Authenticated requests** via Git Credential Manager (GCM)
-- **Zero credential exposure** in logs, exceptions, or command lines
-- **Output redaction** for all sensitive data (tokens, Bearer headers, etc.)
-- **No hardcoded secrets** anywhere in the codebase
+## Offline tests
 
-### ⚙️ Functionality
-- **Rate-limit aware** client with exponential backoff + jitter
-- **Distinction** between auth errors (401/403) and rate limits (429)
-- **Respects** GitHub API headers: `Retry-After`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
-- **Graceful fallback** when credentials unavailable
-
-### ✅ Testing
-- **54 offline tests** covering auth, rate limits, redaction, error handling
-- **No network calls**, no real tokens, completely isolated
-- **Test categories**: credential validation, output redaction, retry logic, URL parsing, HTTP status handling
-
-### 📚 Documentation
-- `IMPLEMENTATION.md` — Full technical guide, setup, credential flow, and rollback instructions
-- `relay-fetch-issue.ps1` — PowerShell wrapper for Relay integration
-
-## Directory Structure
-
-```
-tools/dev-handoff/
-├── zero-prompt-relay/
-│   ├── RelayAuthClient.csproj              # C# library project
-│   ├── GitHubRestClient.cs                 # Main authenticated API client
-│   ├── GitCredentialManagerProvider.cs     # GCM credential integration
-│   ├── RateLimitHandler.cs                 # Exponential backoff + rate limit logic
-│   ├── IMPLEMENTATION.md                   # Detailed implementation guide
-│   ├── RelayAuthClient.sln                 # Solution file
-│   └── tests/
-│       ├── RelayAuthClient.Tests.csproj    # XUnit test project
-│       ├── GitHubRestClientTests.cs        # API client tests
-│       ├── CredentialAndRedactionTests.cs  # Credential & redaction tests
-│       └── offline-tests.ps1               # Standalone offline test suite (54 tests, all passing)
-└── relay-fetch-issue.ps1                   # PowerShell wrapper for Relay integration
-```
-
-## Running the Offline Tests
-
-All tests are **completely offline** — no network, no real tokens, no side effects:
+From `tools/dev-handoff/zero-prompt-relay`:
 
 ```powershell
-cd tools/dev-handoff/zero-prompt-relay/tests
-. ./offline-tests.ps1
+npm run check
 ```
 
-**Expected output:**
+Tests use fake GitHub responses and disposable local receipts. They never call the network or model.
+
+## One-time operator bootstrap (after PR CI review)
+
+Open PowerShell **from any HIC repository checkout** (not from the Copilot SDK/sandbox worktree). These commands fetch only the verified developer-tool branch and create a **separate**, detached worktree; they do not alter your active branch, runtime, database, protected volumes or Podman.
+
+```powershell
+git fetch origin feature/hic-dev-proposal-watcher
+$relayParent = Join-Path $env:LOCALAPPDATA 'HICDevRelay'
+New-Item -ItemType Directory -Force -Path $relayParent | Out-Null
+$relayRoot = Join-Path $relayParent 'source'
+git worktree add --detach $relayRoot origin/feature/hic-dev-proposal-watcher
+node --version
+node (Join-Path $relayRoot 'tools/dev-handoff/zero-prompt-relay/src/cli.mjs') --enable-read-only --once
 ```
-✅ ALL TESTS PASSED
-Passed: 54
-Failed: 0
+
+Expected first result when a valid synthetic GitHub ping is present: `{"status":"read-only","observed":1,"newlySeen":1,"executionAllowed":false}`. Repeating once should return `newlySeen:0`. Any other result is a test outcome to diagnose, not permission to start anything.
+
+For *manual opt-in* foreground polling (terminal stays running):
+
+```powershell
+node (Join-Path $relayRoot 'tools/dev-handoff/zero-prompt-relay/src/cli.mjs') --enable-read-only --watch
 ```
 
-## Key Design Decisions
+No scheduled task/Windows service is installed. Do not enable OS autostart yet; independently review first. If the source checkout already exists, **do not** overwrite/recreate it—inspect its branch/HEAD and update with a reviewed fast-forward procedure.
 
-### ✅ GCM Integration
-- Respects `git credential fill` for credential retrieval
-- Does **not** assume git remote success means REST token validity
-- Gracefully handles missing GCM (returns null, Relay continues)
+## Missing pieces
 
-### ✅ Rate Limit Strategy
-- Exponential backoff: (2^n + jitter) × 1s, capped at 5 minutes
-- Respects GitHub headers: `Retry-After`, `X-RateLimit-Reset`
-- Max consecutive retries: 3 (configurable)
+Opt-in single-issue handoff to VS Code Chat (`ChatForwardSetup` / `ChatForwardOnce`) is documented separately in [CHAT_FORWARD.md](./CHAT_FORWARD.md); it is off by default and does not change the ack relay.
 
-### ✅ No Credential Leakage
-- All credentials redacted before exception throw
-- No tokens in process arguments, HTTP headers, git URLs, or tracked files
-- Regex-based redaction of token patterns, Authorization headers, Bearer tokens
+This P0 slice proves only **GitHub → local receipt** after one-time startup. It does not prove **local → GitHub ack**, HIC task/run claims, reviewed signing keys, lease recovery, sandbox isolation, SDK login/quota, code/test/CI artifacts or autonomous continuation. Those must be separately implemented and approved under [Issue #93](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/93); existing [#92](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/92) sandbox preflight remains `UNVERIFIED`.
 
-### ✅ Zero Impact on Current Relay
-- This is a **standalone library** and wrapper, not yet integrated
-- Existing Relay process remains completely unchanged
-- Explicit approval required before activating in production
+*Humans are not message queues.*
 
-## Security & Compliance
+## Authenticated watcher polling (Issue #142)
 
-- ✅ No secrets in source code
-- ✅ No `.env`, `.config` files with credentials
-- ✅ All errors user-facing but redacted
-- ✅ Git Credential Manager vault untouched
-- ✅ No background services or system changes
-- ✅ Graceful rollback (git revert)
-
-## Known Limitations
-
-1. **GCM-only credential source** — Currently integrates with Git Credential Manager
-   - Alternative: fine-grained GitHub App tokens (documented but not implemented)
-
-2. **No interactive auth** — Requires pre-configured credentials in GCM
-   - Prevents blocking during unattended runs
-
-3. **Read-only scope** — Limited to repository read operations
-   - Cannot write/merge/approve on behalf of user
-
-## Next Steps
-
-This is a prerequisite for **Issue #144** ("HIC unattended development — isolated workspace, corporate-data exclusion and outbound gates"), which will embed this rate-limit and auth logic in a broader execution sandbox.
-
-## Verification Checklist
-
-- [x] Offline test suite passing (54 tests)
-- [x] No trailing whitespace (`git diff --check` passes)
-- [x] Secure credential handling — no exposure in logs/exceptions
-- [x] Rate-limit aware with exponential backoff
-- [x] Git Credential Manager integration
-- [x] Output redaction for all sensitive data
-- [x] Documentation complete
-- [x] Zero impact on current Relay
-- [x] No automatic enablement or machine-wide changes
-
----
-
-**PR Status:** Draft (ready for review, not for merge/deploy)  
-**Base Branch:** `develop`
+The `ChatForwardWatch*` polling path uses [`src/github-client.mjs`](./src/github-client.mjs), a dependency-free Node port of the PR #145 reference client (`GitHubRestClient.cs`, `RateLimitHandler.cs`, `GitCredentialManagerProvider.cs`; see [IMPLEMENTATION.md](./IMPLEMENTATION.md)). Authentication is explicit opt-in via `githubAuth` (`none` default, `gcm`, `env`); when configured but unavailable the watcher fails closed and never falls back to anonymous calls. 401/403 stop the loop; 429 and exhausted-quota 403 use `Retry-After`/`X-RateLimit-Reset` with a 15-minute cap. Details: [CHAT_FORWARD.md](./CHAT_FORWARD.md). The receive-only/ack relay above is unchanged and remains anonymous.
