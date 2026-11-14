@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -102,4 +103,33 @@ internal static class LinuxSyntheticStagingRoot
         stream.Write(bytes);
         stream.Flush(flushToDisk: true);
     }
+    /// <summary>
+    /// Writes only a fixture whose bytes match the immutable manifest input digest.
+    /// This is NOT an authorization or filesystem ownership check.
+    /// </summary>
+    internal static void WriteManifestFixture(
+        SafeFileHandle inputDirectory,
+        string name,
+        ReadOnlySpan<byte> bytes,
+        int maximumBytes,
+        SandboxProbeManifest manifest,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        var report = RootlessPodmanSandboxPreflight.Evaluate(manifest, null, null, nowUtc);
+        if (report.AgentCodeExecutionAllowed ||
+            report.SanitizedReasons.Count != 1 ||
+            report.SanitizedReasons[0] != "runtime-evidence-unavailable")
+            throw new InvalidOperationException("Manifest invalid or expired.");
+
+        if (maximumBytes < 0 || bytes.Length > maximumBytes)
+            throw new ArgumentException("Fixture exceeds allowed size.", nameof(bytes));
+
+        var digest = "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        if (!string.Equals(digest, manifest.StagedInputDigest, StringComparison.Ordinal))
+            throw new InvalidOperationException("Fixture SHA-256 does not match manifest.");
+
+        WriteFixture(inputDirectory, name, bytes, maximumBytes);
+    }
+
 }
