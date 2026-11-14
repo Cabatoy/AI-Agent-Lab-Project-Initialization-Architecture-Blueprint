@@ -38,6 +38,23 @@ internal static class LinuxSyntheticStagingRoot
         [FieldOffset(140)] public uint DeviceMinor;
     }
 
+    [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
+    private static extern int FcntlDuplicate(int fd, int command, int minimumFd);
+
+    // F_DUPFD_CLOEXEC duplicates an open directory handle without following paths.
+    private const int F_DUPFD_CLOEXEC = 1030;
+
+    private static SafeFileHandle DuplicateDirectoryHandle(SafeFileHandle original)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        if (original.IsClosed || original.IsInvalid)
+            throw new ArgumentException("Invalid parent directory handle.", nameof(original));
+        var fd = FcntlDuplicate(original.DangerousGetHandle().ToInt32(), F_DUPFD_CLOEXEC, 0);
+        if (fd < 0)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Directory handle duplication failed.");
+        return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+    }
+
     [DllImport("libc", SetLastError = true, EntryPoint = "statx")]
     private static extern int Statx(int dirfd,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
@@ -158,8 +175,8 @@ internal static class LinuxSyntheticStagingRoot
         {
             ProbeId = probeId;
             this.directory = directory;
-            this.parent = parent;
             identity = DirectoryIdentity(directory.DangerousGetHandle().ToInt32(), "", 0x1000);
+            this.parent = DuplicateDirectoryHandle(parent);
         }
 
         internal Guid ProbeId { get; }
@@ -208,6 +225,7 @@ internal static class LinuxSyntheticStagingRoot
             if (disposed) return;
             disposed = true;
             directory.Dispose();
+            parent.Dispose();
         }
     }
 
