@@ -366,4 +366,44 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void ReceiptIdentityMatchesOriginalDirectoryEntry()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            Assert.True(receipt.MatchesCurrentDirectoryEntry());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ReceiptIdentityRejectsReplacedDirectoryEntry()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            var original = Path.Combine(root, manifest.ProbeId.ToString("N"));
+            Directory.Move(original, Path.Combine(root, "original-moved"));
+            Directory.CreateDirectory(original);
+            Assert.False(receipt.MatchesCurrentDirectoryEntry());
+            Directory.Delete(original);
+            Directory.CreateSymbolicLink(original, "/tmp");
+            Assert.False(receipt.MatchesCurrentDirectoryEntry());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
