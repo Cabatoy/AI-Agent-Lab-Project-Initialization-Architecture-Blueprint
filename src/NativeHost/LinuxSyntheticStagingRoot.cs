@@ -153,6 +153,21 @@ internal static class LinuxSyntheticStagingRoot
     }
 
     /// <summary>
+    /// Opens an existing child for inspection only. Never follows the final
+    /// path component if it is a symlink; never creates or deletes anything.
+    /// This does not establish ownership or authorize cleanup.
+    /// </summary>
+    internal static SafeFileHandle OpenChildDirectoryForInspection(
+        SafeFileHandle trustedParent, string name)
+    {
+        RequireLinux();
+        ArgumentNullException.ThrowIfNull(trustedParent);
+        if (trustedParent.IsInvalid || trustedParent.IsClosed)
+            throw new ArgumentException("Invalid parent directory.", nameof(trustedParent));
+        return OpenDirectory(trustedParent, name);
+    }
+
+    /// <summary>
     /// Non-destructive cleanup admission: a directory must be empty before a
     /// future trusted cleanup worker can remove it. This method never deletes.
     /// Rejects unexpected files, subdirectories and symlinks (including dangling).
