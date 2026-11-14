@@ -243,4 +243,43 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void InspectionHandleRejectsSymlinkToExternalDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var probeId = Guid.NewGuid();
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probeId);
+            var link = Path.Combine(root, probeId.ToString("N"), "external");
+            Directory.CreateSymbolicLink(link, "/tmp");
+            Assert.ThrowsAny<Exception>(() =>
+                LinuxSyntheticStagingRoot.OpenChildDirectoryForInspection(probe, "external"));
+            Assert.False(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(probe));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void InspectionHandleRejectsTraversalAndAcceptsRealDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, Guid.NewGuid());
+            using var created = LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "input");
+            using var reopened = LinuxSyntheticStagingRoot.OpenChildDirectoryForInspection(probe, "input");
+            Assert.True(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(reopened));
+            Assert.Throws<ArgumentException>(() =>
+                LinuxSyntheticStagingRoot.OpenChildDirectoryForInspection(probe, "../tmp"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
