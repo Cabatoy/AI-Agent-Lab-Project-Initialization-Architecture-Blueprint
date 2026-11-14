@@ -152,4 +152,25 @@ internal static class LinuxSyntheticStagingRoot
         WriteFixture(inputDirectory, name, bytes, maximumBytes);
     }
 
+    /// <summary>
+    /// Non-destructive cleanup admission: a directory must be empty before a
+    /// future trusted cleanup worker can remove it. This method never deletes.
+    /// Rejects unexpected files, subdirectories and symlinks (including dangling).
+    /// The caller must independently prove directory ownership and avoid races.
+    /// </summary>
+    internal static bool IsEmptyDirectoryForCleanup(SafeFileHandle directory)
+    {
+        RequireLinux();
+        ArgumentNullException.ThrowIfNull(directory);
+        if (directory.IsInvalid || directory.IsClosed)
+            throw new ArgumentException("Invalid directory handle.", nameof(directory));
+
+        // Enumerate via /proc/self/fd to stay bound to the open directory,
+        // rather than resolving a caller-provided path.
+        var fd = directory.DangerousGetHandle().ToInt32();
+        var fdPath = "/proc/self/fd/" + fd.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        using var enumerator = Directory.EnumerateFileSystemEntries(fdPath).GetEnumerator();
+        return !enumerator.MoveNext();
+    }
+
 }
