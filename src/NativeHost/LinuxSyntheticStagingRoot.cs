@@ -208,6 +208,23 @@ internal static class LinuxSyntheticStagingRoot
         /// A replacement of the probe's directory entry cannot redirect this
         /// lookup to a different probe. No deletion or ownership attestation.
         /// </summary>
+        /// <summary>
+        /// Non-destructive preflight only. Checks that the original probe still
+        /// occupies its entry, has private permissions, and is empty. Rechecks
+        /// identity after enumeration to detect observable swaps. This is NOT
+        /// atomic and MUST NOT authorize a subsequent unlink or agent execution.
+        /// </summary>
+        internal bool PassesReadOnlyCleanupPreflight()
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            if (!MatchesCurrentDirectoryEntry()) return false;
+            var current = DirectoryIdentity(directory.DangerousGetHandle().ToInt32(), "", 0x1000);
+            // Only owner may access the staging directory; owner needs rwx.
+            if ((current.Mode & 0x1ff) != 0x1c0) return false;
+            if (!IsEmptyDirectoryForCleanup(directory)) return false;
+            return MatchesCurrentDirectoryEntry();
+        }
+
         internal SafeFileHandle OpenChildForInspection(string name)
         {
             if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
