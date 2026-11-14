@@ -203,4 +203,44 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void CleanupAdmissionRejectsUnexpectedFileAndKeepsIt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var probeId = Guid.NewGuid();
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probeId);
+            Assert.True(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(probe));
+            using var input = LinuxSyntheticStagingRoot.CreateChildDirectory(probe, "input");
+            Assert.False(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(probe));
+            LinuxSyntheticStagingRoot.WriteFixture(input, "fixture", "preserve"u8, 32);
+            Assert.False(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(input));
+            Assert.Equal("preserve", File.ReadAllText(Path.Combine(root, probeId.ToString("N"), "input", "fixture")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void CleanupAdmissionRejectsSymlinkWithoutFollowingIt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var probeId = Guid.NewGuid();
+            using var probe = LinuxSyntheticStagingRoot.CreateProbeDirectory(parent, probeId);
+            var link = Path.Combine(root, probeId.ToString("N"), "outside");
+            File.CreateSymbolicLink(link, "/tmp/does-not-exist-hic-sentinel");
+            Assert.False(LinuxSyntheticStagingRoot.IsEmptyDirectoryForCleanup(probe));
+            Assert.True(File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
