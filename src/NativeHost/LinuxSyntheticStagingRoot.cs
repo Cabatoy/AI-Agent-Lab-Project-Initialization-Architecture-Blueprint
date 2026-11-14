@@ -1,0 +1,106 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+/// <summary>
+/// Linux-only fd-relative private staging root creation. No shell, Podman, mounts,
+/// symlink traversal or cleanup. Caller supplies a trusted, pre-opened directory fd.
+/// Ownership of the returned fd stays with the caller. Fail closed on any OS error.
+/// </summary>
+internal static class LinuxSyntheticStagingRoot
+{
+    private const int O_RDONLY = 0;
+    private const int O_DIRECTORY = 0x10000;
+    private const int O_NOFOLLOW = 0x20000;
+    private const int O_CLOEXEC = 0x80000;
+    private const int O_EXCL = 0x80;
+    private const int O_CREAT = 0x40;
+    private const int O_WRONLY = 1;
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "mkdirat")]
+    private static extern int MkdirAt(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint mode);
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "openat")]
+    private static extern int OpenAt(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mode);
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "unlinkat")]
+    private static extern int UnlinkAt(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+
+    private static void RequireLinux()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Linux staging only.");
+    }
+
+    private static string Segment(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name.Length > 64 ||
+            name[0] is < 'a' or > 'z' &&
+            name[0] is < '0' or > '9' ||
+            name.Any(c => !(c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-')))
+            throw new ArgumentException("Unsafe staging segment.", nameof(name));
+        return name;
+    }
+
+    private static SafeFileHandle OpenDirectory(SafeFileHandle parent, string name)
+    {
+        var fd = OpenAt(parent.DangerousGetHandle().ToInt32(), Segment(name),
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, 0);
+        if (fd < 0) throw new Win32Exception(Marshal.GetLastPInvokeError(), "Staging directory open rejected.");
+        return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+    }
+
+    /// <summary>
+    /// Creates a new, private probe directory. No pre-existing directory is accepted.
+    /// The parent must already be a trusted directory fd and must not be attacker writable.
+    /// </summary>
+    internal static SafeFileHandle CreateProbeDirectory(SafeFileHandle trustedParent, Guid probeId)
+    {
+        RequireLinux();
+        ArgumentNullException.ThrowIfNull(trustedParent);
+        if (trustedParent.IsInvalid || trustedParent.IsClosed || probeId == Guid.Empty)
+            throw new ArgumentException("Invalid staging parent or probe ID.");
+        var name = probeId.ToString("N");
+        if (MkdirAt(trustedParent.DangerousGetHandle().ToInt32(), name, 0x1C0) != 0) // 0700
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Probe directory creation rejected.");
+        try
+        {
+            return OpenDirectory(trustedParent, name);
+        }
+        catch
+        {
+            // Only the exact newly created empty directory; never recursive deletion.
+            UnlinkAt(trustedParent.DangerousGetHandle().ToInt32(), name, 0x200); // AT_REMOVEDIR
+            throw;
+        }
+    }
+
+    /// <summary>Creates a private child directory and returns its no-follow handle.</summary>
+    internal static SafeFileHandle CreateChildDirectory(SafeFileHandle parent, string name)
+    {
+        RequireLinux();
+        ArgumentNullException.ThrowIfNull(parent);
+        if (parent.IsInvalid || parent.IsClosed) throw new ArgumentException("Invalid parent.");
+        name = Segment(name);
+        if (MkdirAt(parent.DangerousGetHandle().ToInt32(), name, 0x1C0) != 0)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Child directory creation rejected.");
+        return OpenDirectory(parent, name);
+    }
+
+    /// <summary>Exclusively writes a bounded fixture file through a directory fd.</summary>
+    internal static void WriteFixture(SafeFileHandle inputDirectory, string name, ReadOnlySpan<byte> bytes, int maximumBytes)
+    {
+        RequireLinux();
+        ArgumentNullException.ThrowIfNull(inputDirectory);
+        if (inputDirectory.IsInvalid || inputDirectory.IsClosed || maximumBytes < 0 ||
+            bytes.Length > maximumBytes) throw new ArgumentException("Invalid fixture bound or directory.");
+        name = Segment(name);
+        var fd = OpenAt(inputDirectory.DangerousGetHandle().ToInt32(), name,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0x180); // 0600
+        if (fd < 0) throw new Win32Exception(Marshal.GetLastPInvokeError(), "Fixture creation rejected.");
+        using var handle = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+        using var stream = new FileStream(handle, FileAccess.Write);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
+    }
+}
