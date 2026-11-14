@@ -135,6 +135,17 @@ internal static class LinuxSyntheticStagingRoot
 
         internal Guid ProbeId { get; }
 
+        /// <summary>
+        /// Inspects a child relative to the originally created probe handle.
+        /// A replacement of the probe's directory entry cannot redirect this
+        /// lookup to a different probe. No deletion or ownership attestation.
+        /// </summary>
+        internal SafeFileHandle OpenChildForInspection(string name)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
+            return OpenChildDirectoryForInspection(directory, name);
+        }
+
         internal bool IsEmptyForCleanupInspection()
         {
             if (disposed) throw new ObjectDisposedException(nameof(CreatedProbeReceipt));
