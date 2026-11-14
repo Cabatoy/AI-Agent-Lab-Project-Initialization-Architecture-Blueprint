@@ -1,0 +1,19 @@
+# Opt-in isolated test stack; never use for the default HIC deployment.
+# The base compose uses fixed container_name values; override them to avoid
+# collisions with stopped/active production and preview containers.
+services:
+  postgres:
+    container_name: hic-staging-ui-test-postgres
+  redis:
+    container_name: hic-staging-ui-test-redis
+  control-plane:
+    container_name: hic-staging-ui-test-control-plane
+    environment:
+      HIC_STAGING_OBSERVATIONS_DIRECTORY: /mnt/hic-staging-observed
+      HIC_LOCAL_OPERATOR_TOKEN: ${HIC_STAGING_TEST_OPERATOR_TOKEN:?Set a test-only random operator bootstrap token}
+      HIC_LOCAL_OPERATOR_ID: ${HIC_STAGING_TEST_OPERATOR_ID:?Set a test-only operator UUID}
+    volumes:
+      - type: bind
+        source: ${HIC_STAGING_OBSERVATIONS_HOST_DIR:?Set an absolute staging-observed host path}
+        target: /mnt/hic-staging-observed
+        read_only: true
