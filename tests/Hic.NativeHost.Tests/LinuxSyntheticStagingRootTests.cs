@@ -282,4 +282,43 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void CreationReceiptIsBoundToCreatedProbeAndDisposalRevokesInspection()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            Assert.Equal(manifest.ProbeId, receipt.ProbeId);
+            Assert.True(receipt.IsEmptyForCleanupInspection());
+            receipt.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => receipt.IsEmptyForCleanupInspection());
+            Assert.True(Directory.Exists(Path.Combine(root, manifest.ProbeId.ToString("N"))));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void CreationReceiptCannotBeIssuedForExistingProbe()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var receipt = LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now);
+            Assert.ThrowsAny<Exception>(() =>
+                LinuxSyntheticStagingRoot.CreateManifestProbeWithReceipt(parent, manifest, now));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
