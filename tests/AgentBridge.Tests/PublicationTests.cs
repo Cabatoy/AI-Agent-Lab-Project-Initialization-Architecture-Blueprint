@@ -308,7 +308,7 @@ public sealed class PublicationTests : IDisposable
         // The CLI uses the real UTC clock. Refresh only this CLI fixture rather than
         // weakening production snapshot freshness checks or changing deterministic tests.
         var cliNow = DateTimeOffset.UtcNow;
-        WriteSnapshot(cliNow.AddMinutes(-1), "cli-publication-fixture", cliNow);
+        WriteSnapshot(cliNow.AddMinutes(-1), "snapshot-foundation", cliNow);
         var previousOutput = Console.Out;
         using var output = new StringWriter();
         try
