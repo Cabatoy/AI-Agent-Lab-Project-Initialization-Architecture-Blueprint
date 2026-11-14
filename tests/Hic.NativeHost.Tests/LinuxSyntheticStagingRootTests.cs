@@ -147,4 +147,60 @@ public sealed class LinuxSyntheticStagingRootTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public void ManifestProbeDirectoryUsesManifestId()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            using var probe = LinuxSyntheticStagingRoot.CreateManifestProbeDirectory(parent, manifest, now);
+            Assert.True(Directory.Exists(Path.Combine(root, manifest.ProbeId.ToString("N"))));
+            Assert.ThrowsAny<Exception>(() =>
+                LinuxSyntheticStagingRoot.CreateManifestProbeDirectory(parent, manifest, now));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ExpiredManifestCannotCreateProbeDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            Assert.Throws<InvalidOperationException>(() =>
+                LinuxSyntheticStagingRoot.CreateManifestProbeDirectory(parent, manifest, manifest.ExpiresAtUtc));
+            Assert.False(Directory.Exists(Path.Combine(root, manifest.ProbeId.ToString("N"))));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void TamperedManifestCannotCreateProbeDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "hic-staging-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var parent = OpenTestDirectory(root);
+            var now = DateTimeOffset.UtcNow;
+            var manifest = ManifestFor("fixture"u8.ToArray(), now);
+            var tampered = manifest with { ProbeId = Guid.NewGuid() };
+            Assert.Throws<InvalidOperationException>(() =>
+                LinuxSyntheticStagingRoot.CreateManifestProbeDirectory(parent, tampered, now));
+            Assert.False(Directory.Exists(Path.Combine(root, tampered.ProbeId.ToString("N"))));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 }
