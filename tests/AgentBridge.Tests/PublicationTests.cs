@@ -46,7 +46,7 @@ public sealed class PublicationTests : IDisposable
         snapshot = WriteSnapshot(Now.AddMinutes(-5), "snapshot-foundation");
     }
 
-    private Snapshot WriteSnapshot(DateTimeOffset observed, string summary)
+    private Snapshot WriteSnapshot(DateTimeOffset observed, string summary, DateTimeOffset? validationNow = null)
     {
         var input = new SnapshotInput
         {
@@ -60,8 +60,8 @@ public sealed class PublicationTests : IDisposable
         };
         var bytes = CanonicalJson.Serialize(input);
         var value = new SnapshotProducer().Generate(bytes, CanonicalJson.Hash(bytes),
-            new LocalGit(source, SourceRepository), Now);
-        new ArtifactStore(source).Write(value, Now);
+            new LocalGit(source, SourceRepository), validationNow ?? Now);
+        new ArtifactStore(source).Write(value, validationNow ?? Now);
         return value;
     }
 
@@ -305,6 +305,10 @@ public sealed class PublicationTests : IDisposable
     [Fact]
     public void OfflineCliEmitsApprovalPreviewThenVerifiedReceipt()
     {
+        // The CLI uses the real UTC clock. Refresh only this CLI fixture rather than
+        // weakening production snapshot freshness checks or changing deterministic tests.
+        var cliNow = DateTimeOffset.UtcNow;
+        WriteSnapshot(cliNow.AddMinutes(-1), "cli-publication-fixture", cliNow);
         var previousOutput = Console.Out;
         using var output = new StringWriter();
         try
