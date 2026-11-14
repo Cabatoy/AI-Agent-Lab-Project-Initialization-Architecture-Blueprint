@@ -1,0 +1,12 @@
+# Opt-in overlay for a SEPARATE test stack only.
+# Requires HIC_STAGING_OBSERVATIONS_HOST_DIR to point to the Windows Relay's
+# ~/.hic-dev-relay/staging-observed directory. Never add to default compose.
+services:
+  control-plane:
+    environment:
+      HIC_STAGING_OBSERVATIONS_DIRECTORY: /mnt/hic-staging-observed
+    volumes:
+      - type: bind
+        source: ${HIC_STAGING_OBSERVATIONS_HOST_DIR:?Set an absolute staging-observed host path}
+        target: /mnt/hic-staging-observed
+        read_only: true
