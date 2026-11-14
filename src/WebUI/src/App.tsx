@@ -3,14 +3,16 @@ import { api, type Health, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
 import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
+import { StagingObservationsPanel } from './StagingObservationsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { PlanningWorkflow } from './PlanningWorkflow';
 import { Status } from './components';
 
-type Page = 'Command Center' | 'Planning' | 'Local Runner' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
+type Page = 'Staging' | 'Command Center' | 'Planning' | 'Local Runner' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
 type Resource<T> = { data: T | null; error: string | null };
 const pages: { name: Page; icon: string }[] = [
   { name: 'Command Center', icon: '⌘' },
+  { name: 'Staging', icon: '◉' },
   { name: 'Planning', icon: '◇' },
   { name: 'Local Runner', icon: '▶' },
   { name: 'Overview', icon: '◫' }, { name: 'Tasks', icon: '▤' },
@@ -19,6 +21,7 @@ const pages: { name: Page; icon: string }[] = [
 ];
 const subtitles: Partial<Record<Page, string>> = {
   'Command Center': 'Describe work in natural language and save it as a Draft task.',
+  Staging: 'Read-only, untrusted Relay observations. No agent execution.',
   'Local Runner': 'Approve one exact, read-only local system health action and review its durable result.',
   Planning: 'Select the configured repository and review a local, versioned plan preview.',
   Overview: 'Your local software factory, in view.',
@@ -141,6 +144,7 @@ export default function App() {
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
       {page === 'Local Runner' && <LocalRunnerWorkflow />}
+      {page === 'Staging' && <StagingObservationsPanel />}
       {page === 'Planning' && <PlanningWorkflow />}
       {page === 'Command Center' && <LocalDiagnosticsPanel />}
       {page === 'Command Center' && <NativeWorkspacePanel />}
