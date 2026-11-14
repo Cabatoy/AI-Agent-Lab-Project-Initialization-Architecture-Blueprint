@@ -2,7 +2,8 @@
 // Does not run as a watcher, read GitHub, execute tasks or access AWS credentials.
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {buildStagingProbe,verifyStagingResponse} from './aws-staging-contract.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
