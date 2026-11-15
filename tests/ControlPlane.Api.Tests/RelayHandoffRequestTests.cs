@@ -84,8 +84,8 @@ public sealed class RelayHandoffRequestTests
     public async Task CaseVariantUnknownField_IsRejected() =>
         Assert.False(await Accepts(ValidJson.Replace(
             "\\"repository\\":\\"Cabatoy/example\\"",
-            "\\"repository\\":\\"Cabatoy/example\\",\\"Repository\\":\\"Other/example\\"")));
-
+            "\"repository\":\"Cabatoy/example\"",
+            "\"repository\":\"Cabatoy/example\",\"Repository\":\"Other/example\"")));
     [Fact]
     public async Task OversizedOrUnboundedBody_IsRejected()
     {
