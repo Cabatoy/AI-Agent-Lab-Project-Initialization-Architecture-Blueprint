@@ -71,7 +71,7 @@ public sealed class RelayHandoffRequestTests
     [Theory]
     [InlineData("true")]
     [InlineData("42")]
-    [InlineData("\\"text\\"")]
+    [InlineData("\"text\"")]
     [InlineData("null")]
     public async Task NonObjectJson_IsRejected(string json) =>
         Assert.False(await Accepts(json));
