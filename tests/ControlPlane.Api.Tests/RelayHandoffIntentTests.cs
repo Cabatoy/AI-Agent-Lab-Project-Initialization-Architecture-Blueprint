@@ -93,6 +93,16 @@ public sealed class RelayHandoffIntentTests
     public void UnsafeBaseRef_IsRejected(string expectedBaseRef) =>
         Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: expectedBaseRef));
 
+    [Fact]
+    public void IdempotencyKey_RejectsOversizedInputBeforeRegexEvaluation()
+    {
+        Assert.False(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 129)));
+        Assert.False(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 1_000_000)));
+        Assert.True(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 128)));
+        Assert.True(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 32)));
+        Assert.False(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 31)));
+    }
+
     [Theory]
     [InlineData("abcdefghijklmnopqrstuvwxyzABCDEF", true)]
     [InlineData("01234567890123456789012345678901", true)]
