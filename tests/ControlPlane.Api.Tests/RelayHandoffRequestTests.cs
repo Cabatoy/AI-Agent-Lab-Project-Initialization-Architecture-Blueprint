@@ -97,4 +97,28 @@ public sealed class RelayHandoffRequestTests
         Assert.Null(await RelayHandoffEndpoints.ParseHandoffRequestAsync(
             context.Request, CancellationToken.None));
     }
+    [Fact]
+    public async Task TransferEncodingIsRejected_EvenWithValidJsonAndDeclaredLength()
+    {
+        var context = new DefaultHttpContext();
+        var bytes = Encoding.UTF8.GetBytes(ValidJson);
+        context.Request.Body = new MemoryStream(bytes);
+        context.Request.ContentType = "application/json";
+        context.Request.ContentLength = bytes.Length;
+        context.Request.Headers.TransferEncoding = "chunked";
+
+        Assert.Null(await RelayHandoffEndpoints.ParseHandoffRequestAsync(
+            context.Request, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("a")]
+    [InlineData(" ")]
+    [InlineData("\\n")]
+    public async Task InvalidDigestCharactersAreRejectedByIntentValidation(string suffix)
+    {
+        var digest = new string('a', 63) + suffix;
+        Assert.False(RelayHandoffIntent.Matches(digest, new string('a', 64)));
+    }
+
 }
