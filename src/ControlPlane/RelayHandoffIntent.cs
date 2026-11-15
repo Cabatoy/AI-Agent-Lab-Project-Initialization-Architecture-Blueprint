@@ -32,7 +32,7 @@ internal static class RelayHandoffIntent
             taskId.ToString("N"),
             taskUpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture),
             title,
-            description ?? throw new ArgumentNullException(nameof(description)),
+            description,
             repository,
             expectedBaseRef
         };
@@ -53,7 +53,7 @@ internal static class RelayHandoffIntent
 
     internal static bool IsValidIdempotencyKey(string? key) =>
         key is { Length: >= 32 and <= 128 } &&
-        Regex.IsMatch(key, "^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant);
+        Regex.IsMatch(key, @"\A[A-Za-z0-9_-]+\z", RegexOptions.CultureInvariant);
 
     // Bound untrusted task snapshots and reject control characters before canonicalization.
     // Task content remains data, never an instruction or execution authorization.
@@ -65,14 +65,14 @@ internal static class RelayHandoffIntent
     // These checks do not authorize access to the named repository or ref.
     private static bool IsSafeRepository(string? repository) =>
         repository is not null &&
-        Regex.IsMatch(repository, @"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$", RegexOptions.CultureInvariant) &&
+        Regex.IsMatch(repository, @"\A[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\z", RegexOptions.CultureInvariant) &&
         repository.Split('/').All(part => part is not "." and not ".." &&
             !part.StartsWith('.') && !part.EndsWith('.') &&
             !part.EndsWith(".lock", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsSafeBaseRef(string? reference) =>
         reference is not null && reference.Length <= 200 &&
-        Regex.IsMatch(reference, @"^[A-Za-z0-9_][A-Za-z0-9_./-]*$", RegexOptions.CultureInvariant) &&
+        Regex.IsMatch(reference, @"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\z", RegexOptions.CultureInvariant) &&
         !reference.Contains("..", StringComparison.Ordinal) &&
         !reference.Contains("//", StringComparison.Ordinal) &&
         !reference.EndsWith('/') && !reference.EndsWith(".lock", StringComparison.OrdinalIgnoreCase) &&
@@ -81,5 +81,5 @@ internal static class RelayHandoffIntent
 
     private static bool IsLowerHexDigest(string? digest) =>
         digest is not null &&
-        Regex.IsMatch(digest, "^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+        Regex.IsMatch(digest, @"\A[0-9a-f]{64}\z", RegexOptions.CultureInvariant);
 }
