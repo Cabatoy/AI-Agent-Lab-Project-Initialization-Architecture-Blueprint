@@ -65,7 +65,9 @@ internal static class RelayHandoffIntent
     private static bool IsSafeRepository(string? repository) =>
         repository is not null &&
         Regex.IsMatch(repository, @"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$", RegexOptions.CultureInvariant) &&
-        repository.Split('/').All(part => part is not "." and not ".." && !part.StartsWith('.'));
+        repository.Split('/').All(part => part is not "." and not ".." &&
+            !part.StartsWith('.') && !part.EndsWith('.') &&
+            !part.EndsWith(".lock", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsSafeBaseRef(string? reference) =>
         reference is not null && reference.Length <= 200 &&
