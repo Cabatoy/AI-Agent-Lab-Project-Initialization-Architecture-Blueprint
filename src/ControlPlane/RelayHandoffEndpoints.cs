@@ -79,8 +79,18 @@ internal static class RelayHandoffEndpoints
             using var doc = await JsonDocument.ParseAsync(request.Body,
                 new JsonDocumentOptions { MaxDepth = 3 }, cancellationToken);
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 4)
-                return null;
+            // Reject duplicate and unknown JSON properties rather than allowing
+            // last-value-wins parsing to hide an ambiguous handoff intent.
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+            {
+                if (!names.Add(property.Name) ||
+                    property.Name is not ("idempotencyKey" or "intentDigestSha256"
+                        or "repository" or "expectedBaseRef"))
+                    return null;
+            }
+            if (names.Count != 4) return null;
             static string? Read(JsonElement element, string name) =>
                 element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
                     ? value.GetString() : null;
