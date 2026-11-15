@@ -75,9 +75,11 @@ public sealed class RelayHandoffStoreTests
         });
     }
 
+    private sealed record TaskDigestSource(string Title, string Description, DateTime UpdatedAtUtc);
+
     private static async Task<string> GetDigest(NpgsqlConnection db, Guid taskId)
     {
-        var task = await db.QuerySingleAsync<(string Title, string Description, DateTime UpdatedAtUtc)>(
+        var task = await db.QuerySingleAsync<TaskDigestSource>(
             @"select title as Title, description as Description,
                 updated_at_utc as UpdatedAtUtc from tasks where id=@taskId",
             new { taskId });
