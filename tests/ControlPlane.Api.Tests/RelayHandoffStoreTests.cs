@@ -59,6 +59,22 @@ public sealed class RelayHandoffStoreTests
     }
 
     [PostgresFact]
+    public async Task IntentPreview_TracksTaskChanges_AndRejectsInvalidRef()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var before = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.NotNull(before);
+            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "bad\\n", CancellationToken.None));
+            await db.ExecuteAsync("update tasks set description='Modified' where id=@taskId", new { taskId });
+            var after = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.NotEqual(before, after);
+            await db.ExecuteAsync("update tasks set status='Approved' where id=@taskId", new { taskId });
+            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None));
+        });
+    }
+
+    [PostgresFact]
     public async Task ParallelSameKey_RecordsExactlyOnce()
     {
         await WithLedger(async (store, db, taskId) =>
