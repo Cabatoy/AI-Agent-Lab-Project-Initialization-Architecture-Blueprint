@@ -18,7 +18,7 @@ internal static class RelayHandoffIntent
         string repository,
         string expectedBaseRef)
     {
-        if (taskId == Guid.Empty || string.IsNullOrWhiteSpace(title) ||
+        if (taskId == Guid.Empty || !IsSafeTaskText(title, 256) || !IsSafeTaskText(description, 16384) ||
             !IsSafeRepository(repository) || !IsSafeBaseRef(expectedBaseRef) ||
             taskUpdatedAtUtc.Kind != DateTimeKind.Utc)
             throw new ArgumentException("Invalid immutable handoff snapshot.");
@@ -53,6 +53,12 @@ internal static class RelayHandoffIntent
     internal static bool IsValidIdempotencyKey(string? key) =>
         key is not null &&
         Regex.IsMatch(key, "^[A-Za-z0-9_-]{32,128}$", RegexOptions.CultureInvariant);
+
+    // Bound untrusted task snapshots and reject control characters before canonicalization.
+    // Task content remains data, never an instruction or execution authorization.
+    private static bool IsSafeTaskText(string? value, int maxLength) =>
+        value is not null && !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= maxLength && !value.Any(char.IsControl);
 
     // Restrict identifiers before they reach GitHub APIs or downstream shell arguments.
     // These checks do not authorize access to the named repository or ref.
