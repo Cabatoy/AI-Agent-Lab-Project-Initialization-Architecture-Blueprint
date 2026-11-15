@@ -29,7 +29,7 @@ internal static class RelayHandoffEndpoints
             if (actor is null) return sessions is null
                 ? Results.StatusCode(503) : Results.Unauthorized();
             if (!await store.IsSchemaReadyAsync(cancellationToken)) return Results.StatusCode(503);
-            var request = await ReadRequestAsync(context.Request, cancellationToken);
+            var request = await ParseHandoffRequestAsync(context.Request, cancellationToken);
             if (request is null) return Results.BadRequest(new { error = "Invalid handoff request." });
             var result = await store.RecordAsync(taskId, actor.Value,
                 request.IdempotencyKey, request.IntentDigestSha256,
@@ -64,10 +64,7 @@ internal static class RelayHandoffEndpoints
         });
     }
 
-    private sealed record Request(string IdempotencyKey, string IntentDigestSha256,
-        string Repository, string ExpectedBaseRef);
-
-    private static async Task<Request?> ReadRequestAsync(HttpRequest request, CancellationToken cancellationToken)
+    internal static async Task<(string IdempotencyKey, string IntentDigestSha256, string Repository, string ExpectedBaseRef)?> ParseHandoffRequestAsync(HttpRequest request, CancellationToken cancellationToken)
     {
         if (request.ContentLength is null or < 1 or > 1024 ||
             request.Headers.TransferEncoding.Count > 0 ||
@@ -101,7 +98,7 @@ internal static class RelayHandoffEndpoints
             if (!RelayHandoffIntent.IsValidIdempotencyKey(key) ||
                 digest is null || digest.Length != 64 ||
                 repository is null || expectedBaseRef is null) return null;
-            return new Request(key!, digest, repository, expectedBaseRef);
+            return (key!, digest, repository, expectedBaseRef);
         }
         catch (JsonException) { return null; }
     }
