@@ -1,0 +1,179 @@
+using Dapper;
+using Npgsql;
+
+namespace ControlPlane.Api.Tests;
+
+public sealed class RelayHandoffStoreTests
+{
+    [PostgresFact]
+    public async Task Record_IsImmutableObserveOnly_AndIdempotent()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var actor = Guid.NewGuid();
+            var key = new string('a', 32);
+            var digest = await GetDigest(db, taskId);
+            var first = await store.RecordAsync(taskId, actor, key, digest,
+                "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.Equal("recorded", first.Code);
+            Assert.NotNull(first.Record);
+            Assert.False(first.Record.ExecutionAllowed);
+            Assert.Equal("recorded-untrusted", first.Record.Status);
+            Assert.Equal("staging:observe-only", first.Record.Scope);
+
+            var replay = await store.RecordAsync(taskId, actor, key, digest,
+                "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.Equal("replay", replay.Code);
+            Assert.Equal(first.Record.HandoffId, replay.Record!.HandoffId);
+            Assert.Equal("conflict", (await store.RecordAsync(taskId, actor,
+                new string('b', 32), digest, "Cabatoy/example", "develop",
+                CancellationToken.None)).Code);
+            Assert.Equal("conflict", (await store.RecordAsync(taskId, Guid.NewGuid(),
+                key, digest, "Cabatoy/example", "develop",
+                CancellationToken.None)).Code);
+            Assert.Null(await store.GetAsync(first.Record.HandoffId, Guid.NewGuid(), CancellationToken.None));
+            Assert.Equal(1, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+            Assert.Equal("Draft", await db.ExecuteScalarAsync<string>(
+                "select status from tasks where id=@taskId", new { taskId }));
+            await Assert.ThrowsAsync<PostgresException>(() => db.ExecuteAsync(
+                "update hic_relay_handoffs set execution_allowed=true"));
+        });
+    }
+
+    [PostgresFact]
+    public async Task ChangedSnapshot_RejectsOldDigest_WithoutWriting()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var digest = await GetDigest(db, taskId);
+            await db.ExecuteAsync("update tasks set description='Modified', updated_at_utc=now() where id=@taskId",
+                new { taskId });
+            var outcome = await store.RecordAsync(taskId, Guid.NewGuid(),
+                new string('k', 32), digest, "Cabatoy/example", "develop",
+                CancellationToken.None);
+            Assert.Equal("intent-changed", outcome.Code);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
+    [PostgresFact]
+    public async Task IntentPreview_TracksTaskChanges_AndRejectsInvalidRef()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var before = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.NotNull(before);
+            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "bad\n", CancellationToken.None));
+            await db.ExecuteAsync("update tasks set description='Modified' where id=@taskId", new { taskId });
+            var after = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
+            Assert.NotEqual(before, after);
+            await db.ExecuteAsync("update tasks set status='Approved' where id=@taskId", new { taskId });
+            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None));
+        });
+    }
+
+    [PostgresFact]
+    public async Task ParallelSameKey_RecordsExactlyOnce()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var actor = Guid.NewGuid();
+            var digest = await GetDigest(db, taskId);
+            var results = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ =>
+                store.RecordAsync(taskId, actor, new string('q', 32), digest,
+                    "Cabatoy/example", "develop", CancellationToken.None)));
+            Assert.Contains(results, result => result.Code == "recorded");
+            Assert.Contains(results, result => result.Code == "replay");
+            Assert.Equal(1, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
+    [PostgresFact]
+    public async Task ParallelDifferentKeys_OnlyOneRecord_AndOtherConflicts()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var actor = Guid.NewGuid();
+            var digest = await GetDigest(db, taskId);
+            var keys = new[] { new string('x', 32), new string('y', 32) };
+            var results = await Task.WhenAll(keys.Select(key =>
+                store.RecordAsync(taskId, actor, key, digest,
+                    "Cabatoy/example", "develop", CancellationToken.None)));
+            Assert.Single(results, result => result.Code == "recorded");
+            Assert.Single(results, result => result.Code == "conflict");
+            Assert.Equal(1, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+            Assert.All(results.Where(result => result.Record is not null),
+                result => Assert.False(result.Record!.ExecutionAllowed));
+        });
+    }
+
+    [PostgresFact]
+    public async Task MissingTask_DoesNotCreateHandoff()
+    {
+        await WithLedger(async (store, db, _) =>
+        {
+            var outcome = await store.RecordAsync(Guid.NewGuid(), Guid.NewGuid(),
+                new string('m', 32), new string('a', 64), "Cabatoy/example",
+                "develop", CancellationToken.None);
+            Assert.Equal("not-found", outcome.Code);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
+    [PostgresFact]
+    public async Task NonDraftTask_DoesNotCreateHandoff()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var digest = await GetDigest(db, taskId);
+            await db.ExecuteAsync("update tasks set status='Approved' where id=@taskId",
+                new { taskId });
+            var outcome = await store.RecordAsync(taskId, Guid.NewGuid(),
+                new string('n', 32), digest, "Cabatoy/example",
+                "develop", CancellationToken.None);
+            Assert.Equal("task-not-draft", outcome.Code);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
+    private sealed record TaskDigestSource(string Title, string Description, DateTime UpdatedAtUtc);
+
+    private static async Task<string> GetDigest(NpgsqlConnection db, Guid taskId)
+    {
+        var task = await db.QuerySingleAsync<TaskDigestSource>(
+            @"select title as Title, description as Description,
+                updated_at_utc as UpdatedAtUtc from tasks where id=@taskId",
+            new { taskId });
+        return RelayHandoffIntent.Digest(taskId, task.Title, task.Description,
+            task.UpdatedAtUtc, "Cabatoy/example", "develop");
+    }
+
+    private static Task WithLedger(
+        Func<RelayHandoffStore, NpgsqlConnection, Guid, Task> test) =>
+        TaskTransitionPostgresTests.WithDatabase(async (cs, db, taskId) =>
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "AI-Agent-Lab.sln")))
+                root = root.Parent;
+            Assert.NotNull(root);
+            await db.ExecuteAsync(
+                "alter table tasks add column title text not null default 'Build', add column description text not null default 'Test';");
+            await db.ExecuteAsync("update tasks set status='Draft' where id=@taskId", new { taskId });
+            var migration = await File.ReadAllTextAsync(Path.Combine(root.FullName,
+                "src", "ControlPlane", "Migrations", "005-relay-handoff-observe-only.sql"));
+            await db.ExecuteAsync(migration);
+            Assert.True(await new RelayHandoffStore(cs).IsSchemaReadyAsync(CancellationToken.None));
+            try { await test(new RelayHandoffStore(cs), db, taskId); }
+            finally
+            {
+                await db.ExecuteAsync("drop table if exists hic_relay_handoffs;");
+                await db.ExecuteAsync("drop function if exists hic_reject_relay_handoff_mutation();");
+            }
+        });
+}
