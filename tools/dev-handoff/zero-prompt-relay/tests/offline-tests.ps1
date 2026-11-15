@@ -8,76 +8,76 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$testsPassed = 0
-$testsFailed = 0
+$script:testsPassed = 0
+$script:testsFailed = 0
 
 function Assert-Equal {
     param([string]$Expected, [string]$Actual, [string]$Message)
     if ($Expected -ne $Actual) {
-        Write-Error "FAILED: $Message`nExpected: $Expected`nActual: $Actual" -ErrorAction Stop
-        $global:testsFailed++
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nExpected: $Expected`nActual: $Actual" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) {
-        Write-Error "FAILED: $Message`nExpected: True`nActual: False" -ErrorAction Stop
-        $global:testsFailed++
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nExpected: True`nActual: False" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-False {
     param([bool]$Condition, [string]$Message)
     if ($Condition) {
-        Write-Error "FAILED: $Message`nExpected: False`nActual: True" -ErrorAction Stop
-        $global:testsFailed++
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nExpected: False`nActual: True" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-NotNull {
     param($Value, [string]$Message)
     if ($null -eq $Value) {
-        Write-Error "FAILED: $Message`nValue should not be null" -ErrorAction Stop
-        $global:testsFailed++
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nValue should not be null" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-Null {
     param($Value, [string]$Message)
     if ($null -ne $Value) {
-        Write-Error "FAILED: $Message`nValue should be null`nActual: $Value" -ErrorAction Stop
-        $global:testsFailed++
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nValue should be null`nActual: $Value" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-Contains {
     param([string]$Haystack, [string]$Needle, [string]$Message)
-    if ($Haystack -notlike "*$Needle*") {
-        Write-Error "FAILED: $Message`nExpected to contain: $Needle`nActual: $Haystack" -ErrorAction Stop
-        $global:testsFailed++
+    if ($Haystack.IndexOf($Needle, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nExpected to contain: $Needle`nActual: $Haystack" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
 function Assert-NotContains {
     param([string]$Haystack, [string]$Needle, [string]$Message)
-    if ($Haystack -like "*$Needle*") {
-        Write-Error "FAILED: $Message`nShould not contain: $Needle`nActual: $Haystack" -ErrorAction Stop
-        $global:testsFailed++
+    if ($Haystack.IndexOf($Needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $script:testsFailed++
+        Write-Error "FAILED: $Message`nShould not contain: $Needle`nActual: $Haystack" -ErrorAction Continue
     } else {
-        $global:testsPassed++
+        $script:testsPassed++
     }
 }
 
@@ -114,7 +114,7 @@ Assert-NotContains -Haystack $redacted -Needle "SYNTHETIC_TEST_CREDENTIAL" -Mess
 
 # Test Authorization header redaction
 $authHeader = "Authorization: token SYNTHETIC_TEST_CREDENTIAL_NOT_A_REAL_SECRET_1234567890"
-$redactedAuth = $authHeader -replace 'Authorization[=:]*\s*[^\s]+', 'Authorization: ***REDACTED***'
+$redactedAuth = $authHeader -replace 'Authorization[=:]*\s*(?:(?:Bearer|token)\s+)?[^\s]+', 'Authorization: ***REDACTED***'
 Assert-Contains -Haystack $redactedAuth -Needle "Authorization: ***REDACTED***" -Message "Authorization header redacted"
 Assert-NotContains -Haystack $redactedAuth -Needle "token SYNTHETIC_TEST_CREDENTIAL" -Message "Credential removed from auth header"
 
@@ -253,11 +253,14 @@ Assert-Equal -Expected "3" -Actual $attempts.ToString() -Message "Correct number
 
 # ============ Summary ============
 Write-Host "`n===== TEST RESULTS ====="
-Write-Host "Passed: $testsPassed"
-Write-Host "Failed: $testsFailed"
+Write-Host "Passed: $script:testsPassed"
+Write-Host "Failed: $script:testsFailed"
 
-if ($testsFailed -gt 0) {
+if ($script:testsFailed -gt 0) {
     Write-Host "`n❌ TESTS FAILED" -ForegroundColor Red
+    exit 1
+} elseif ($script:testsPassed -eq 0) {
+    Write-Host "`n❌ NO TESTS EXECUTED" -ForegroundColor Red
     exit 1
 } else {
     Write-Host "`n✅ ALL TESTS PASSED" -ForegroundColor Green
