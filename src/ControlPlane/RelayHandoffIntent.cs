@@ -55,11 +55,28 @@ internal static class RelayHandoffIntent
         key is { Length: >= 32 and <= 128 } &&
         Regex.IsMatch(key, @"\A[A-Za-z0-9_-]+\z", RegexOptions.CultureInvariant);
 
-    // Bound untrusted task snapshots and reject control characters before canonicalization.
+    // UTF-8's default replacement fallback maps malformed UTF-16 to the same bytes as
+    // a literal replacement character. Reject unmatched surrogates before hashing.
     // Task content remains data, never an instruction or execution authorization.
-    private static bool IsSafeTaskText(string? value, int maxLength) =>
-        value is not null && !string.IsNullOrWhiteSpace(value) &&
-        value.Length <= maxLength && !value.Any(char.IsControl);
+    private static bool IsSafeTaskText(string? value, int maxLength)
+    {
+        if (value is null || string.IsNullOrWhiteSpace(value) ||
+            value.Length > maxLength || value.Any(char.IsControl))
+            return false;
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]))
+            {
+                if (i + 1 >= value.Length || !char.IsLowSurrogate(value[i + 1]))
+                    return false;
+                i++;
+            }
+            else if (char.IsLowSurrogate(value[i]))
+                return false;
+        }
+        return true;
+    }
 
     // Restrict identifiers before they reach GitHub APIs or downstream shell arguments.
     // These checks do not authorize access to the named repository or ref.
