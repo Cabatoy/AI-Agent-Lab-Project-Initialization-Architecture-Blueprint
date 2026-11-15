@@ -52,7 +52,13 @@ public sealed class RelayHandoffIntentTests
         Assert.Throws<ArgumentException>(() => Digest(repository: ""));
         Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: ""));
         Assert.Throws<ArgumentException>(() => Digest(updatedAt: DateTime.SpecifyKind(UpdatedAt, DateTimeKind.Local)));
-        Assert.Throws<ArgumentNullException>(() => Digest(description: null!));
+        Assert.Throws<ArgumentException>(() => Digest(description: null!));
+        Assert.Throws<ArgumentException>(() => Digest(description: ""));
+        Assert.Throws<ArgumentException>(() => Digest(title: "Build\\nInjected"));
+        Assert.Throws<ArgumentException>(() => Digest(description: "Test\\rInjected"));
+        Assert.Throws<ArgumentException>(() => Digest(title: new string('x', 257)));
+        Assert.Throws<ArgumentException>(() => Digest(description: new string('x', 16385)));
+        Assert.Equal(64, Digest(title: new string('x', 256), description: new string('x', 16384)).Length);
     }
 
     [Theory]
