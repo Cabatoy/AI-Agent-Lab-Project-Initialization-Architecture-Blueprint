@@ -73,7 +73,8 @@ internal static class RelayHandoffIntent
         !reference.Contains("..", StringComparison.Ordinal) &&
         !reference.Contains("//", StringComparison.Ordinal) &&
         !reference.EndsWith('/') && !reference.EndsWith(".lock", StringComparison.OrdinalIgnoreCase) &&
-        !reference.Split('/').Any(part => part.StartsWith('.'));
+        !reference.Split('/').Any(part => part.StartsWith('.') || part.EndsWith('.') ||
+            part.EndsWith(".lock", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsLowerHexDigest(string? digest) =>
         digest is not null &&
