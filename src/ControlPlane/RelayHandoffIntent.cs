@@ -19,7 +19,7 @@ internal static class RelayHandoffIntent
         string expectedBaseRef)
     {
         if (taskId == Guid.Empty || string.IsNullOrWhiteSpace(title) ||
-            string.IsNullOrWhiteSpace(repository) || string.IsNullOrWhiteSpace(expectedBaseRef) ||
+            !IsSafeRepository(repository) || !IsSafeBaseRef(expectedBaseRef) ||
             taskUpdatedAtUtc.Kind != DateTimeKind.Utc)
             throw new ArgumentException("Invalid immutable handoff snapshot.");
 
@@ -53,6 +53,21 @@ internal static class RelayHandoffIntent
     internal static bool IsValidIdempotencyKey(string? key) =>
         key is not null &&
         Regex.IsMatch(key, "^[A-Za-z0-9_-]{32,128}$", RegexOptions.CultureInvariant);
+
+    // Restrict identifiers before they reach GitHub APIs or downstream shell arguments.
+    // These checks do not authorize access to the named repository or ref.
+    private static bool IsSafeRepository(string? repository) =>
+        repository is not null &&
+        Regex.IsMatch(repository, @"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$", RegexOptions.CultureInvariant) &&
+        repository.Split('/').All(part => part is not "." and not ".." && !part.StartsWith('.'));
+
+    private static bool IsSafeBaseRef(string? reference) =>
+        reference is not null && reference.Length <= 200 &&
+        Regex.IsMatch(reference, @"^[A-Za-z0-9_][A-Za-z0-9_./-]*$", RegexOptions.CultureInvariant) &&
+        !reference.Contains("..", StringComparison.Ordinal) &&
+        !reference.Contains("//", StringComparison.Ordinal) &&
+        !reference.EndsWith('/') && !reference.EndsWith(".lock", StringComparison.OrdinalIgnoreCase) &&
+        !reference.Split('/').Any(part => part.StartsWith('.'));
 
     private static bool IsLowerHexDigest(string? digest) =>
         digest is not null &&
