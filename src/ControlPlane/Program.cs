@@ -66,6 +66,7 @@ app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>
 
 LocalHealthRunnerEndpoints.Map(app, postgresConnectionString, redisDb, localOperatorSessions);
 StagingObservationEndpoints.Map(app, localOperatorSessions);
+RelayHandoffEndpoints.Map(app, postgresConnectionString, localOperatorSessions);
 
 app.MapGet("/tasks", async () =>
 {
