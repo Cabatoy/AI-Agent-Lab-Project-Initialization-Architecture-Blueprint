@@ -60,3 +60,11 @@ Reviewed `src/ControlPlane/StagingObservationEndpoints.cs` and `src/ControlPlane
 
 ### Immediate coding gate
 A feature-flagged route can be added only after its authorization contract and durable persistence are defined. Until then keep UI submit disabled and do not reuse the existing read-only observation directory as a writable transport.
+
+## Delivery order update — Issue #161
+1. Continue #159 offline contract, actor/ownership boundary, durable handoff implementation and tests (no AWS or Worker).
+2. In parallel, #161 identifies the actual Watch process and implements authenticated read-only GitHub access, bounded polling and rate-limit backoff. Never reuse the Issue #97 synthetic ACK write token for this.
+3. Gate #159 isolated Relay integration smoke on #161 rate-limit-safe Watch behavior and confirmed transport/receipt identity.
+4. Only after both gates pass, wire UI preview/submit and isolated end-to-end observe-only status. Execution remains OFF.
+
+Tracking: https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/161
