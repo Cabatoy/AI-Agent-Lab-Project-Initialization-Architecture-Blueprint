@@ -69,6 +69,11 @@ public sealed class RelayHandoffIntentTests
     [InlineData("owner/..")]
     [InlineData("owner/repo\\nmalicious")]
     [InlineData("owner/.hidden")]
+    [InlineData("owner/repo.")]
+    [InlineData("owner/repo.lock")]
+    [InlineData("owner/repo.LOCK")]
+    [InlineData("owner./repo")]
+    [InlineData("owner.lock/repo")]
     [InlineData("owner/repo name")]
     public void UnsafeRepository_IsRejected(string repository) =>
         Assert.Throws<ArgumentException>(() => Digest(repository: repository));
