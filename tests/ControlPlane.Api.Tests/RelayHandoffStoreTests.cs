@@ -92,6 +92,26 @@ public sealed class RelayHandoffStoreTests
     }
 
     [PostgresFact]
+    public async Task ParallelDifferentKeys_OnlyOneRecord_AndOtherConflicts()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var actor = Guid.NewGuid();
+            var digest = await GetDigest(db, taskId);
+            var keys = new[] { new string('x', 32), new string('y', 32) };
+            var results = await Task.WhenAll(keys.Select(key =>
+                store.RecordAsync(taskId, actor, key, digest,
+                    "Cabatoy/example", "develop", CancellationToken.None)));
+            Assert.Single(results, result => result.Code == "recorded");
+            Assert.Single(results, result => result.Code == "conflict");
+            Assert.Equal(1, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+            Assert.All(results.Where(result => result.Record is not null),
+                result => Assert.False(result.Record!.ExecutionAllowed));
+        });
+    }
+
+    [PostgresFact]
     public async Task MissingTask_DoesNotCreateHandoff()
     {
         await WithLedger(async (store, db, _) =>
