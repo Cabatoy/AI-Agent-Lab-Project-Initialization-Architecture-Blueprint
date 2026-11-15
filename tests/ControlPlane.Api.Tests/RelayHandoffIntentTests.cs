@@ -94,6 +94,16 @@ public sealed class RelayHandoffIntentTests
         Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: expectedBaseRef));
 
     [Fact]
+    public void TrailingNewlineCannotBypassAbsoluteEndAnchors()
+    {
+        Assert.Throws<ArgumentException>(() => Digest(repository: "owner/repo\n"));
+        Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: "feature/topic\n"));
+        Assert.False(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 32) + "\n"));
+        Assert.False(RelayHandoffIntent.Matches(new string('a', 64) + "\n", Digest()));
+        Assert.False(RelayHandoffIntent.Matches(Digest() + "\n", Digest()));
+    }
+
+    [Fact]
     public void IdempotencyKey_RejectsOversizedInputBeforeRegexEvaluation()
     {
         Assert.False(RelayHandoffIntent.IsValidIdempotencyKey(new string('a', 129)));
