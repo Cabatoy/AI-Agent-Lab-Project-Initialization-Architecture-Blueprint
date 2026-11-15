@@ -6,6 +6,7 @@
   "engines": {"node": ">=22"},
   "scripts": {
     "check": "node --test test/*.test.mjs",
+    "test": "npm run check",
     "once": "node src/cli.mjs --enable-read-only --once",
     "watch": "node src/cli.mjs --enable-read-only --watch"
   }

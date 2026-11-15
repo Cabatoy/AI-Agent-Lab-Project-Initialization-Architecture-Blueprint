@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
@@ -14,7 +16,6 @@ public class GitHubRestClient
     private readonly HttpClient _httpClient;
     private readonly ICredentialProvider _credentialProvider;
     private readonly IRateLimitHandler _rateLimitHandler;
-    private readonly IOutputRedactor _redactor;
 
     public GitHubRestClient(
         HttpClient httpClient,
@@ -25,7 +26,7 @@ public class GitHubRestClient
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _credentialProvider = credentialProvider ?? throw new ArgumentNullException(nameof(credentialProvider));
         _rateLimitHandler = rateLimitHandler ?? throw new ArgumentNullException(nameof(rateLimitHandler));
-        _redactor = redactor ?? throw new ArgumentNullException(nameof(redactor));
+        _ = redactor ?? throw new ArgumentNullException(nameof(redactor));
     }
 
     /// <summary>
@@ -84,10 +85,8 @@ public class GitHubRestClient
 
             if (!response.IsSuccessStatusCode)
             {
-                var content = await response.Content.ReadAsStringAsync(cancellationToken);
-                var redacted = _redactor.RedactSensitiveData(content);
                 throw new HttpRequestException(
-                    $"GitHub API error: {(int)response.StatusCode} - {redacted}");
+                    $"GitHub API error: {(int)response.StatusCode}");
             }
 
             var jsonContent = await response.Content.ReadAsStringAsync(cancellationToken);
