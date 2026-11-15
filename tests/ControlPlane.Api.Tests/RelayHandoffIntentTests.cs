@@ -56,6 +56,27 @@ public sealed class RelayHandoffIntentTests
     }
 
     [Theory]
+    [InlineData("owner/repo/extra")]
+    [InlineData("../repo")]
+    [InlineData("owner/..")]
+    [InlineData("owner/repo\\nmalicious")]
+    [InlineData("owner/.hidden")]
+    [InlineData("owner/repo name")]
+    public void UnsafeRepository_IsRejected(string repository) =>
+        Assert.Throws<ArgumentException>(() => Digest(repository: repository));
+
+    [Theory]
+    [InlineData("../main")]
+    [InlineData("feature//topic")]
+    [InlineData("feature/..")]
+    [InlineData("topic.lock")]
+    [InlineData("-danger")]
+    [InlineData("feature/topic\\nmalicious")]
+    [InlineData("feature/")]
+    public void UnsafeBaseRef_IsRejected(string expectedBaseRef) =>
+        Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: expectedBaseRef));
+
+    [Theory]
     [InlineData("abcdefghijklmnopqrstuvwxyzABCDEF", true)]
     [InlineData("01234567890123456789012345678901", true)]
     [InlineData("short", false)]
