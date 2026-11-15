@@ -62,7 +62,8 @@ internal sealed class RelayHandoffStore(string connectionString)
                 created_at_utc as CreatedAtUtc
                 from hic_relay_handoffs
                 where task_id = @taskId or (actor_id = @actorId and idempotency_key = @key)
-                for update;",
+                order by case when task_id = @taskId then 0 else 1 end
+                limit 1 for update;",
                 new { taskId, actorId, key }, tx, cancellationToken: cancellationToken));
         if (existing is not null)
         {
