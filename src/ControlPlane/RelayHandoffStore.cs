@@ -21,6 +21,18 @@ internal sealed class RelayHandoffStore(string connectionString)
             cancellationToken: cancellationToken));
     }
 
+    internal async Task<string?> GetIntentDigestAsync(Guid taskId, string repository, string expectedBaseRef, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        var task = await connection.QuerySingleOrDefaultAsync<TaskSnapshot>(new CommandDefinition(
+            @"select id, title, description, status, updated_at_utc as UpdatedAtUtc
+              from tasks where id = @taskId;", new { taskId }, cancellationToken: cancellationToken));
+        if (task is null || task.Status != TaskStatuses.Draft) return null;
+        try { return RelayHandoffIntent.Digest(task.Id, task.Title, task.Description,
+            task.UpdatedAtUtc, repository, expectedBaseRef); }
+        catch (ArgumentException) { return null; }
+    }
+
     internal async Task<RelayHandoffOutcome> RecordAsync(
         Guid taskId, Guid actorId, string? key, string? expectedDigest,
         string repository, string expectedBaseRef, CancellationToken cancellationToken)
