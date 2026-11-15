@@ -81,6 +81,10 @@ public sealed class RelayHandoffIntentTests
     [InlineData("-danger")]
     [InlineData("feature/topic\\nmalicious")]
     [InlineData("feature/")]
+    [InlineData("feature/topic.")]
+    [InlineData("feature/topic.lock/child")]
+    [InlineData("feature/topic.LOCK/child")]
+    [InlineData("feature/topic./child")]
     public void UnsafeBaseRef_IsRejected(string expectedBaseRef) =>
         Assert.Throws<ArgumentException>(() => Digest(expectedBaseRef: expectedBaseRef));
 
