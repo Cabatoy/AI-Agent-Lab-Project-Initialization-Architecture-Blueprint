@@ -65,7 +65,7 @@ public sealed class RelayHandoffStoreTests
         {
             var before = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
             Assert.NotNull(before);
-            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "bad\\n", CancellationToken.None));
+            Assert.Null(await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "bad\n", CancellationToken.None));
             await db.ExecuteAsync("update tasks set description='Modified' where id=@taskId", new { taskId });
             var after = await store.GetIntentDigestAsync(taskId, "Cabatoy/example", "develop", CancellationToken.None);
             Assert.NotEqual(before, after);
@@ -144,10 +144,16 @@ public sealed class RelayHandoffStoreTests
             Assert.NotNull(root);
             await db.ExecuteAsync(
                 "alter table tasks add column title text not null default 'Build', add column description text not null default 'Test';");
+            await db.ExecuteAsync("update tasks set status='Draft' where id=@taskId", new { taskId });
             var migration = await File.ReadAllTextAsync(Path.Combine(root.FullName,
                 "src", "ControlPlane", "Migrations", "005-relay-handoff-observe-only.sql"));
             await db.ExecuteAsync(migration);
             Assert.True(await new RelayHandoffStore(cs).IsSchemaReadyAsync(CancellationToken.None));
-            await test(new RelayHandoffStore(cs), db, taskId);
+            try { await test(new RelayHandoffStore(cs), db, taskId); }
+            finally
+            {
+                await db.ExecuteAsync("drop table if exists hic_relay_handoffs;");
+                await db.ExecuteAsync("drop function if exists hic_reject_relay_handoff_mutation();");
+            }
         });
 }
