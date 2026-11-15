@@ -52,8 +52,8 @@ internal static class RelayHandoffIntent
     }
 
     internal static bool IsValidIdempotencyKey(string? key) =>
-        key is not null &&
-        Regex.IsMatch(key, "^[A-Za-z0-9_-]{32,128}$", RegexOptions.CultureInvariant);
+        key is { Length: >= 32 and <= 128 } &&
+        Regex.IsMatch(key, "^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant);
 
     // Bound untrusted task snapshots and reject control characters before canonicalization.
     // Task content remains data, never an instruction or execution authorization.
