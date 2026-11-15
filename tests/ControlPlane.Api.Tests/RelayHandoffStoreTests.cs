@@ -75,6 +75,37 @@ public sealed class RelayHandoffStoreTests
         });
     }
 
+    [PostgresFact]
+    public async Task MissingTask_DoesNotCreateHandoff()
+    {
+        await WithLedger(async (store, db, _) =>
+        {
+            var outcome = await store.RecordAsync(Guid.NewGuid(), Guid.NewGuid(),
+                new string('m', 32), new string('a', 64), "Cabatoy/example",
+                "develop", CancellationToken.None);
+            Assert.Equal("not-found", outcome.Code);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
+    [PostgresFact]
+    public async Task NonDraftTask_DoesNotCreateHandoff()
+    {
+        await WithLedger(async (store, db, taskId) =>
+        {
+            var digest = await GetDigest(db, taskId);
+            await db.ExecuteAsync("update tasks set status='Approved' where id=@taskId",
+                new { taskId });
+            var outcome = await store.RecordAsync(taskId, Guid.NewGuid(),
+                new string('n', 32), digest, "Cabatoy/example",
+                "develop", CancellationToken.None);
+            Assert.Equal("task-not-draft", outcome.Code);
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>(
+                "select count(*)::int from hic_relay_handoffs"));
+        });
+    }
+
     private sealed record TaskDigestSource(string Title, string Description, DateTime UpdatedAtUtc);
 
     private static async Task<string> GetDigest(NpgsqlConnection db, Guid taskId)
