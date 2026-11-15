@@ -57,6 +57,17 @@ public sealed class RelayHandoffRequestTests
         Assert.False(await Accepts(ValidJson, "text/plain"));
     }
 
+
+    [Fact]
+    public async Task DeclaredLengthSmallerThanActualBody_IsRejected() =>
+        Assert.False(await Accepts(ValidJson + new string(' ', 1100),
+            declaredLength: Encoding.UTF8.GetByteCount(ValidJson)));
+
+    [Fact]
+    public async Task DeclaredLengthLargerThanActualBody_IsRejected() =>
+        Assert.False(await Accepts(ValidJson,
+            declaredLength: Encoding.UTF8.GetByteCount(ValidJson) + 1));
+
     [Fact]
     public async Task OversizedOrUnboundedBody_IsRejected()
     {
