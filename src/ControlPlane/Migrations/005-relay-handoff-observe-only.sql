@@ -3,10 +3,10 @@
 -- No execution queue, AWS credentials, shell commands or worker permissions.
 DO $guard$
 BEGIN
-  IF to_regclass('public.tasks') IS NULL THEN
+  IF to_regclass('tasks') IS NULL THEN
     RAISE EXCEPTION 'tasks table required before handoff ledger';
   END IF;
-  IF to_regclass('public.hic_relay_handoffs') IS NOT NULL THEN
+  IF to_regclass('hic_relay_handoffs') IS NOT NULL THEN
     RAISE EXCEPTION 'handoff ledger already exists; refusing repeat';
   END IF;
 END
