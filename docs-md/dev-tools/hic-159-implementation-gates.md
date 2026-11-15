@@ -48,3 +48,15 @@ Companion: `docs-md/dev-tools/hic-159-relay-handoff-adr.md`.
 - Database migration, endpoint implementation and integration tests **not yet performed**.
 
 Do not turn the feature flag on until these blockers and tests are resolved.
+
+## Source inspection checkpoint — 2026-11-15
+Reviewed `src/ControlPlane/StagingObservationEndpoints.cs` and `src/ControlPlane/LocalHealthRunner.cs` on this branch:
+
+- Staging observation endpoint `GET /local-runner/staging-observations` authenticates a `LocalOperatorSessions` bearer session, requires an explicitly configured absolute directory, rejects reparse points/unsafe names/oversized files, and returns only `observed-untrusted` records with `executionAllowed: false`. **It does not accept handoffs or write to a Relay inbox.**
+- `LocalOperatorSessions` uses a 15-minute in-memory bearer session mapped to a configured actor GUID. It authenticates a local operator, but does not establish Draft-task ownership or permission to hand off arbitrary tasks.
+- `LocalHealthRunStore` already contains useful patterns: domain-separated SHA-256 digest of task content, constant-time digest comparison, row locking, conflict-aware insert, actor binding, and audit events. These are implementation *patterns*, not reusable authorization: its `ApproveAsync` creates a health-run record and its `ClaimAsync` transitions that health run to running. Neither should be invoked by #159.
+- Existing staging observations use **orderId**, while #159 proposes **taskId**. Do not equate them by matching GUID shape. A signed/verified correlation contract is required before associating a local observation with a HIC Draft task.
+- Therefore the first safe code change must establish a separate task-to-handoff mapping and authenticated authorization boundary; exposing a submit endpoint using the current local-operator session alone would be premature.
+
+### Immediate coding gate
+A feature-flagged route can be added only after its authorization contract and durable persistence are defined. Until then keep UI submit disabled and do not reuse the existing read-only observation directory as a writable transport.
