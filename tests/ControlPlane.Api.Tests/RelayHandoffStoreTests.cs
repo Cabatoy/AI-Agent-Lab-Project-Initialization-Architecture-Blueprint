@@ -139,7 +139,7 @@ public sealed class RelayHandoffStoreTests
         TaskTransitionPostgresTests.WithDatabase(async (cs, db, taskId) =>
         {
             var root = new DirectoryInfo(AppContext.BaseDirectory);
-            while (root is not null && !File.Exists(Path.Combine(root.FullName, "HumanInControl.sln")))
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "AI-Agent-Lab.sln")))
                 root = root.Parent;
             Assert.NotNull(root);
             await db.ExecuteAsync(
