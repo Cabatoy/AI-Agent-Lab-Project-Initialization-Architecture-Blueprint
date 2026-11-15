@@ -45,6 +45,20 @@ public sealed class RelayHandoffIntentTests
     }
 
     [Fact]
+    public void MalformedUtf16_IsRejectedInsteadOfSilentlyReplacedInDigest()
+    {
+        // The default UTF-8 encoder replaces lone surrogates with U+FFFD.
+        // Two distinct task snapshots must not silently acquire the same digest.
+        Assert.Throws<ArgumentException>(() => Digest(title: "Build\uD800"));
+        Assert.Throws<ArgumentException>(() => Digest(title: "Build\uDC00"));
+        Assert.Throws<ArgumentException>(() => Digest(description: "Test\uD800x"));
+        Assert.Throws<ArgumentException>(() => Digest(description: "Test\uDC00x"));
+        Assert.Throws<ArgumentException>(() => Digest(title: "Build\uD800x\uDC00"));
+        Assert.Equal(64, Digest(title: "Build\uD83D\uDE80", description: "Test\uD83D\uDE80").Length);
+        Assert.Equal(64, Digest(title: "Build\uFFFD").Length);
+    }
+
+    [Fact]
     public void InvalidSnapshot_FailsClosed()
     {
         Assert.Throws<ArgumentException>(() => Digest(taskId: Guid.Empty));
