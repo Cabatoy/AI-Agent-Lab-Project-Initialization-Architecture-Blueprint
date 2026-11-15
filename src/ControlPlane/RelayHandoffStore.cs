@@ -17,7 +17,7 @@ internal sealed class RelayHandoffStore(string connectionString)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
-            "select to_regclass('public.hic_relay_handoffs') is not null;",
+            "select to_regclass('hic_relay_handoffs') is not null;",
             cancellationToken: cancellationToken));
     }
 
