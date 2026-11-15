@@ -88,7 +88,9 @@ internal sealed class RelayHandoffStore(string connectionString)
         }
 
         var handoffId = Guid.NewGuid();
-        var record = await connection.QuerySingleAsync<RelayHandoffRecord>(
+        RelayHandoffRecord record;
+        try {
+        record = await connection.QuerySingleAsync<RelayHandoffRecord>(
             new CommandDefinition(@"insert into hic_relay_handoffs
                 (handoff_id, task_id, actor_id, idempotency_key, intent_digest_sha256,
                  repository, expected_base_ref, task_updated_at_utc)
@@ -103,6 +105,9 @@ internal sealed class RelayHandoffStore(string connectionString)
                 new { handoffId, taskId, actorId, key, digest, repository,
                     expectedBaseRef, updatedAt = task.UpdatedAtUtc },
                 tx, cancellationToken: cancellationToken));
+        } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
+            return new("conflict");
+        }
         await tx.CommitAsync(cancellationToken);
         return new("recorded", record);
     }
