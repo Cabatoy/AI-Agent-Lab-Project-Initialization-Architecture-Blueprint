@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -238,6 +239,23 @@ public class GitHubRestClientTests
     }
 
     [Fact]
+    public async Task FetchIssueAsync_OnServerError_DoesNotExposeResponseBody()
+    {
+        var credentialProvider = new FakeCredentialProvider(new GitHubCredential { Token = "synthetic-short" });
+        var fakeHandler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("synthetic-short")
+        });
+        using var httpClient = new HttpClient(fakeHandler);
+        var client = new GitHubRestClient(httpClient, credentialProvider, new FakeRateLimitHandler(), new OutputRedactor());
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.FetchIssueAsync("owner", "repo", 142));
+        Assert.Contains("500", exception.Message);
+        Assert.DoesNotContain("synthetic-short", exception.Message);
+    }
+
+    [Fact]
     public void OutputRedactor_RedactsTokenPatterns()
     {
         // Arrange
@@ -278,21 +296,21 @@ public class GitHubRestClientTests
     }
 
     [Fact]
-    public void RateLimitHandler_CalculatesExponentialBackoff()
+    public async Task RateLimitHandler_CalculatesExponentialBackoff()
     {
         // Arrange
-        var handler = new RateLimitHandler(maxRetries: 5);
+        var handler = new RateLimitHandler(maxRetries: 2);
 
-        // Act & Assert - should not throw on first few retries
-        Assert.Empty(Assert.Throws<RateLimitExceededException>(
-            async () => await handler.HandleRateLimitAsync(new HttpResponseMessage(), CancellationToken.None)).Message);
-
-        // After exceeding max retries, should throw
-        for (int i = 1; i < 5; i++)
+        using var response = new HttpResponseMessage();
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            _ = Assert.ThrowsAsync<RateLimitExceededException>(
-                async () => await handler.HandleRateLimitAsync(new HttpResponseMessage(), CancellationToken.None));
+            var stopwatch = Stopwatch.StartNew();
+            await handler.HandleRateLimitAsync(response, CancellationToken.None);
+            Assert.True(stopwatch.Elapsed >= TimeSpan.FromSeconds(Math.Pow(2, attempt)));
         }
+
+        await Assert.ThrowsAsync<RateLimitExceededException>(
+            () => handler.HandleRateLimitAsync(response, CancellationToken.None));
     }
 
     [Fact]
