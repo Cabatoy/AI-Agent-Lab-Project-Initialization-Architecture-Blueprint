@@ -18,6 +18,7 @@ internal static class RelayHandoffIntent
         string repository,
         string expectedBaseRef)
     {
+        ArgumentNullException.ThrowIfNull(description);
         if (taskId == Guid.Empty || !IsSafeTaskText(title, 256) || !IsSafeTaskText(description, 16384) ||
             !IsSafeRepository(repository) || !IsSafeBaseRef(expectedBaseRef) ||
             taskUpdatedAtUtc.Kind != DateTimeKind.Utc)
