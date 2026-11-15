@@ -73,7 +73,20 @@ internal static class RelayHandoffEndpoints
             return null;
         try
         {
-            using var doc = await JsonDocument.ParseAsync(request.Body,
+            // Content-Length is client-controlled: independently cap the bytes actually read.
+            using var bounded = new MemoryStream();
+            var buffer = new byte[1025];
+            var total = 0;
+            while (total < buffer.Length)
+            {
+                var read = await request.Body.ReadAsync(buffer.AsMemory(total), cancellationToken);
+                if (read == 0) break;
+                total += read;
+            }
+            if (total != request.ContentLength || total > 1024) return null;
+            bounded.Write(buffer, 0, total);
+            bounded.Position = 0;
+            using var doc = await JsonDocument.ParseAsync(bounded,
                 new JsonDocumentOptions { MaxDepth = 3 }, cancellationToken);
             var root = doc.RootElement;
             // Reject duplicate and unknown JSON properties rather than allowing
