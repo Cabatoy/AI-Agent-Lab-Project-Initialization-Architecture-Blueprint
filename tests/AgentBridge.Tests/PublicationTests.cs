@@ -46,11 +46,12 @@ public sealed class PublicationTests : IDisposable
         snapshot = WriteSnapshot(Now.AddMinutes(-5), "snapshot-foundation");
     }
 
-    private Snapshot WriteSnapshot(DateTimeOffset observed, string summary)
+    private Snapshot WriteSnapshot(DateTimeOffset observed, string summary,
+        DateTimeOffset? validationNow = null, string projectId = "synthetic-project")
     {
         var input = new SnapshotInput
         {
-            ContractVersion = SnapshotProducer.Version, ProjectId = "synthetic-project", TaskId = null,
+            ContractVersion = SnapshotProducer.Version, ProjectId = projectId, TaskId = null,
             ExecutionId = null, CorrelationId = null, SourceCommit = sourceCommit, ObservedAtUtc = observed,
             ExecutionStatus = "Unknown", Summary = summary, ChangedFiles = [],
             VerificationEvidence = [new Evidence("runtime", "NOT_RUN", "NOT_RUN", null, sourceCommit, observed)],
@@ -60,8 +61,8 @@ public sealed class PublicationTests : IDisposable
         };
         var bytes = CanonicalJson.Serialize(input);
         var value = new SnapshotProducer().Generate(bytes, CanonicalJson.Hash(bytes),
-            new LocalGit(source, SourceRepository), Now);
-        new ArtifactStore(source).Write(value, Now);
+            new LocalGit(source, SourceRepository), validationNow ?? Now);
+        new ArtifactStore(source).Write(value, validationNow ?? Now);
         return value;
     }
 
@@ -305,6 +306,9 @@ public sealed class PublicationTests : IDisposable
     [Fact]
     public void OfflineCliEmitsApprovalPreviewThenVerifiedReceipt()
     {
+        var cliNow = DateTimeOffset.UtcNow;
+        var cliSnapshot = WriteSnapshot(cliNow.AddMinutes(-1), "snapshot-foundation",
+            cliNow, "synthetic-cli");
         var previousOutput = Console.Out;
         using var output = new StringWriter();
         try
@@ -313,10 +317,11 @@ public sealed class PublicationTests : IDisposable
             Assert.Equal(0, PublicationCli.Run([
                 "prepare-publication", "--repo", source, "--workspace", workspace,
                 "--source-repository", SourceRepository, "--destination", Destination.Repository,
-                "--branch", Destination.Branch, "--project", snapshot.ProjectId, "--offline-remote", remote
+                "--branch", Destination.Branch, "--project", cliSnapshot.ProjectId, "--offline-remote", remote
             ]));
             var state = new PublicationWorkspace(workspace);
             var manifest = state.Read<PublicationManifest>(state.ManifestPath);
+            Assert.Equal(cliSnapshot.SnapshotId, manifest.SnapshotId);
             var digest = SnapshotPublisher.Digest(manifest);
             Assert.Contains(digest, output.ToString());
             Assert.Contains("not authorization", output.ToString());
@@ -336,6 +341,23 @@ public sealed class PublicationTests : IDisposable
         {
             Console.SetOut(previousOutput);
         }
+    }
+
+    [Fact]
+    public void OfflineCliRejectsStaleSnapshotBeforePreparingPublication()
+    {
+        var observed = DateTimeOffset.UtcNow.AddDays(-8);
+        var stale = WriteSnapshot(observed, "snapshot-foundation",
+            observed.AddMinutes(1), "synthetic-cli-stale");
+
+        var error = Assert.Throws<BridgeException>(() => PublicationCli.Run([
+            "prepare-publication", "--repo", source, "--workspace", workspace,
+            "--source-repository", SourceRepository, "--destination", Destination.Repository,
+            "--branch", Destination.Branch, "--project", stale.ProjectId, "--offline-remote", remote
+        ]));
+
+        Assert.Equal("STALE_SNAPSHOT", error.Message);
+        Assert.False(Directory.Exists(workspace));
     }
 
     [Fact]

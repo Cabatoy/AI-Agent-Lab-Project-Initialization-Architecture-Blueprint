@@ -20,7 +20,9 @@ From `tools/dev-handoff/zero-prompt-relay`:
 npm run check
 ```
 
-Tests use fake GitHub responses and disposable local receipts. They never call the network or model.
+`npm test` runs the same suite. Do not use bare `node --test`: it also discovers
+fixture helpers as standalone tests. Tests use fake GitHub responses and
+disposable local receipts. They never call the network or model.
 
 ## One-time operator bootstrap (after PR CI review)
 

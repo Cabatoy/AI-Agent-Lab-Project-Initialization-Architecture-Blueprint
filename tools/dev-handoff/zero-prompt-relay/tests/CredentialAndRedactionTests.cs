@@ -11,19 +11,14 @@ public class GitCredentialManagerProviderTests
     {
         // Arrange
         var redactor = new OutputRedactor();
-        var provider = new GitCredentialManagerProvider(redactor);
+        var missingGit = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N"), "git");
+        var provider = new GitCredentialManagerProvider(redactor, "github.com", missingGit);
 
         // Act
         var result = await provider.GetCredentialAsync();
 
         // Assert
-        // Result depends on whether git credential-manager is installed
-        // This test passes if result is null (no GCM) or a valid credential (GCM available)
-        if (result != null)
-        {
-            Assert.NotNull(result);
-            Assert.NotEmpty(result.Token);
-        }
+        Assert.Null(result);
     }
 
     [Fact]
@@ -120,6 +115,24 @@ public class OutputRedactorTests
     }
 
     [Fact]
+    public void RedactSensitiveData_RemovesEqualsPrefixedHexToken()
+    {
+        var result = new OutputRedactor().RedactSensitiveData("token=abcdef1234567890abcdef1234567890");
+        Assert.Contains("***REDACTED_TOKEN***", result);
+        Assert.DoesNotContain("abcdef1234567890", result);
+    }
+
+    [Theory]
+    [InlineData("Authorization: Bearer synthetic-short", "synthetic-short")]
+    [InlineData("authorization: token synthetic-short", "synthetic-short")]
+    public void RedactSensitiveData_RemovesAuthorizationCredentials(string input, string credential)
+    {
+        var result = new OutputRedactor().RedactSensitiveData(input);
+        Assert.Contains("Authorization: ***REDACTED***", result);
+        Assert.DoesNotContain(credential, result);
+    }
+
+    [Fact]
     public void RedactSensitiveData_PreservesShortStrings()
     {
         // Arrange
@@ -196,6 +209,7 @@ public class RateLimitHandlerTests
     {
         // Arrange
         var handler = new RateLimitHandler();
+        handler.UpdateRemaining(0);
         var resetTime = DateTime.UtcNow.AddMinutes(5);
 
         // Act
@@ -208,7 +222,7 @@ public class RateLimitHandlerTests
     }
 
     [Fact]
-    public void ShouldRetry_ReturnsFalseWhenExceedingMaxRetries()
+    public async Task ShouldRetry_ReturnsFalseWhenExceedingMaxRetries()
     {
         // Arrange
         var handler = new RateLimitHandler(maxRetries: 2);
@@ -220,9 +234,9 @@ public class RateLimitHandlerTests
         {
             try
             {
-                _ = handler.HandleRateLimitAsync(new System.Net.Http.HttpResponseMessage(), default).Result;
+                await handler.HandleRateLimitAsync(new System.Net.Http.HttpResponseMessage(), default);
             }
-            catch (AggregateException ex) when (ex.InnerException is RateLimitExceededException)
+            catch (RateLimitExceededException)
             {
                 // Expected after max retries
                 break;

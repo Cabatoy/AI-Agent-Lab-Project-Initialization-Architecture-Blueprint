@@ -13,11 +13,18 @@ public class GitCredentialManagerProvider : ICredentialProvider
 {
     private readonly IOutputRedactor _redactor;
     private readonly string _gitHost;
+    private readonly string _gitExecutable;
 
     public GitCredentialManagerProvider(IOutputRedactor redactor, string gitHost = "github.com")
+        : this(redactor, gitHost, "git")
+    {
+    }
+
+    public GitCredentialManagerProvider(IOutputRedactor redactor, string gitHost, string gitExecutable)
     {
         _redactor = redactor ?? throw new ArgumentNullException(nameof(redactor));
         _gitHost = gitHost;
+        _gitExecutable = gitExecutable;
     }
 
     public async Task<GitHubCredential?> GetCredentialAsync(System.Threading.CancellationToken cancellationToken = default)
@@ -76,7 +83,7 @@ public class GitCredentialManagerProvider : ICredentialProvider
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "git",
+                FileName = _gitExecutable,
                 Arguments = "credential-manager --version",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -107,7 +114,7 @@ public class GitCredentialManagerProvider : ICredentialProvider
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "git",
+                    FileName = _gitExecutable,
                     Arguments = "credential fill",
                     UseShellExecute = false,
                     RedirectStandardInput = true,
@@ -184,18 +191,19 @@ public class OutputRedactor : IOutputRedactor
         // Redact common token patterns
         var redacted = input;
 
-        // Redact PAT-like tokens (40+ hex chars, token= prefix)
+        // Redact Authorization headers, including the credential after its scheme.
         redacted = System.Text.RegularExpressions.Regex.Replace(
             redacted,
-            @"(?:token[=:]*\s*)?[a-zA-Z0-9_-]{40,}",
-            "***REDACTED_TOKEN***",
+            @"\bauthorization\s*[:=]\s*(?:(?:bearer|token)\s+)?[^\s,;]+",
+            "Authorization: ***REDACTED***",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-        // Redact Authorization headers
+        // Redact explicitly labelled hex tokens and other long token-like strings.
         redacted = System.Text.RegularExpressions.Regex.Replace(
             redacted,
-            @"[Aa]uthorization[=:]*\s*[^\s]+",
-            "Authorization: ***REDACTED***");
+            @"\btoken(?:\s*[:=]\s*|\s+)[a-f0-9]{32,}\b|(?:token[=:]*\s*)?[a-zA-Z0-9_-]{40,}",
+            "***REDACTED_TOKEN***",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
         // Redact bearer tokens
         redacted = System.Text.RegularExpressions.Regex.Replace(
