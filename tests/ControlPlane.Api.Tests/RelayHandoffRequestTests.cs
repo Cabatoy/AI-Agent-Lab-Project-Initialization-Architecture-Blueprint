@@ -68,6 +68,24 @@ public sealed class RelayHandoffRequestTests
         Assert.False(await Accepts(ValidJson,
             declaredLength: Encoding.UTF8.GetByteCount(ValidJson) + 1));
 
+    [Theory]
+    [InlineData("true")]
+    [InlineData("42")]
+    [InlineData("\\"text\\"")]
+    [InlineData("null")]
+    public async Task NonObjectJson_IsRejected(string json) =>
+        Assert.False(await Accepts(json));
+
+    [Fact]
+    public async Task TrailingJsonDocument_IsRejected() =>
+        Assert.False(await Accepts(ValidJson + " {}"));
+
+    [Fact]
+    public async Task CaseVariantUnknownField_IsRejected() =>
+        Assert.False(await Accepts(ValidJson.Replace(
+            "\\"repository\\":\\"Cabatoy/example\\"",
+            "\\"repository\\":\\"Cabatoy/example\\",\\"Repository\\":\\"Other/example\\"")));
+
     [Fact]
     public async Task OversizedOrUnboundedBody_IsRejected()
     {
