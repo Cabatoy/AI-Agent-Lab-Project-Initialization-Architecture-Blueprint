@@ -23,7 +23,7 @@ param(
   [string]$TrustedAuthor='',
   [string]$RelayLabel='',
   [ValidateSet('agent','ask','edit')]
-  [string]$ChatMode='agent',
+  [string]$ChatMode='ask',
   [ValidateSet('none','gcm','env')]
   [string]$GitHubAuth='none',
   [string]$GitHubLogin='',
@@ -38,6 +38,9 @@ $stateDir=Join-Path $env:LOCALAPPDATA 'HICDevRelay'
 $secretFile=Join-Path $stateDir 'ack-token.dpapi'
 $taskName='HIC-Developer-Relay-Ack-OptIn'
 $chatConfigFile=Join-Path $stateDir 'chat-forward.json'
+if($Mode -notin @('ChatForwardSetup','ChatForwardWatchSetup') -and $PSBoundParameters.ContainsKey('ChatMode')) {
+  throw '-ChatMode is only accepted during local setup. Select the mode in the local config; runtime promotion is blocked.'
+}
 switch ($Mode) {
  'Plan' {
    Write-Host 'ReadOnlyOnce/Watch: anonymous GitHub GET; no execution.'
@@ -78,7 +81,7 @@ switch ($Mode) {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    if((Test-Path -LiteralPath $watchConfigFile) -and -not $ReplaceConfig){throw 'Watch forward config already exists; review it or pass -ReplaceConfig.'}
    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;agentModeOptIn=$($ChatMode -eq 'agent');githubAuth=$GitHubAuth}
+   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;chatMode=if($ChatMode -eq 'agent'){'agent'}else{'ask'};agentModeOptIn=$($ChatMode -eq 'agent');githubAuth=$GitHubAuth}
    if($GitHubAuth -ne 'none'){ $config.githubLogin=$GitHubLogin }
    [System.IO.File]::WriteAllText($watchConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
    $modeLabel=if($ChatMode -eq 'agent'){'Agent'}else{'Ask (default)'}
@@ -94,12 +97,7 @@ switch ($Mode) {
  'ChatForwardWatchOnce' {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
-   $agentModeFlag=if($ChatMode -eq 'agent'){'--agent-mode'}else{''}
-   if($agentModeFlag) {
-     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' $agentModeFlag '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
-   } else {
-     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
-   }
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-once' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
    if($LASTEXITCODE -ne 0){throw 'Watch poll failed.'}
    break
  }
@@ -107,12 +105,7 @@ switch ($Mode) {
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    Write-Host 'Starting watch loop. Press Ctrl+C to stop.'
    $codeCmd=(Get-Command code.cmd -ErrorAction Stop).Source
-   $agentModeFlag=if($ChatMode -eq 'agent'){'--agent-mode'}else{''}
-   if($agentModeFlag) {
-     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' $agentModeFlag '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
-   } else {
-     & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
-   }
+   & $nodeExe (Join-Path $toolRoot 'src/watch-cli.mjs') '--poll-loop' '--interval' '60000' '--code-command' $codeCmd '--config' $watchConfigFile '--state-dir' $stateDir
    if($LASTEXITCODE -ne 0){throw 'Watch loop stopped fail-closed; see the blocked reason above.'}
    break
  }

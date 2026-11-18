@@ -8,7 +8,7 @@ const value=name=>{const i=args.indexOf(name);return i>=0&&i+1<args.length?args[
 const cmd=args[0];
 const withOverrides=config=>{
   let c=config;
-  if(args.includes('--agent-mode')) c={...c,agentModeOptIn:true};
+  if(args.includes('--agent-mode')||args.includes('--chat-mode')) throw new Error('chat-mode-override-forbidden');
   if(args.includes('--github-auth')) {const auth=checkAuthMode(value('--github-auth')??'');c={...c,githubAuth:auth,...(auth==='none'?{githubLogin:null}:{})};}
   if(args.includes('--github-login')) c={...c,githubLogin:value('--github-login')??''};
   return c;
@@ -24,8 +24,8 @@ const reportBlocked=error=>{
 if(cmd==='--help'||!cmd) {
   console.log('Usage:');
   console.log('  node watch-cli.mjs --poll-check [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
-  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
-  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--agent-mode] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-once [--code-command <path>] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
+  console.log('  node watch-cli.mjs --poll-loop [--interval <ms>] [--code-command <path>] [--github-auth none|gcm|env] [--github-login <login>] [--config <path>] [--state-dir <path>]');
   process.exitCode=cmd?0:2;
 } else if(cmd==='--poll-check') {
   const stateDir=value('--state-dir')??defaultStateDir();

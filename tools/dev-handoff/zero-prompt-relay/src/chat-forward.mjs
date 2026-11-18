@@ -27,7 +27,7 @@ export function checkConfig(x) {
   if(!Number.isSafeInteger(x.issueNumber) || x.issueNumber<1) fail('invalid-chat-issue');
   if(typeof x.trustedAuthor!=='string' || !LOGIN.test(x.trustedAuthor)) fail('invalid-chat-author');
   if(typeof x.codeCommand!=='string' || !isAbsolute(x.codeCommand) || !CMD_SAFE.test(x.codeCommand)) fail('invalid-chat-command');
-  const chatMode=x.chatMode??'agent';
+  const chatMode=x.chatMode??'ask';
   if(!MODES.includes(chatMode)) fail('invalid-chat-mode');
   return {repository:x.repository,issueNumber:x.issueNumber,trustedAuthor:x.trustedAuthor,codeCommand:x.codeCommand,chatMode};
 }
