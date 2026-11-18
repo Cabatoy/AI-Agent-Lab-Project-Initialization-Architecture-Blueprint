@@ -7,5 +7,10 @@ const fetchImpl=async url=>{
   appendFileSync(fetchLog,String(url)+'\n');
   return {status:200,text:async()=>readFileSync(issuePath,'utf8')};
 };
-const result=await forwardOnce({config:loadConfig(configPath),stateDir,fetchImpl});
-console.log(JSON.stringify(result));
+try {
+  const result=await forwardOnce({config:loadConfig(configPath),stateDir,fetchImpl});
+  console.log(JSON.stringify(result));
+} catch(error) {
+  console.log(JSON.stringify({status:'blocked',reason:error.message}));
+  process.exitCode=1;
+}

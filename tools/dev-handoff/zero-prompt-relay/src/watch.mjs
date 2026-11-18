@@ -3,33 +3,36 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { GitHubError, TRANSIENT_GITHUB_ERRORS, checkAuthMode, createGitHubClient, describeGitHubError } from './github-client.mjs';
+import { validateWorkspaceBinding, verifyWorkspaceTarget } from './workspace-target.mjs';
 
-export const WATCH_VERSION='hic.dev-watch/1';
+export const WATCH_VERSION='hic.dev-watch/2';
 export const WATCH_DB_VERSION='hic.dev-watch-db/1';
 const REPO=/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const LOGIN=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const LABEL=/^[a-z-]{1,50}$/i;
-const CHAT_MODE=/^(ask|agent)$/;
 const fail=code=>{throw new Error(code);};
 const isObject=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
 
 export const defaultStateDir=()=>process.env.LOCALAPPDATA?join(process.env.LOCALAPPDATA,'HICDevRelay'):join(homedir(),'.hic-dev-relay');
 
 export function checkWatchConfig(x) {
-  if(!isObject(x)||x.version!==WATCH_VERSION||typeof x.repository!=='string'||typeof x.trustedAuthor!=='string'||typeof x.relayLabel!=='string') fail('invalid-watch-config');
+  if(!isObject(x)) fail('invalid-watch-config');
+  if(x.version==='hic.dev-watch/1') fail('watch-config-upgrade-required');
+  if(x.agentModeOptIn===true||x.chatMode==='agent') fail('watch-agent-disabled');
+  if(x.version!==WATCH_VERSION||typeof x.repository!=='string'||typeof x.trustedAuthor!=='string'||typeof x.relayLabel!=='string') fail('invalid-watch-config');
+  const allowed=['version','repository','trustedAuthor','relayLabel','workspacePath','expectedBranch','chatMode','githubAuth','githubLogin'];
+  if(Object.keys(x).some(key=>!allowed.includes(key))) fail('invalid-watch-config');
   if(!REPO.test(x.repository)||x.repository.includes('..')) fail('invalid-watch-repository');
   if(!LOGIN.test(x.trustedAuthor)) fail('invalid-watch-author');
   if(!LABEL.test(x.relayLabel)) fail('invalid-watch-label');
-  if('agentModeOptIn' in x&&typeof x.agentModeOptIn!=='boolean') fail('invalid-watch-agent-opt-in');
-  if('chatMode' in x&&(typeof x.chatMode!=='string'||!CHAT_MODE.test(x.chatMode))) fail('invalid-watch-chat-mode');
-  const chatMode=x.chatMode??(x.agentModeOptIn===true?'agent':'ask');
-  if('chatMode' in x&&'agentModeOptIn' in x&&(x.agentModeOptIn!==(chatMode==='agent'))) fail('watch-chat-mode-conflict');
-  const agentModeOptIn=chatMode==='agent';
+  const chatMode=x.chatMode??'ask';
+  if(chatMode!=='ask') fail('invalid-watch-chat-mode');
+  validateWorkspaceBinding({workspacePath:x.workspacePath,expectedBranch:x.expectedBranch});
   const githubAuth=checkAuthMode(x.githubAuth);
   // Authenticated polling must name the GitHub account the credential is expected to belong to.
   const githubLogin=x.githubLogin??null;
   if(githubAuth==='none'?githubLogin!==null:(typeof githubLogin!=='string'||!LOGIN.test(githubLogin))) fail('invalid-watch-github-login');
-  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,chatMode,agentModeOptIn,githubAuth,githubLogin};
+  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,workspacePath:x.workspacePath,expectedBranch:x.expectedBranch,chatMode,githubAuth,githubLogin};
 }
 
 const clientFor=(c,fetchImpl,github)=>github??createGitHubClient({auth:c.githubAuth,fetchImpl,expectedLogin:c.githubLogin});
@@ -123,11 +126,13 @@ export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateD
   if(!forwardImpl) fail('forward-impl-required');
   const c=checkWatchConfig(config);
   const chatForwardConfig={
-    version:'hic.dev-chat-forward/1',
+    version:'hic.dev-chat-forward/2',
     enabled:true,
     repository:c.repository,
     issueNumber:issue.number,
     trustedAuthor:c.trustedAuthor,
+    workspacePath:c.workspacePath,
+    expectedBranch:c.expectedBranch,
     codeCommand:process.env.VSCODE_CHAT_COMMAND||'code',
     chatMode:c.chatMode
   };
@@ -135,15 +140,15 @@ export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateD
   return result;
 }
 
-export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,codeCommand=null,github=null}={}) {
+export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,codeCommand=null,github=null,verifyWorkspace=verifyWorkspaceTarget}={}) {
   const c=checkWatchConfig(config);
+  verifyWorkspace({workspacePath:c.workspacePath,expectedBranch:c.expectedBranch,repository:c.repository});
   if(!forwardImpl) fail('forward-impl-required');
   const client=clientFor(c,fetchImpl,github);
   
   // Resolve codeCommand: explicit parameter > env VSCODE_CHAT_COMMAND > fallback code.cmd
   const resolvedCodeCommand=codeCommand||(process.env.VSCODE_CHAT_COMMAND||(process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd'));
   
-  // Determine chat mode: Ask (default) unless agentModeOptIn is explicitly true
   const chatMode=c.chatMode;
   
   // Poll for pending issues
@@ -154,14 +159,17 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
   
   // Forward pending issues in order
   const forwarded=[];
+  let blockedReason=null;
   for(const issue of poll.pending) {
     try {
       const fwd=await forwardImpl({config:{
-        version:'hic.dev-chat-forward/1',
+        version:'hic.dev-chat-forward/2',
         enabled:true,
         repository:c.repository,
         issueNumber:issue.number,
         trustedAuthor:c.trustedAuthor,
+        workspacePath:c.workspacePath,
+        expectedBranch:c.expectedBranch,
         codeCommand:resolvedCodeCommand,
         chatMode
       },stateDir,github:client});
@@ -176,10 +184,14 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
     } catch(e) {
       await recordForwardAttempt({db:poll.db,dbPath:poll.dbPath,repository:c.repository,issueNumber:issue.number,status:'forward-error',stateDir});
       forwarded.push({issueNumber:issue.number,status:'forward-error',error:e.message});
+      if(e?.message==='chat-workspace-binding-unavailable') {
+        blockedReason=e.message;
+        break;
+      }
     }
   }
-  
-  return {status:'ok',forwarded};
+
+  return blockedReason?{status:'blocked',reason:blockedReason,forwarded}:{status:'ok',forwarded};
 }
 
 export const MAX_BACKOFF_MS=15*60*1000;
@@ -194,8 +206,9 @@ export function nextDelayMs({error=null,intervalMs,consecutiveFailures=0}) {
 
 const abortableSleep=(ms,signal)=>new Promise(r=>{const t=setTimeout(r,ms);signal?.addEventListener('abort',()=>{clearTimeout(t);r()},{once:true})});
 
-export async function watchLoop({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,intervalMs=60000,codeCommand=null,onError=console.error,log=console.log,github=null,sleep=abortableSleep,maxPolls=Infinity}={}) {
+export async function watchLoop({config,stateDir=defaultStateDir(),fetchImpl=fetch,forwardImpl=null,intervalMs=60000,codeCommand=null,onError=console.error,log=console.log,github=null,sleep=abortableSleep,maxPolls=Infinity,verifyWorkspace=verifyWorkspaceTarget}={}) {
   const c=checkWatchConfig(config);
+  verifyWorkspace({workspacePath:c.workspacePath,expectedBranch:c.expectedBranch,repository:c.repository});
   if(!forwardImpl) fail('forward-impl-required');
   const client=clientFor(c,fetchImpl,github);
   log(`[${new Date().toISOString()}] Watch loop started: repository=${c.repository} label=${c.relayLabel} githubAuth=${client.auth}`);
@@ -209,7 +222,13 @@ export async function watchLoop({config,stateDir=defaultStateDir(),fetchImpl=fet
       polls++;
       let error=null;
       try {
-        const result=await watchOnce({config:c,stateDir,fetchImpl,forwardImpl,codeCommand,github:client});
+        const result=await watchOnce({config:c,stateDir,fetchImpl,forwardImpl,codeCommand,github:client,verifyWorkspace});
+        if(result.status==='blocked') {
+          stopReason=result.reason??'watch-blocked';
+          onError(`[${new Date().toISOString()}] Fatal error: ${stopReason}`);
+          running=false;
+          break;
+        }
         failures=0;
         if(result.forwarded.length>0) log(`[${new Date().toISOString()}] Forwarded ${result.forwarded.length} issue(s)`);
       } catch(e) {

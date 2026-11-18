@@ -1,8 +1,8 @@
 # VS Code Chat'e tek issue iletme (opt-in)
 
 **Yalnızca geliştirici iş istasyonu içindir; HIC ürün özelliği değildir.** Bu dosya iki modu belgeler:
-1. **ChatForwardOnce**: Yerel ayarda açıkça seçilen **tek bir GitHub issue'sunu** okur ve VS Code Chat'e iletir.
-2. **ChatForwardWatchOnce**: GitHub repo'sunu `hic-relay-ready` etiketi ve güvenilir yazar filtreleriyle polling yapar, uygun issue'ları bulur ve VS Code Chat'e iletir.
+1. **ChatForwardOnce**: Açıkça seçilen tek issue için handoff denemesi; desteklenen VS Code CLI ile Ask Chat'i doğrulanmış worktree'ye bağlayacak bir yöntem bulunana kadar fail-closed olarak engellenir.
+2. **ChatForwardWatchOnce**: GitHub repo'sunu `hic-relay-ready` etiketi ve güvenilir yazar filtreleriyle polling yapar. Pending issue varsa Chat handoff'unu doğrulanamayan workspace/window bağı nedeniyle engeller.
 
 Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` davranışını değiştirmez. Varsayılan olarak kapalıdır.
 
@@ -10,24 +10,19 @@ Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` da
 
 ### Nasıl çalışır
 
-1. `ChatForwardSetup`, `%LOCALAPPDATA%\HICDevRelay\chat-forward.json` dosyasını yazar. Dosyada repo, issue numarası, güvenilir issue yazarı, `code.cmd` yolu ve Chat modu yer alır. `-ChatMode ask` ile Ask modunu seçebilirsin; varsayılan `agent`dır. Bu adım ağ çağrısı yapmaz. Mevcut ayarın üzerine yalnızca `-ReplaceConfig` ile yazılır.
-2. `ChatForwardOnce`, önce yerel gönderim kaydına bakar. Kayıt varsa GitHub'a bile gitmeden `already-forwarded` döner.
-3. Kayıt yoksa `GET https://api.github.com/repos/<repo>/issues/<n>` ile issue anonim olarak okunur. Yönlendirme takip edilmez. Yalnızca şu koşullar sağlanırsa devam edilir:
-   - Issue açık olmalı ve PR olmamalı.
-   - Numara ile URL ayarla birebir eşleşmeli.
-   - Yazar, ayardaki `trustedAuthor` olmalı.
-   - Başlık 256 ve açıklama 20.000 karakteri aşmamalı.
-4. Gönderimden **önce** `chat-forward\records\<owner>__<repo>__<n>.json` kaydı `wx` ile atomik olarak oluşturulur. Gönderim en fazla bir kez yapılır: süreç bu noktada çökse bile issue yeniden gönderilmez.
-5. Görev metni `chat-forward\prompts\...md` dosyasına yazılır. Metin issue URL'sini, başlığını, açıklamasını ve çalışma kurallarını içerir: ayrı branch, ilgili testler, issue'ya bağlı draft PR, merge/deploy yok. Ardından şu komut çalıştırılır:
-   `code chat -m <mod> -r -a <prompt-dosyası> "Follow the HIC relay task in the attached file"`.
-   Issue metni komut satırına girmez; Chat'e yalnızca ek dosya olarak ulaşır. Windows'ta `code.cmd`, `cmd.exe /d /s /c` ile çağrılır. Çağrıdaki her argüman güvenli karakter allowlist'iyle denetlenir.
-6. Kayıt `handed-off-unverified`, `launch-failed`, `launch-timeout` veya `spawn-failed` olarak güncellenir. `completionVerified` her zaman `false` kalır.
+1. `ChatForwardSetup`, `%LOCALAPPDATA%\HICDevRelay\chat-forward.json` dosyasını yazar. Dosyada repo, issue numarası, güvenilir issue yazarı, `code.cmd` yolu, açıkça seçilen tek klasör worktree yolu ve beklenen branch yer alır. Chat modu daima Ask'tır; Agent yürütmesi devre dışıdır. Bu adım ağ çağrısı yapmaz. Mevcut ayarın üzerine yalnızca `-ReplaceConfig` ile yazılır.
+2. `ChatForwardOnce`, canonical path, GitHub `origin`, branch ve temiz çalışma ağacını yerel olarak doğrular.
+3. Ardından `chat-workspace-binding-unavailable` hatasıyla durur. Hata, GitHub issue okumasından, handoff kaydı/prompt dosyası yazımından ve `code.cmd` çağrısından önce oluşur. `code chat -n` boş pencere açar; `code chat -r` ise son etkin pencereye yönelir. CLI ile Ask Chat'i doğrulanmış worktree'ye bağlı aynı pencerede başlatıp bunu doğrulayan desteklenen bir yol bulunmadığından ikisi de kullanılmaz.
 
 ### Kullanım
 
 ```powershell
 $relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
-powershell -NoProfile -File $relay -Mode ChatForwardSetup -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint -IssueNumber <ISSUE_NO> -TrustedAuthor Cabatoy
+$workspace = 'C:\Users\<USER>\worktrees\hic-144-s1-workspace-pin'
+powershell -NoProfile -File $relay -Mode ChatForwardSetup `
+  -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
+  -IssueNumber <ISSUE_NO> -TrustedAuthor Cabatoy `
+  -WorkspacePath $workspace -ExpectedBranch task/144-s1-workspace-pin
 powershell -NoProfile -File $relay -Mode ChatForwardOnce
 ```
 
@@ -37,14 +32,14 @@ powershell -NoProfile -File $relay -Mode ChatForwardOnce
 
 Watch modu, GitHub repo'sunu periyodik olarak polling yapar ve uygun issue'ları VS Code Chat'e iletir.
 
-1. `ChatForwardWatchSetup`, `%LOCALAPPDATA%\HICDevRelay\watch-forward.json` dosyasını yazar. Dosyada repo, `hic-relay-ready` etiketi, güvenilir issue yazarı ve (isteğe bağlı) `agentModeOptIn` boolean bayrağı yer alır. `-ChatMode agent` ile Agent modunu opt-in edebilirsin; varsayılan Ask modudur. Bu adım ağ çağrısı yapmaz.
+1. `ChatForwardWatchSetup`, `%LOCALAPPDATA%\HICDevRelay\watch-forward.json` dosyasını yazar. Dosyada repo, `hic-relay-ready` etiketi, güvenilir issue yazarı, açık worktree yolu ve beklenen branch yer alır. Ask tek moddur; Agent opt-in desteklenmez. Bu adım ağ çağrısı yapmaz.
 2. `ChatForwardWatchOnce`, GitHub API'sine `https://api.github.com/repos/<repo>/issues?state=open&labels=<label>` ile GET yapar. Sonuçlar filtre edilir:
    - PR'lar atlanır.
    - Yalnızca açık issue'lar seçilir.
    - Yalnızca `trustedAuthor` tarafından yazılan issue'lar seçilir.
 3. Her uygun issue için `watch-forward\issues.json` veritabanı kontrol edilir. Önceden gönderilen issue'lar (status: `forwarded`, `handed-off-unverified`, `launch-failed`) atlanır.
-4. Kalan her issue için `ChatForwardOnce` gibi kayıt oluşturulur ve VS Code Chat'e iletilir. Gönderimler sıra ile yapılır (paralel değil).
-5. Yeniden başlatmada watch modu tekrar gönderimden kaçınır. Veritabanı kalıcıdır ve yeniden başlatma arasında korunur.
+4. Pending issue varsa ilk Chat handoff denemesi `chat-workspace-binding-unavailable` ile engellenir; WatchOnce `blocked` döner. VS Code Chat açılmaz. Hata watch DB'ye kaydedilir ve WatchLoop bu kalıcı targeting hatasında durur.
+5. `ChatForwardWatchCheck` yalnızca polling yapar; issue iletmez, Chat açmaz ve dedup DB'ye yazmaz. Authenticated polling davranışı korunur.
 
 ### Modu seç
 
@@ -57,18 +52,14 @@ Watch modu, GitHub repo'sunu periyodik olarak polling yapar ve uygun issue'ları
 
 ```powershell
 $relay = 'tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1'
-# Ask modu (varsayılan):
-powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
-  -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
-  -RelayLabel hic-relay-ready `
-  -TrustedAuthor Cabatoy
-
-# Veya Agent modunu opt-in et:
+$workspace = 'C:\Users\<USER>\worktrees\hic-144-s1-workspace-pin'
+# Ask modu ve açık worktree/branch bağı:
 powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
   -Repository Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint `
   -RelayLabel hic-relay-ready `
   -TrustedAuthor Cabatoy `
-  -ChatMode agent
+  -WorkspacePath $workspace `
+  -ExpectedBranch task/144-s1-workspace-pin
 ```
 
 **Seçenek 1: Bir kez polling (ChatForwardWatchOnce)**
@@ -77,7 +68,7 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup `
 powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
 ```
 
-`exit=0` döner, uygun issue'lar iletilir, sonra exit eder.
+Doğrulanmış pending issue bulunursa komut `blocked`/`chat-workspace-binding-unavailable` ile sıfır olmayan exit code döndürür; issue Chat'e iletilmez.
 
 **Seçenek 2: Sürekli polling (ChatForwardWatchLoop)**
 
@@ -96,8 +87,9 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchLoop
 Anonim GitHub API limiti saatte 60 istektir. 60 saniyelik polling ve iletim öncesi issue okuması bu sınırı aşar ve eski sürümde tek bir `watch-fetch-failed` hatası olarak görünürdü. Kimliği doğrulanmış polling açıkça seçilir:
 
 ```powershell
-powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup -ReplaceConfig -ChatMode ask `
-  -Repository owner/repo -TrustedAuthor <login> -RelayLabel hic-relay-ready -GitHubAuth gcm -GitHubLogin <login>
+powershell -NoProfile -File $relay -Mode ChatForwardWatchSetup -ReplaceConfig `
+  -Repository owner/repo -TrustedAuthor <login> -RelayLabel hic-relay-ready `
+  -WorkspacePath $workspace -ExpectedBranch <branch> -GitHubAuth gcm -GitHubLogin <login>
 # Yalnızca polling doğrulaması: hiçbir issue iletilmez, Chat açılmaz, dedup DB yazılmaz
 powershell -NoProfile -File $relay -Mode ChatForwardWatchCheck
 ```
@@ -109,7 +101,7 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchCheck
 - Kimlik doğrulama yapılandırılmışsa ama credential yoksa anonim isteğe **geri düşülmez**; hiç istek gönderilmeden `github-auth-unavailable` ile durulur.
 - Token yalnızca `https://api.github.com` isteklerine, `redirect: manual` ile eklenir; log ve hata çıktılarında yalnızca durum kodu, kalan kota, reset zamanı, bekleme süresi, request id ve beklenen/gerçek login görünür.
 - `--github-auth none|gcm|env` ve `--github-login <login>` CLI bayrakları yapılandırmayı geçici olarak geçersiz kılar; `--poll-check` yalnızca polling doğrulaması yapar.
-- Launcher'da `-ChatMode` varsayılanı `agent`'tır; ilk doğrulamada `-ChatMode ask` açıkça verilmelidir.
+- `githubAuth`/`githubLogin` pinlemesi korunur. Workspace/branch binding'i değiştiğinde `ChatForwardWatchSetup -ReplaceConfig` ile yerel config yeniden oluşturulmalıdır; v1 config fail-closed olarak reddedilir.
 
 Yeniden gönderim testi (Once modu):
 
@@ -132,7 +124,7 @@ powershell -NoProfile -File $relay -Mode ChatForwardWatchOnce
 
 - Watch modunda izleme döngüsü yoktur; `Once` modu yalnızca bir kez poll eder.
 - İlk sürümde Task Scheduler entegrasyonu yoktur.
-- `-r`, son etkin VS Code penceresini kullanır. Chat o pencerenin workspace'inde çalışır. Hedef repoyu açık tut.
+- VS Code Chat CLI, Ask oturumunu tam olarak seçilmiş worktree penceresine bağlama ve seçimi doğrulama sağlamaz. Relay bu nedenle ChatForwardOnce'i ve pending issue içeren WatchOnce'ı fail-closed engeller; yalnızca `ChatForwardWatchCheck` polling için kullanılabilir.
 - Özel repolar anonim okunamaz.
 - VS Code'un `code chat` komutunun promptu Enter beklemeden gönderdiği, 2026-11-13'te VS Code 1.146.0 üzerinde kullanıcı tarafından gözlendi. Bu davranış sonraki sürümlerde değişebilir.
 
