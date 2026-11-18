@@ -1,12 +1,20 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkWatchConfig, watchPoll, watchOnce, WATCH_VERSION, WATCH_DB_VERSION } from '../src/watch.mjs';
+import { checkWatchConfig, watchLoop, watchPoll, watchOnce, WATCH_VERSION, WATCH_DB_VERSION } from '../src/watch.mjs';
+import { forwardOnce } from '../src/chat-forward.mjs';
 
-const config={version:WATCH_VERSION,repository:'Cabatoy/test-repo',trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready'};
+const config={
+  version:WATCH_VERSION,
+  repository:'Cabatoy/test-repo',
+  trustedAuthor:'Cabatoy',
+  relayLabel:'hic-relay-ready',
+  workspacePath:process.platform==='win32'?'C:\\hic\\test-worktree':'/tmp/hic-test-worktree',
+  expectedBranch:'task/171-test'
+};
 
 const mockIssues=[
   {number:101,title:'Valid issue',body:'Test body',updated_at:'2026-11-13T01:00:00Z',state:'open',user:{login:'Cabatoy'}},
@@ -49,8 +57,9 @@ export async function testConfigValidation() {
   assert.throws(()=>checkWatchConfig({version:WATCH_VERSION,repository:'invalid',trustedAuthor:'Cabatoy',relayLabel:'label'}),'rejects invalid repo');
   assert.throws(()=>checkWatchConfig({version:WATCH_VERSION,repository:'Cabatoy/repo',trustedAuthor:'inv@lid',relayLabel:'label'}),'rejects invalid author');
   assert.equal(checkWatchConfig(config).chatMode,'ask','missing mode fails closed to Ask');
-  assert.throws(()=>checkWatchConfig({...config,chatMode:'ask',agentModeOptIn:true}),/watch-chat-mode-conflict/,'conflicting local mode config is rejected');
-  assert.throws(()=>checkWatchConfig({...config,chatMode:'agent',agentModeOptIn:false}),/watch-chat-mode-conflict/,'conflicting Agent config is rejected');
+  assert.throws(()=>checkWatchConfig({...config,chatMode:'agent'}),/watch-agent-disabled/,'Agent mode is disabled');
+  assert.throws(()=>checkWatchConfig({...config,agentModeOptIn:true}),/watch-agent-disabled/,'legacy Agent opt-in is disabled');
+  assert.throws(()=>checkWatchConfig({...config,version:'hic.dev-watch/1'}),/watch-config-upgrade-required/,'old configs must be recreated with a pinned workspace');
   console.log('✓ config validation works');
 }
 
@@ -76,7 +85,7 @@ export async function testWatchOnceNoRepeatForward() {
 }
 
 export async function testAskModeDefault() {
-  console.log('Test: chatMode defaults to ask when agentModeOptIn is false');
+  console.log('Test: chatMode defaults to Ask');
   
   const testDir=mkdtempSync(join(tmpdir(),'hic-watch-test-'));
   
@@ -86,12 +95,12 @@ export async function testAskModeDefault() {
     return {status:'handed-off-unverified',issueUrl:'https://github.com/test'};
   };
   
-  const configWithoutOptIn={...config,chatMode:'ask',agentModeOptIn:false};
   const result=await watchOnce({
-    config:configWithoutOptIn,
+    config,
     stateDir:testDir,
     fetchImpl:mockFetch(),
-    forwardImpl:trackingForwardImpl
+    forwardImpl:trackingForwardImpl,
+    verifyWorkspace:()=>{}
   });
   
   if(result.status==='ok'||result.status==='no-pending-issues') {
@@ -104,32 +113,66 @@ export async function testAskModeDefault() {
   }
 }
 
-export async function testAgentModeOptIn() {
-  console.log('Test: chatMode switches to agent when agentModeOptIn is true');
-  
-  const testDir=mkdtempSync(join(tmpdir(),'hic-watch-test-'));
-  
-  let receivedChatMode=null;
-  const trackingForwardImpl=async({config})=>{
-    receivedChatMode=config.chatMode;
-    return {status:'handed-off-unverified',issueUrl:'https://github.com/test'};
-  };
-  
-  const configWithOptIn={...config,chatMode:'agent',agentModeOptIn:true};
-  const result=await watchOnce({
-    config:configWithOptIn,
-    stateDir:testDir,
-    fetchImpl:mockFetch(),
-    forwardImpl:trackingForwardImpl
-  });
-  
-  if(result.status==='ok'||result.status==='no-pending-issues') {
-    if(receivedChatMode) {
-      assert.equal(receivedChatMode,'agent','Agent mode enabled via agentModeOptIn');
-      console.log('✓ chatMode switches to agent when opted in');
-    } else {
-      console.log('[Note: no pending issues in watchOnce call]');
-    }
+export async function testWorkspacePreflightRunsBeforePolling() {
+  let fetches=0;
+  await assert.rejects(watchOnce({
+    config,
+    fetchImpl:async()=>{fetches++;return {status:200,json:async()=>mockIssues};},
+    forwardImpl:async()=>assert.fail('must not forward'),
+    verifyWorkspace:()=>{throw new Error('workspace-branch-mismatch');}
+  }),/workspace-branch-mismatch/);
+  assert.equal(fetches,0,'invalid workspace binding blocks GitHub polling');
+}
+
+export async function testWorkspaceChatBindingBlocksForwarding() {
+  const testDir=mkdtempSync(join(tmpdir(),'hic-watch-binding-test-'));
+  let fetches=0,launches=0;
+  try {
+    const result=await watchOnce({
+      config,
+      stateDir:testDir,
+      fetchImpl:async()=>{fetches++;return {status:200,json:async()=>mockIssues,text:async()=>JSON.stringify(mockIssues)};},
+      verifyWorkspace:()=>{},
+      codeCommand:process.platform==='win32'?'C:\\fake\\code.cmd':'/fake/code',
+      forwardImpl:args=>forwardOnce({
+        ...args,
+        verifyWorkspace:()=>{},
+        launch:async()=>{launches++;return {exitCode:0,error:null};}
+      })
+    });
+    assert.equal(result.status,'blocked');
+    assert.equal(result.reason,'chat-workspace-binding-unavailable');
+    assert.equal(result.forwarded[0].error,'chat-workspace-binding-unavailable');
+    assert.equal(fetches,1,'authenticated issue polling remains available');
+    assert.equal(launches,0,'no Chat process is launched');
+    const dbPath=join(testDir,'watch-forward','issues.json');
+    assert.equal(existsSync(dbPath),true);
+    assert.equal(JSON.parse(readFileSync(dbPath,'utf8')).records['Cabatoy__test-repo__101'].status,'forward-error');
+  } finally {
+    rmSync(testDir,{recursive:true,force:true});
+  }
+}
+
+export async function testWatchLoopStopsOnUnverifiableWorkspaceBinding() {
+  let fetches=0,sleeps=0;
+  const testDir=mkdtempSync(join(tmpdir(),'hic-watch-loop-binding-'));
+  try {
+    const result=await watchLoop({
+      config,
+      stateDir:testDir,
+      maxPolls:3,
+      fetchImpl:async()=>{fetches++;return {status:200,json:async()=>mockIssues,text:async()=>JSON.stringify(mockIssues)};},
+      verifyWorkspace:()=>{},
+      forwardImpl:async()=>{throw new Error('chat-workspace-binding-unavailable');},
+      sleep:async()=>{sleeps++;},
+      log:()=>{},
+      onError:()=>{}
+    });
+    assert.deepEqual(result,{status:'blocked',reason:'chat-workspace-binding-unavailable',polls:1});
+    assert.equal(fetches,1);
+    assert.equal(sleeps,0,'the loop does not continue polling after a permanent targeting block');
+  } finally {
+    rmSync(testDir,{recursive:true,force:true});
   }
 }
 
@@ -144,9 +187,10 @@ export async function testIssueTextCannotPromoteAgentMode() {
       text:async()=>JSON.stringify(mockIssues)
     });
     await watchOnce({
-      config:{...config,chatMode:'ask',agentModeOptIn:false},
+      config:{...config,chatMode:'ask'},
       stateDir:testDir,
       fetchImpl:issueFetch,
+      verifyWorkspace:()=>{},
       forwardImpl:async({config:forwardConfig})=>{
         receivedChatMode=forwardConfig.chatMode;
         return {status:'handed-off-unverified',issueUrl:'https://github.com/test'};
@@ -164,7 +208,7 @@ export async function testCliRejectsAgentPromotion() {
   const testDir=mkdtempSync(join(tmpdir(),'hic-watch-cli-test-'));
   try {
     const configPath=join(testDir,'watch-forward.json');
-    writeFileSync(configPath,JSON.stringify({...config,chatMode:'ask',agentModeOptIn:false,githubAuth:'none'}));
+    writeFileSync(configPath,JSON.stringify({...config,chatMode:'ask',githubAuth:'none'}));
     const here=dirname(fileURLToPath(import.meta.url));
     const r=spawnSync(process.execPath,[join(here,'..','src','watch-cli.mjs'),'--poll-check','--agent-mode','--config',configPath,'--state-dir',testDir],{encoding:'utf8'});
     assert.equal(r.status,1);
@@ -192,6 +236,7 @@ export async function testCodeCommandPrecedence() {
     stateDir:testDir,
     fetchImpl:mockFetch(),
     forwardImpl:trackingForwardImpl,
+    verifyWorkspace:()=>{},
     codeCommand:explicitCodeCmd
   });
   
@@ -214,6 +259,7 @@ export async function testCodeCommandPrecedence() {
       stateDir:testDir,
       fetchImpl:mockFetch(),
       forwardImpl:trackingForwardImpl,
+      verifyWorkspace:()=>{},
       codeCommand:null
     });
     
@@ -241,7 +287,9 @@ async function runAllTests() {
     await testWatchOnce();
     await testWatchOnceNoRepeatForward();
     await testAskModeDefault();
-    await testAgentModeOptIn();
+    await testWorkspacePreflightRunsBeforePolling();
+    await testWorkspaceChatBindingBlocksForwarding();
+    await testWatchLoopStopsOnUnverifiableWorkspaceBinding();
     await testIssueTextCannotPromoteAgentMode();
     await testCliRejectsAgentPromotion();
     await testCodeCommandPrecedence();

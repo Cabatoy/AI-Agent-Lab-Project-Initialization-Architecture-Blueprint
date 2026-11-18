@@ -43,7 +43,8 @@ if(cmd==='--help'||!cmd) {
     const config=withOverrides(loadWatchConfig(watchConfigPath));
     const codeCommand=value('--code-command')||process.env.VSCODE_CHAT_COMMAND||undefined;
     const result=await watchOnce({config,stateDir,forwardImpl:forwardOnce,codeCommand});
-    console.log(JSON.stringify({status:result.status,forwarded:result.forwarded}));
+    console.log(JSON.stringify({status:result.status,...(result.reason?{reason:result.reason}:{}),forwarded:result.forwarded}));
+    if(result.status==='blocked') process.exitCode=1;
   } catch(error) {
     reportBlocked(error);
   }

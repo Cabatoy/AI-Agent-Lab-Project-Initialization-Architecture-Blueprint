@@ -7,11 +7,11 @@ Modes:
  ReadOnlyOnce, ReadOnlyWatch: public GET only
  AckOnce, AckWatch: opt-in public GET + POST synthetic receipt to Issue #97
  InstallAutostart: explicit per-user logon task, no administrator required
- ChatForwardSetup: write local opt-in config naming exactly one GitHub issue for VS Code Chat
- ChatForwardOnce: forward that issue once to `code chat`; a local record prevents re-sending
- ChatForwardWatchSetup: write local opt-in config for polling issues with a label
+ ChatForwardSetup: write local opt-in config naming one issue and a pinned local Git worktree/branch
+ ChatForwardOnce: verify the pinned worktree, then fail closed because the VS Code CLI cannot bind Ask Chat to that exact window
+ ChatForwardWatchSetup: write local opt-in config for polling issues and a pinned local Git worktree/branch
  ChatForwardWatchCheck: polling-only verification; never forwards or opens Chat
- ChatForwardWatchOnce: poll once for issues with label; no re-send on restart
+ ChatForwardWatchOnce: poll once for issues with label; Chat delivery is blocked until exact window binding is supported
  ChatForwardWatchLoop: poll in a loop every 60 seconds; gracefully shut down with Ctrl+C
 #>
 [CmdletBinding()]
@@ -21,8 +21,10 @@ param(
   [string]$Repository='',
   [int]$IssueNumber=0,
   [string]$TrustedAuthor='',
+  [string]$WorkspacePath='',
+  [string]$ExpectedBranch='',
   [string]$RelayLabel='',
-  [ValidateSet('agent','ask','edit')]
+  [ValidateSet('ask')]
   [string]$ChatMode='ask',
   [ValidateSet('none','gcm','env')]
   [string]$GitHubAuth='none',
@@ -41,17 +43,28 @@ $chatConfigFile=Join-Path $stateDir 'chat-forward.json'
 if($Mode -notin @('ChatForwardSetup','ChatForwardWatchSetup') -and $PSBoundParameters.ContainsKey('ChatMode')) {
   throw '-ChatMode is only accepted during local setup. Select the mode in the local config; runtime promotion is blocked.'
 }
+function Get-WorkspaceBinding {
+  if([string]::IsNullOrWhiteSpace($WorkspacePath)){throw 'Pass -WorkspacePath <absolute personal Git worktree path>.'}
+  if([string]::IsNullOrWhiteSpace($ExpectedBranch)){throw 'Pass -ExpectedBranch <branch>.'}
+  if($WorkspacePath.StartsWith('\\') -or $WorkspacePath.StartsWith('//')){throw 'UNC and device paths are not allowed.'}
+  if($WorkspacePath -notmatch '^[A-Za-z]:[\\/]'){throw '-WorkspacePath must be an absolute local drive path.'}
+  $resolved=[System.IO.Path]::GetFullPath($WorkspacePath)
+  $item=Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
+  if($item.PSProvider.Name -ne 'FileSystem'){throw '-WorkspacePath must be a local filesystem directory.'}
+  if(-not $item.PSIsContainer){throw '-WorkspacePath must be a single-folder Git worktree, not a file or .code-workspace.'}
+  return $resolved
+}
 switch ($Mode) {
  'Plan' {
    Write-Host 'ReadOnlyOnce/Watch: anonymous GitHub GET; no execution.'
    Write-Host 'SetupAck: asks for a fine-grained PAT with Issues read/write ONLY on the single personal repository, DPAPI per user.'
    Write-Host 'AckOnce/Watch: explicitly publishes only synthetic seen-untrusted receipts to Issue #97.'
    Write-Host 'InstallAutostart: requires explicit local confirmation and existing DPAPI secret; at-logon only.'
-   Write-Host 'ChatForwardSetup: writes a local config naming ONE repo/issue/trusted author; no network call.'
-   Write-Host 'ChatForwardOnce: reads that issue anonymously and hands it to VS Code Chat via code chat once; exit code is not completion.'
-   Write-Host 'ChatForwardWatchSetup: writes a local config for polling issues with a label on a repo; -GitHubAuth gcm|env -GitHubLogin <login> opts into authenticated polling pinned to that account (fails closed if the credential is unavailable or belongs to another account).'
+   Write-Host 'ChatForwardSetup/ChatForwardWatchSetup: require an explicit local worktree path and expected branch; setup makes no network call.'
+   Write-Host 'ChatForwardOnce: fails closed because the VS Code CLI cannot bind Ask Chat to a verified workspace window.'
+   Write-Host 'ChatForwardWatchOnce: polls once; pending issues are blocked from Chat delivery until exact window binding is supported, then may be retried.'
+   Write-Host 'Agent execution is disabled. Existing version-1 chat configs must be recreated.'
    Write-Host 'ChatForwardWatchCheck: polling-only verification; lists issues that would be forwarded; never forwards, opens Chat or writes the dedup DB.'
-   Write-Host 'ChatForwardWatchOnce: poll once for open issues with label from trusted author; no re-send on restart.'
    Write-Host 'ChatForwardWatchLoop: poll every 60 seconds with bounded rate-limit backoff; stops on auth/permission errors; Ctrl+C to stop.'
    break
  }
@@ -59,10 +72,11 @@ switch ($Mode) {
    if($Repository -notmatch '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$'){throw 'Pass -Repository owner/name.'}
    if($IssueNumber -lt 1){throw 'Pass -IssueNumber <n> explicitly.'}
    if($TrustedAuthor -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Pass -TrustedAuthor <github-login> (issue author allowed to give tasks).'}
+   $resolvedWorkspacePath=Get-WorkspaceBinding
    if((Test-Path -LiteralPath $chatConfigFile) -and -not $ReplaceConfig){throw 'Chat forward config already exists; review it or pass -ReplaceConfig.'}
    $codeCommand=(Get-Command code.cmd -ErrorAction Stop).Source
    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-   $config=[ordered]@{version='hic.dev-chat-forward/1';enabled=$true;repository=$Repository;issueNumber=$IssueNumber;trustedAuthor=$TrustedAuthor;codeCommand=$codeCommand;chatMode=$ChatMode}
+   $config=[ordered]@{version='hic.dev-chat-forward/2';enabled=$true;repository=$Repository;issueNumber=$IssueNumber;trustedAuthor=$TrustedAuthor;codeCommand=$codeCommand;workspacePath=$resolvedWorkspacePath;expectedBranch=$ExpectedBranch;chatMode='ask'}
    [System.IO.File]::WriteAllText($chatConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
    Write-Host "Chat forward config written for $Repository#$IssueNumber. Nothing was sent."
    break
@@ -78,14 +92,14 @@ switch ($Mode) {
    if($RelayLabel -notmatch '^[a-z-]{1,50}$'){throw 'Pass -RelayLabel <label> (lowercase, hyphens allowed).'}
    if($GitHubAuth -ne 'none' -and $GitHubLogin -notmatch '^[A-Za-z0-9-]{1,39}$'){throw 'Authenticated polling requires -GitHubLogin <login> (the account the credential must belong to).'}
    if($GitHubAuth -eq 'none' -and $GitHubLogin){throw '-GitHubLogin applies only with -GitHubAuth gcm|env.'}
+   $resolvedWorkspacePath=Get-WorkspaceBinding
    $watchConfigFile=Join-Path $stateDir 'watch-forward.json'
    if((Test-Path -LiteralPath $watchConfigFile) -and -not $ReplaceConfig){throw 'Watch forward config already exists; review it or pass -ReplaceConfig.'}
    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-   $config=[ordered]@{version='hic.dev-watch/1';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;chatMode=if($ChatMode -eq 'agent'){'agent'}else{'ask'};agentModeOptIn=$($ChatMode -eq 'agent');githubAuth=$GitHubAuth}
+   $config=[ordered]@{version='hic.dev-watch/2';repository=$Repository;trustedAuthor=$TrustedAuthor;relayLabel=$RelayLabel;workspacePath=$resolvedWorkspacePath;expectedBranch=$ExpectedBranch;chatMode='ask';githubAuth=$GitHubAuth}
    if($GitHubAuth -ne 'none'){ $config.githubLogin=$GitHubLogin }
    [System.IO.File]::WriteAllText($watchConfigFile,($config|ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
-   $modeLabel=if($ChatMode -eq 'agent'){'Agent'}else{'Ask (default)'}
-   Write-Host "Watch forward config written: repository=$Repository label=$RelayLabel author=$TrustedAuthor chatMode=$modeLabel githubAuth=$GitHubAuth githubLogin=$GitHubLogin"
+   Write-Host "Watch forward config written: repository=$Repository label=$RelayLabel branch=$ExpectedBranch workspace=bound chatMode=Ask githubAuth=$GitHubAuth githubLogin=$GitHubLogin"
    break
  }
  'ChatForwardWatchCheck' {

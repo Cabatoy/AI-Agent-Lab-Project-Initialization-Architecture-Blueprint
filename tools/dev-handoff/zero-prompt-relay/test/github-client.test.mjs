@@ -12,7 +12,7 @@ import { CONFIG_VERSION, fetchIssue, checkConfig } from '../src/chat-forward.mjs
 const TOKEN='synthetic_marker_'+'x'.repeat(24);
 const NOW=Date.parse('2026-11-14T12:00:00Z');
 const REPO='Cabatoy/test-repo';
-const config=(over={})=>({version:WATCH_VERSION,repository:REPO,trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready',githubAuth:'gcm',githubLogin:'Cabatoy',...over});
+const config=(over={})=>({version:WATCH_VERSION,repository:REPO,trustedAuthor:'Cabatoy',relayLabel:'hic-relay-ready',workspacePath:process.platform==='win32'?'C:\\hic\\test-worktree':'/tmp/hic-test-worktree',expectedBranch:'task/171-test',githubAuth:'gcm',githubLogin:'Cabatoy',...over});
 const issues=[
   {number:101,title:'Valid',body:'b',updated_at:'2026-11-13T01:00:00Z',state:'open',user:{login:'Cabatoy'}},
   {number:102,title:'PR',body:'',updated_at:'2026-11-13T01:00:00Z',state:'open',user:{login:'Cabatoy'},pull_request:{}},
@@ -53,13 +53,13 @@ test('HTTP 401 is a fatal auth error that clears the cached token and stops the 
   assert.equal(provided,2,'token is re-read after 401');
 
   const sleeps=[];
-  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>assert.fail('must not forward'),github:client(scripted([respond(401)])),sleep:async ms=>sleeps.push(ms),maxPolls:3,...quiet});
+  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>assert.fail('must not forward'),github:client(scripted([respond(401)])),sleep:async ms=>sleeps.push(ms),maxPolls:3,verifyWorkspace:()=>{},...quiet});
   assert.deepEqual(r,{status:'blocked',reason:'github-auth-invalid',polls:1});
   assert.deepEqual(sleeps,[]);
 });
 
 test('HTTP 403 without rate-limit signals is a fatal forbidden error',async()=>{
-  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>({status:'handed-off-unverified'}),github:client(scripted([respond(403,'{}',{'x-ratelimit-remaining':'4000'})])),sleep:async()=>{},maxPolls:3,...quiet});
+  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>({status:'handed-off-unverified'}),github:client(scripted([respond(403,'{}',{'x-ratelimit-remaining':'4000'})])),sleep:async()=>{},maxPolls:3,verifyWorkspace:()=>{},...quiet});
   assert.equal(r.status,'blocked');assert.equal(r.reason,'github-forbidden');
 });
 
@@ -78,7 +78,7 @@ test('HTTP 429 honours Retry-After, keeps polling and resets after success',asyn
   await tmp(async dir=>{
     const sleeps=[],forwarded=[],logs=[];
     const fetchImpl=scripted([respond(429,'{}',{'retry-after':'90'}),respond(200,issues)]);
-    const r=await watchLoop({config:config(),stateDir:dir,github:client(fetchImpl),forwardImpl:async({config:fc,github})=>{forwarded.push({n:fc.issueNumber,auth:github.auth});return {status:'handed-off-unverified'}},sleep:async ms=>sleeps.push(ms),maxPolls:2,log:m=>logs.push(m),onError:()=>{}});
+    const r=await watchLoop({config:config(),stateDir:dir,github:client(fetchImpl),forwardImpl:async({config:fc,github})=>{forwarded.push({n:fc.issueNumber,auth:github.auth});return {status:'handed-off-unverified'}},sleep:async ms=>sleeps.push(ms),maxPolls:2,verifyWorkspace:()=>{},log:m=>logs.push(m),onError:()=>{}});
     assert.equal(r.status,'stopped');
     assert.deepEqual(sleeps,[91000]);
     assert.deepEqual(forwarded,[{n:101,auth:'gcm'}],'authenticated client reaches chat-forward; only trusted issue forwarded');
@@ -99,8 +99,8 @@ test('deduplication still prevents re-forwarding with authenticated polling',asy
     const forwards=[];
     const forwardImpl=async({config:fc})=>{forwards.push(fc);return {status:'handed-off-unverified'}};
     const github=client(scripted([respond(200,issues),respond(200,issues)]));
-    await watchOnce({config:config(),stateDir:dir,github,forwardImpl});
-    const second=await watchOnce({config:config(),stateDir:dir,github,forwardImpl});
+    await watchOnce({config:config(),stateDir:dir,github,forwardImpl,verifyWorkspace:()=>{}});
+    const second=await watchOnce({config:config(),stateDir:dir,github,forwardImpl,verifyWorkspace:()=>{}});
     assert.equal(forwards.length,1);
     assert.equal(second.status,'no-pending-issues');
     assert.equal(forwards[0].chatMode,'ask','human-reviewed Ask mode remains the default');
@@ -140,7 +140,7 @@ test('credential of a different GitHub account fails closed before the issue lis
   assert.deepEqual(calls.map(x=>x.url),['https://api.github.com/user']);
   assert.equal(describeGitHubError(e),'github-identity-mismatch authMode=gcm expectedLogin=Cabatoy actualLogin=corporate-account');
 
-  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>assert.fail('must not forward'),github:client(scripted([respond(200,{login:'corporate-account'})]),{expectedLogin:'Cabatoy'}),sleep:async()=>{},maxPolls:3,...quiet});
+  const r=await watchLoop({config:config(),stateDir:mkdtempSync(join(tmpdir(),'hic-gh-t-')),forwardImpl:async()=>assert.fail('must not forward'),github:client(scripted([respond(200,{login:'corporate-account'})]),{expectedLogin:'Cabatoy'}),sleep:async()=>{},maxPolls:3,verifyWorkspace:()=>{},...quiet});
   assert.deepEqual(r,{status:'blocked',reason:'github-identity-mismatch',polls:1});
 });
 
@@ -156,7 +156,7 @@ test('matching GitHub login is verified once and then polling proceeds',async()=
 
 test('poll-check reports pending issues without forwarding or writing the dedup DB',async()=>{
   await tmp(async dir=>{
-    const r=await watchCheck({config:config({agentModeOptIn:true}),stateDir:dir,github:client(scripted([respond(200,issues)]))});
+    const r=await watchCheck({config:config(),stateDir:dir,github:client(scripted([respond(200,issues)]))});
     assert.deepEqual(r,{status:'check-only',githubAuth:'gcm',githubLogin:'Cabatoy',pending:[101]});
     assert.equal(existsSync(join(dir,'watch-forward','issues.json')),false);
   });
@@ -165,7 +165,7 @@ test('poll-check reports pending issues without forwarding or writing the dedup 
 test('chat-forward issue read uses the supplied authenticated client',async()=>{
   const calls=[];
   const N=7;
-  const c=checkConfig({version:CONFIG_VERSION,enabled:true,repository:REPO,issueNumber:N,trustedAuthor:'Cabatoy',codeCommand:process.platform==='win32'?'C:\\fake\\code.cmd':'/fake/code'});
+  const c=checkConfig({version:CONFIG_VERSION,enabled:true,repository:REPO,issueNumber:N,trustedAuthor:'Cabatoy',codeCommand:process.platform==='win32'?'C:\\fake\\code.cmd':'/fake/code',workspacePath:process.platform==='win32'?'C:\\hic\\test-worktree':'/tmp/hic-test-worktree',expectedBranch:'task/171-test'});
   const body={number:N,html_url:'https://github.com/'+REPO+'/issues/'+N,state:'open',user:{login:'Cabatoy'},title:'t',body:'b',updated_at:'2026-11-13T00:00:00Z'};
   await fetchIssue(c,{github:client(scripted([respond(200,body)],calls))});
   assert.equal(calls[0].opts.headers.Authorization,'Bearer '+TOKEN);

@@ -4,15 +4,15 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, re
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix, win32 } from 'node:path';
 import { createGitHubClient } from './github-client.mjs';
+import { assertChatWorkspaceSelectionAvailable, validateWorkspaceBinding, verifyWorkspaceTarget } from './workspace-target.mjs';
 
-export const CONFIG_VERSION='hic.dev-chat-forward/1';
+export const CONFIG_VERSION='hic.dev-chat-forward/2';
 export const RECORD_VERSION='hic.dev-chat-forward-record/1';
 export const CHAT_PROMPT='Follow the HIC relay task in the attached file';
 const REPO=/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const LOGIN=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 // Characters that are safe inside a double-quoted cmd.exe argument (no %, ^, &, |, <, >, ", !).
 const CMD_SAFE=/^[A-Za-z0-9 _.:\\/()+,=@~-]+$/;
-const MODES=['agent','ask','edit'];
 const MAX_ISSUE_BYTES=131072, MAX_BODY=20000, MAX_TITLE=256;
 const fail=code=>{throw new Error(code);};
 const isObject=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
@@ -21,15 +21,17 @@ const exactKeys=(x,required,optional=[])=>isObject(x)&&Object.keys(x).every(k=>r
 export const defaultStateDir=()=>process.env.LOCALAPPDATA?join(process.env.LOCALAPPDATA,'HICDevRelay'):join(homedir(),'.hic-dev-relay');
 
 export function checkConfig(x) {
-  if(!exactKeys(x,['version','enabled','repository','issueNumber','trustedAuthor','codeCommand'],['chatMode']) || x.version!==CONFIG_VERSION) fail('invalid-chat-config');
+  if(!exactKeys(x,['version','enabled','repository','issueNumber','trustedAuthor','codeCommand','workspacePath','expectedBranch'],['chatMode']) || x.version!==CONFIG_VERSION) fail('invalid-chat-config');
   if(x.enabled!==true) fail('chat-forward-disabled');
   if(typeof x.repository!=='string' || !REPO.test(x.repository) || x.repository.includes('..')) fail('invalid-chat-repository');
   if(!Number.isSafeInteger(x.issueNumber) || x.issueNumber<1) fail('invalid-chat-issue');
   if(typeof x.trustedAuthor!=='string' || !LOGIN.test(x.trustedAuthor)) fail('invalid-chat-author');
   if(typeof x.codeCommand!=='string' || !isAbsolute(x.codeCommand) || !CMD_SAFE.test(x.codeCommand)) fail('invalid-chat-command');
   const chatMode=x.chatMode??'ask';
-  if(!MODES.includes(chatMode)) fail('invalid-chat-mode');
-  return {repository:x.repository,issueNumber:x.issueNumber,trustedAuthor:x.trustedAuthor,codeCommand:x.codeCommand,chatMode};
+  if(chatMode==='agent') fail('chat-agent-disabled');
+  if(chatMode!=='ask') fail('invalid-chat-mode');
+  validateWorkspaceBinding({workspacePath:x.workspacePath,expectedBranch:x.expectedBranch});
+  return {repository:x.repository,issueNumber:x.issueNumber,trustedAuthor:x.trustedAuthor,codeCommand:x.codeCommand,workspacePath:x.workspacePath,expectedBranch:x.expectedBranch,chatMode};
 }
 
 export function loadConfig(path) {
@@ -114,19 +116,17 @@ export function buildLaunch(c,promptPath,platform=process.platform) {
   const abs=(platform==='win32'?win32:posix).isAbsolute;
   if(!abs(c.codeCommand)||!CMD_SAFE.test(c.codeCommand)) fail('invalid-chat-command');
   if(!abs(promptPath)||!CMD_SAFE.test(promptPath)) fail('unsafe-prompt-path');
-  const args=['chat','-m',c.chatMode,'-r','-a',promptPath,CHAT_PROMPT];
-  if(platform!=='win32') return {file:c.codeCommand,args,verbatim:false};
-  // code.cmd cannot be spawned without a shell; every argument is validated against CMD_SAFE above.
-  const line='"'+['"'+c.codeCommand+'"',...args.map(a=>/^[a-z-]+$/.test(a)?a:'"'+a+'"')].join(' ')+'"';
-  return {file:process.env.ComSpec||'cmd.exe',args:['/d','/s','/c',line],verbatim:true};
+  validateWorkspaceBinding(c,platform);
+  if(c.chatMode!=='ask') fail(c.chatMode==='agent'?'chat-agent-disabled':'invalid-chat-mode');
+  assertChatWorkspaceSelectionAvailable();
 }
 
-export function runLaunch({file,args,verbatim},{timeoutMs=60000}={}) {
+export function runLaunch({file,args,verbatim,cwd},{timeoutMs=60000}={}) {
   return new Promise(resolve=>{
     let done=false;
     const finish=r=>{if(!done){done=true;clearTimeout(timer);resolve(r)}};
     let child;
-    try{child=spawn(file,args,{stdio:'ignore',windowsHide:true,windowsVerbatimArguments:verbatim,shell:false})}
+    try{child=spawn(file,args,{stdio:'ignore',windowsHide:true,windowsVerbatimArguments:verbatim,shell:false,cwd})}
     catch{return resolve({exitCode:null,error:'spawn-failed'})}
     const timer=setTimeout(()=>{child.kill();finish({exitCode:null,error:'launch-timeout'})},timeoutMs);
     child.on('error',()=>finish({exitCode:null,error:'spawn-failed'}));
@@ -134,8 +134,10 @@ export function runLaunch({file,args,verbatim},{timeoutMs=60000}={}) {
   });
 }
 
-export async function forwardOnce({config,stateDir=defaultStateDir(),fetchImpl=fetch,launch=runLaunch,clock=Date.now,platform=process.platform,github=null}={}) {
+export async function forwardOnce({config,stateDir=defaultStateDir(),fetchImpl=fetch,launch=runLaunch,clock=Date.now,platform=process.platform,github=null,verifyWorkspace=verifyWorkspaceTarget}={}) {
   const c=checkConfig(config);
+  verifyWorkspace({workspacePath:c.workspacePath,expectedBranch:c.expectedBranch,repository:c.repository});
+  assertChatWorkspaceSelectionAvailable();
   const root=safeDir(join(safeDir(stateDir),'chat-forward'));
   const records=safeDir(join(root,'records')), prompts=safeDir(join(root,'prompts'));
   const recordPath=join(records,recordName(c)+'.json');
@@ -146,6 +148,7 @@ export async function forwardOnce({config,stateDir=defaultStateDir(),fetchImpl=f
   }
   const issue=await fetchIssue(c,{fetchImpl,github});
   const forwardedAt=new Date(clock()).toISOString();
+  verifyWorkspace({workspacePath:c.workspacePath,expectedBranch:c.expectedBranch,repository:c.repository});
   const record={version:RECORD_VERSION,repository:c.repository,issueNumber:c.issueNumber,issueUrl:issue.url,issueDigest:issue.digest,issueUpdatedAt:issue.updatedAt,chatMode:c.chatMode,claimedAt:forwardedAt,status:'claimed',launcherExitCode:null,completionVerified:false};
   let fd;
   try{fd=openSync(recordPath,'wx',0o600);writeFileSync(fd,JSON.stringify(record)+'\n')}
