@@ -48,7 +48,7 @@ test('real fake-command handoff happens once and is not re-sent after a process 
   const sent=lines(codeLog).map(l=>JSON.parse(l));
   assert.equal(sent.length,1);
   const promptPath=join(state,'chat-forward','prompts',REPO.replace('/','__')+'__'+N+'.md');
-  assert.deepEqual(sent[0].argv,['chat','-m','agent','-r','-a',promptPath,CHAT_PROMPT]);
+  assert.deepEqual(sent[0].argv,['chat','-m','ask','-r','-a',promptPath,CHAT_PROMPT]);
   assert.ok(sent[0].attached.includes('https://github.com/'+REPO+'/issues/'+N));
   assert.ok(sent[0].attached.includes(BODY),'issue body reaches chat only through the attached file');
   const second=run();
@@ -105,7 +105,8 @@ test('only the configured open issue from the trusted author is forwarded',()=>t
 }));
 
 test('config is explicit opt-in with a fixed shape',()=>{
-  assert.equal(checkConfig(config()).chatMode,'agent');
+  assert.equal(checkConfig(config()).chatMode,'ask','missing chatMode fails closed to Ask');
+  assert.equal(checkConfig(config({chatMode:'agent'})).chatMode,'agent','Agent requires explicit local opt-in');
   assert.throws(()=>checkConfig(config({enabled:false})),/chat-forward-disabled/);
   assert.throws(()=>checkConfig({...config(),autoMerge:true}),/invalid-chat-config/);
   const {issueNumber,...missing}=config();assert.throws(()=>checkConfig(missing),/invalid-chat-config/);
@@ -130,7 +131,7 @@ test('Windows launch line contains only validated arguments',()=>{
   const c={...checkConfig(config()),codeCommand:'C:\\Program Files\\Code\\bin\\code.cmd'};
   const spec=buildLaunch(c,'C:\\Users\\dev\\AppData\\Local\\HICDevRelay\\chat-forward\\prompts\\x.md','win32');
   assert.deepEqual(spec.args.slice(0,3),['/d','/s','/c']);
-  assert.equal(spec.args[3],'""C:\\Program Files\\Code\\bin\\code.cmd" chat -m agent -r -a "C:\\Users\\dev\\AppData\\Local\\HICDevRelay\\chat-forward\\prompts\\x.md" "'+CHAT_PROMPT+'""');
+  assert.equal(spec.args[3],'""C:\\Program Files\\Code\\bin\\code.cmd" chat -m ask -r -a "C:\\Users\\dev\\AppData\\Local\\HICDevRelay\\chat-forward\\prompts\\x.md" "'+CHAT_PROMPT+'""');
   assert.equal(spec.verbatim,true);
   assert.throws(()=>buildLaunch(c,'C:\\Users\\a&b\\x.md','win32'),/unsafe-prompt-path/);
   assert.throws(()=>buildLaunch({...c,codeCommand:'code.cmd'},'C:\\x.md','win32'),/invalid-chat-command/);

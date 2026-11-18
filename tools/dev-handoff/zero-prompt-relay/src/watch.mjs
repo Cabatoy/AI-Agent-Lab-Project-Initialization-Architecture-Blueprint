@@ -20,12 +20,16 @@ export function checkWatchConfig(x) {
   if(!REPO.test(x.repository)||x.repository.includes('..')) fail('invalid-watch-repository');
   if(!LOGIN.test(x.trustedAuthor)) fail('invalid-watch-author');
   if(!LABEL.test(x.relayLabel)) fail('invalid-watch-label');
-  const agentModeOptIn=x.agentModeOptIn===true?true:false;
+  if('agentModeOptIn' in x&&typeof x.agentModeOptIn!=='boolean') fail('invalid-watch-agent-opt-in');
+  if('chatMode' in x&&(typeof x.chatMode!=='string'||!CHAT_MODE.test(x.chatMode))) fail('invalid-watch-chat-mode');
+  const chatMode=x.chatMode??(x.agentModeOptIn===true?'agent':'ask');
+  if('chatMode' in x&&'agentModeOptIn' in x&&(x.agentModeOptIn!==(chatMode==='agent'))) fail('watch-chat-mode-conflict');
+  const agentModeOptIn=chatMode==='agent';
   const githubAuth=checkAuthMode(x.githubAuth);
   // Authenticated polling must name the GitHub account the credential is expected to belong to.
   const githubLogin=x.githubLogin??null;
   if(githubAuth==='none'?githubLogin!==null:(typeof githubLogin!=='string'||!LOGIN.test(githubLogin))) fail('invalid-watch-github-login');
-  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,agentModeOptIn,githubAuth,githubLogin};
+  return {version:x.version,repository:x.repository,trustedAuthor:x.trustedAuthor,relayLabel:x.relayLabel,chatMode,agentModeOptIn,githubAuth,githubLogin};
 }
 
 const clientFor=(c,fetchImpl,github)=>github??createGitHubClient({auth:c.githubAuth,fetchImpl,expectedLogin:c.githubLogin});
@@ -117,15 +121,15 @@ export async function recordForwardAttempt({db,dbPath,repository,issueNumber,sta
 export async function forwardWatchIssueOnce({config,issue,stateDir=defaultStateDir(),forwardImpl=null}={}) {
   // Build chat-forward config from watch config and current issue
   if(!forwardImpl) fail('forward-impl-required');
-  const chatMode=config.agentModeOptIn?'agent':'ask';
+  const c=checkWatchConfig(config);
   const chatForwardConfig={
     version:'hic.dev-chat-forward/1',
     enabled:true,
-    repository:config.repository,
+    repository:c.repository,
     issueNumber:issue.number,
-    trustedAuthor:config.trustedAuthor,
+    trustedAuthor:c.trustedAuthor,
     codeCommand:process.env.VSCODE_CHAT_COMMAND||'code',
-    chatMode
+    chatMode:c.chatMode
   };
   const result=await forwardImpl({config:chatForwardConfig,stateDir});
   return result;
@@ -140,7 +144,7 @@ export async function watchOnce({config,stateDir=defaultStateDir(),fetchImpl=fet
   const resolvedCodeCommand=codeCommand||(process.env.VSCODE_CHAT_COMMAND||(process.env.VSCODE_CWD?join(process.env.VSCODE_CWD,'..','..','bin','code.cmd'):'code.cmd'));
   
   // Determine chat mode: Ask (default) unless agentModeOptIn is explicitly true
-  const chatMode=c.agentModeOptIn?'agent':'ask';
+  const chatMode=c.chatMode;
   
   // Poll for pending issues
   const poll=await watchPoll({config:c,stateDir,fetchImpl,github:client});
