@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validateWorkspaceBinding, verifyWorkspaceTarget } from '../src/workspace-target.mjs';
+import { sameWorkspaceDirectoryIdentity, validateWorkspaceBinding, verifyWorkspaceTarget } from '../src/workspace-target.mjs';
 
 const repository='Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint';
 const branch='task/171-test';
@@ -30,10 +30,35 @@ test('Windows workspace binding rejects UNC and device paths without accessing t
   for(const workspacePath of [
     '\\\\server\\share\\repo',
     '\\\\?\\UNC\\server\\share\\repo',
+    '\\??\\C:\\repo',
     '\\\\.\\C:\\repo',
     '//server/share/repo'
   ]) {
     assert.throws(()=>validateWorkspaceBinding({workspacePath,expectedBranch:branch},'win32'),/workspace-unc-not-allowed/);
+  }
+  assert.throws(()=>validateWorkspaceBinding({workspacePath:'\\repo',expectedBranch:branch},'win32'),/workspace-path-not-absolute/);
+});
+
+test('Windows cwd comparison uses filesystem identity for equivalent path representations',()=>{
+  const canonical='C:\\HIC\\Smoke Test\\repo';
+  const alias='C:\\HIC\\SMOKE~1\\repo';
+  const filesystem={
+    lstat:path=>({isSymbolicLink:()=>/\\junction(?:\\|$)/i.test(path),isDirectory:()=>true}),
+    realpath:path=>/SMOKE~1/i.test(path)?canonical:path,
+    stat:path=>({
+      dev:7n,
+      ino:/\\other(?:\\|$)/i.test(path)?43n:42n,
+      isDirectory:()=>true
+    })
+  };
+  assert.notEqual(alias.toLowerCase(),canonical.toLowerCase(),'short-name representation is not string-equal');
+  assert.equal(sameWorkspaceDirectoryIdentity(alias,canonical,'win32',filesystem),true);
+  assert.equal(sameWorkspaceDirectoryIdentity('c:/hic/smoke test/repo/','C:\\HIC\\Smoke Test\\repo','win32',filesystem),true);
+  assert.equal(sameWorkspaceDirectoryIdentity('C:\\HIC\\other\\repo',canonical,'win32',filesystem),false);
+  assert.throws(()=>sameWorkspaceDirectoryIdentity('C:\\HIC\\junction\\repo',canonical,'win32',filesystem),/workspace-path-link-not-allowed/);
+  assert.throws(()=>sameWorkspaceDirectoryIdentity('C:\\HIC\\repo\\..\\other',canonical,'win32',filesystem),/workspace-path-escape/);
+  for(const unsafePath of ['\\\\server\\share\\repo','\\\\?\\C:\\HIC\\repo','\\\\.\\C:\\HIC\\repo']) {
+    assert.throws(()=>sameWorkspaceDirectoryIdentity(unsafePath,canonical,'win32',filesystem),/workspace-unc-not-allowed/);
   }
 });
 

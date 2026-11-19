@@ -1,6 +1,6 @@
 # HIC Developer Proposal Relay — P0 receive-only
 
-**Developer workstation only; not a HIC product feature.** This package reads an explicit **public GitHub** branch's **unsigned, non-executable** proposals and writes only local `seen-untrusted` receipts. It cannot send to Fusion (except the separate, default-off single-issue VS Code Chat handoff in [CHAT_FORWARD.md](./CHAT_FORWARD.md)), start an SDK/model session, execute files/commands, mutate HIC runtime/DB, commit, push, publish PRs, merge or deploy.
+**Developer workstation only; not a HIC product feature.** The receive-only P0 path reads an explicit **public GitHub** branch's **unsigned, non-executable** proposals and writes only local `seen-untrusted` receipts. It does not send those proposals to Fusion, start an SDK/model session, execute files/commands, mutate HIC runtime/DB, commit, push, publish PRs, merge or deploy. Separate opt-in handoffs are documented in [CHAT_FORWARD.md](./CHAT_FORWARD.md): VS Code Chat remains fail-closed, and the Copilot CLI mode is operator-only and read-only.
 
 ## Safety contract
 
@@ -49,6 +49,7 @@ No scheduled task/Windows service is installed. Do not enable OS autostart yet; 
 ## Missing pieces
 
 Opt-in single-issue handoff to VS Code Chat (`ChatForwardSetup` / `ChatForwardOnce`) is documented separately in [CHAT_FORWARD.md](./CHAT_FORWARD.md); it is off by default and does not change the ack relay.
+The separate Copilot CLI read-only mode also requires an explicit config and one-time operator invocation; watcher polling never dispatches it.
 
 This P0 slice proves only **GitHub → local receipt** after one-time startup. It does not prove **local → GitHub ack**, HIC task/run claims, reviewed signing keys, lease recovery, sandbox isolation, SDK login/quota, code/test/CI artifacts or autonomous continuation. Those must be separately implemented and approved under [Issue #93](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/93); existing [#92](https://github.com/Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint/issues/92) sandbox preflight remains `UNVERIFIED`.
 

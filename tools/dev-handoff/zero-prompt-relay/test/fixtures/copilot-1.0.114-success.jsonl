@@ -1,0 +1,3 @@
+{"type":"session.start","data":{"copilotVersion":"1.0.114","context":{"cwd":"C:\\synthetic\\hic-fixture","repository":"example/hic-fixture","branch":"fixture/smoke","headCommit":"0123456789abcdef0123456789abcdef01234567"}}}
+{"type":"assistant.message","data":{"content":"HIC_CLI_SMOKE_OK","toolRequests":[]}}
+{"type":"result","exitCode":0}

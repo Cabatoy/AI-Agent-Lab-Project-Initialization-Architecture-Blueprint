@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { posix, win32 } from 'node:path';
 
 const fail=code=>{throw new Error(code);};
@@ -11,13 +11,14 @@ function pathApi(platform) {
 }
 
 function rejectUnc(path,platform) {
-  if(platform==='win32'&&/^(?:\\\\|\/\/)/.test(path)) fail('workspace-unc-not-allowed');
+  if(platform==='win32'&&(/^(?:\\\\|\/\/)/.test(path)||/^\\\?\?\\/i.test(path))) fail('workspace-unc-not-allowed');
 }
 
 export function validateWorkspaceBinding({workspacePath,expectedBranch}={},platform=process.platform) {
   if(typeof workspacePath!=='string'||workspacePath.length===0||workspacePath.includes('\0')) fail('invalid-workspace-path');
   rejectUnc(workspacePath,platform);
   if(!pathApi(platform).isAbsolute(workspacePath)) fail('workspace-path-not-absolute');
+  if(platform==='win32'&&!/^[A-Za-z]:[\\/]/.test(workspacePath)) fail('workspace-path-not-absolute');
   if(typeof expectedBranch!=='string'||!BRANCH.test(expectedBranch)||expectedBranch.includes('..')||
     expectedBranch.includes('//')||expectedBranch.endsWith('/')||expectedBranch.endsWith('.')) fail('invalid-workspace-branch');
   return {workspacePath,expectedBranch};
@@ -61,6 +62,57 @@ function canonicalWorkspacePath(workspacePath,platform) {
     if(!stat.isDirectory()) fail('workspace-path-not-directory');
   }
   return resolved;
+}
+
+function workspaceDirectoryIdentity(workspacePath,platform,filesystem) {
+  const api=pathApi(platform);
+  validateWorkspaceBinding({workspacePath,expectedBranch:'main'},platform);
+  if(workspacePath.split(/[\\/]+/).includes('..')) fail('workspace-path-escape');
+  const resolved=api.resolve(workspacePath);
+  const parsed=api.parse(resolved);
+  const segments=resolved.slice(parsed.root.length).split(api.sep).filter(Boolean);
+  let current=parsed.root;
+  for(const segment of segments) {
+    current=api.join(current,segment);
+    let stat;
+    try {stat=filesystem.lstat(current);}
+    catch {fail('workspace-path-unavailable')}
+    if(stat.isSymbolicLink()) fail('workspace-path-link-not-allowed');
+    if(!stat.isDirectory()) fail('workspace-path-not-directory');
+  }
+  if(segments.length===0) {
+    let stat;
+    try {stat=filesystem.lstat(resolved);}
+    catch {fail('workspace-path-unavailable')}
+    if(stat.isSymbolicLink()) fail('workspace-path-link-not-allowed');
+    if(!stat.isDirectory()) fail('workspace-path-not-directory');
+  }
+
+  let canonical;
+  try {canonical=filesystem.realpath(resolved);}
+  catch {fail('workspace-path-unavailable')}
+  rejectUnc(canonical,platform);
+  if(!api.isAbsolute(canonical)) fail('workspace-path-not-canonical');
+  let target;
+  try {target=filesystem.stat(canonical,{bigint:true});}
+  catch {fail('workspace-path-unavailable')}
+  if(!target.isDirectory()) fail('workspace-path-not-directory');
+  if(typeof target.dev!=='bigint'||typeof target.ino!=='bigint') fail('workspace-identity-unavailable');
+  const {dev,ino}=target;
+  if(dev===0n||ino===0n) fail('workspace-identity-unavailable');
+  return {dev,ino};
+}
+
+const nativeFilesystem={
+  lstat:path=>lstatSync(path),
+  realpath:path=>realpathSync.native(path),
+  stat:(path,options)=>statSync(path,options)
+};
+
+export function sameWorkspaceDirectoryIdentity(firstPath,secondPath,platform=process.platform,filesystem=nativeFilesystem) {
+  const first=workspaceDirectoryIdentity(firstPath,platform,filesystem);
+  const second=workspaceDirectoryIdentity(secondPath,platform,filesystem);
+  return first.dev===second.dev&&first.ino===second.ino;
 }
 
 function githubRepositoryFromRemote(remote) {
