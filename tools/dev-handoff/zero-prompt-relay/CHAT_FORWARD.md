@@ -6,6 +6,64 @@
 
 Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` davranışını değiştirmez. Varsayılan olarak kapalıdır.
 
+## Phase B coding planı (yalnızca offline, çalıştırma yok)
+
+**Yönetici özeti:** Ayrı `copilot-coding-plan-cli.mjs` yalnızca tek seferlik
+operator incelemesi ve dry-run yapar. Coding Agent backend'i **uygulanmış veya
+çalıştırılabilir değildir**: CLI'nin dar dosya ve test izinlerini zorladığı
+doğrulanmadığından `execution.status` her zaman `BLOCKED` olur. Ön kontroller
+geçerse üst düzey `status: "PASS"` ve exit code `0`, geçmezse `BLOCKED` ve
+exit code `1` döner. `PASS` çalıştırma onayı veya güvenlik sınırının
+uygulandığı anlamına gelmez. Mevcut read-only ve Chat backend'leri değişmez.
+
+**Teknik ek:** Repo dışında, kişisel ve izole worktree için aşağıdaki JSON'u
+yerel bir dosyaya kaydedin; gerçek task metnini ve izinleri operator inceler.
+`data`, güvenilmeyen veridir; prompt olarak kullanılmaz, sonuçta gösterilmez.
+Listelediğiniz yol ve komutlar yalnızca beyandır: bunlar güvenlik enforcement'ı
+değildir. `writePaths` repo köküne göre tekil dosya yolları, `testCommands`
+ise `["npm","run","<script>"]` veya `["dotnet","test"]` dizileridir. Test
+scriptleri kendileri keyfi işlem yapabilir; hiçbir komut çalıştırılmaz.
+
+```json
+{
+  "version": "hic.dev-copilot-coding-plan/1",
+  "enabled": true,
+  "repository": "Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint",
+  "workspacePath": "C:\\Users\\<USER>\\worktrees\\hic-personal",
+  "expectedBranch": "task/example",
+  "expectedHead": "0123456789abcdef0123456789abcdef01234567",
+  "task": {"id": "local-1", "data": "Operator tarafından incelenmiş görev verisi"},
+  "permissions": {"writePaths": ["src/example.js"], "testCommands": [["npm", "run", "check"]]},
+  "approvals": {"task": null, "permissions": null}
+}
+```
+
+PowerShell'de repo kökünden, mutlak config yoluyla:
+
+```powershell
+node tools\dev-handoff\zero-prompt-relay\src\copilot-coding-plan-cli.mjs --enable-coding-plan --review --config C:\path\to\coding-plan.json
+```
+
+`--review`, temiz worktree, kişisel GitHub `origin`, branch ve tam HEAD'i
+kontrol eder; task verisi ve mutlak yol olmadan `scopeSha256`, göreli yazma
+yolları ve test komutu argümanlarını gösterir. Bu izin bildirimlerine hassas
+veri koymayın; aynen çıktı olarak gösterilirler.
+Operator config içeriğini inceler, görevi ve izinleri **ayrı ayrı** onaylarsa
+çıktıdaki hash'i `approvals.task` ve `approvals.permissions` alanlarına ayrı
+ayrı yazar. Bu yerel alanlar imzalı kimlik veya bağımsız denetim kanıtı değildir.
+Herhangi bir kapsam değişikliği hash'i geçersiz kılar. Sonra:
+
+```powershell
+node tools\dev-handoff\zero-prompt-relay\src\copilot-coding-plan-cli.mjs --enable-coding-plan --dry-run --config C:\path\to\coding-plan.json
+```
+
+İki onay da eşleşirse üst düzey `status: "PASS"` ile birlikte
+`execution.status: "BLOCKED"` ve `execution.reason: "agent-execution-unavailable"`
+döner. Uygulama CLI veya test komutu
+başlatmaz, issue çekmez, prompt oluşturmaz, kayıt yazmaz. Gelecekte canlı
+çalıştırma için ayrıca doğrulanabilir izolasyon, izin enforcement'ı ve insan
+onayı gerekir.
+
 ## Copilot CLI salt okunur modu (yalnızca operator)
 
 `src/copilot-readonly-cli.mjs`, mevcut VS Code Chat handoff'undan ayrı, **bir defalık** ve salt okunur inceleme backend'idir. Varsayılan config yoktur; config içinde `enabled: true` olmalı ve operator `--enable-copilot-read-only --once` bayraklarını vermelidir. Watcher bu backend'i çağıramaz. GitHub Issue okunmaz; issue içeriği, başlığı ve yorumları Copilot prompt'una aktarılmaz. Kullanılan prompt sabittir ve repo yapısının salt okunur özetini ister.
