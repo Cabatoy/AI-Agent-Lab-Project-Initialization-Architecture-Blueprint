@@ -6,6 +6,38 @@
 
 Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` davranışını değiştirmez. Varsayılan olarak kapalıdır.
 
+## Copilot CLI salt okunur modu (yalnızca operator)
+
+`src/copilot-readonly-cli.mjs`, mevcut VS Code Chat handoff'undan ayrı, **bir defalık** ve salt okunur inceleme backend'idir. Varsayılan config yoktur; config içinde `enabled: true` olmalı ve operator `--enable-copilot-read-only --once` bayraklarını vermelidir. Watcher bu backend'i çağıramaz. GitHub Issue okunmaz; issue içeriği, başlığı ve yorumları Copilot prompt'una aktarılmaz. Kullanılan prompt sabittir ve repo yapısının salt okunur özetini ister.
+
+Örnek config (`%LOCALAPPDATA%\HICDevRelay\copilot-read-only.json`):
+
+```json
+{
+  "version": "hic.dev-copilot-read-only/1",
+  "enabled": true,
+  "repository": "Cabatoy/AI-Agent-Lab-Project-Initialization-Architecture-Blueprint",
+  "copilotPath": "C:\\Users\\<USER>\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\copilot-shim\\copilot.exe",
+  "workspacePath": "C:\\Users\\<USER>\\worktrees\\hic-144-s1-workspace-pin",
+  "expectedBranch": "task/144-s1-workspace-pin"
+}
+```
+
+`copilotPath` mutlak yola sahip, mevcut, normal bir yerel `.exe` olmalıdır; örneği bu makinedeki `Get-Command copilot.exe` yoluna göredir ve kurulumunuzda farklı olabilir. Symlink, npm `.cmd`/`.ps1` shim, başka bir repo, hatalı config veya bulunamayan executable fail-closed reddedilir. Süreç `shell: false` ile başlatılır. Başlatmadan önce Relay canonical Git root, `origin`, beklenen branch, temiz çalışma ağacı ve kişisel repo'yu bağımsız doğrular. CLI çalışma dizini hem `spawn({cwd})` hem de `-C <verified-worktree>` ile ayarlanır. `session.start` içindeki çalışma dizini ve Copilot CLI sürümü (`1.0.114`) doğrulanır; uyumsuzlukta işlem reddedilir. Symlink/junction worktree'ler, çalışma alanı dışına çıkan yollar, kirli ağaç ve beklenmeyen tool istekleri engellenir.
+
+Çalıştırma:
+
+```powershell
+node tools\dev-handoff\zero-prompt-relay\src\copilot-readonly-cli.mjs `
+  --enable-copilot-read-only --once
+```
+
+CLI araç listesi `view`, `glob` ve `grep` ile sınırlıdır; yalnızca `read` izni verilir. `shell`, `write`, URL'ler, geçici klasör erişimi, özel talimatlar ve yerleşik MCP'ler devre dışıdır. `--disable-builtin-mcps`, kullanıcı profilindeki MCP sunucularının yüklenmesini engellediğini kanıtlamaz; kullanıcı düzeyi MCP izolasyonu doğrulanmamıştır. Backend, `%LOCALAPPDATA%\HICDevRelay\copilot-read-only\records\` altında sınırlandırılmış yapısal bir sonuç kaydeder; ham CLI çıktısı, prompt, dosya yolları, ortam değişkenleri veya kimlik bilgileri kaydedilmez. CLI çıktısı görevin tamamlandığına kanıt değildir. Bu modu gözetimsiz polling için yapılandırmayın.
+
+Çıkış kodu `0` tek başına yeterli değildir: Relay, doğrulanmış `session.start` olayına ek olarak metin içeren bir `assistant.message` ve bir `result` olayı arar. `assistantResponseSeen` ve `resultEventSeen` yalnızca bu olayların görüldüğünü belirtir; model isteği veya faturalama sayacı değildir. `copilot-session-cwd-mismatch` tanısı eksik/bozuk başlangıç olayını, eksik/geçersiz cwd alanını ve farklı dizin kimliğini ayrı kategorilerle bildirir. Bozuk JSONL `copilot-invalid-output`, eksik yanıt veya sonuç olayı ise `copilot-session-incomplete` ile reddedilir.
+
+**Kimlik sınırı:** CLI, operator'ün önceden oturum açtığı Copilot hesabını kullanır; Relay bu hesabın HIC geliştirme kullanımı için izinli olduğunu doğrulamaz. Hesap/kurum politikasını ve kullanıcı düzeyi MCP ayarlarını operator ayrıca doğrulamalıdır. Canlı Relay → CLI entegrasyonu hâlâ doğrulanmamıştır.
+
 ## ChatForwardOnce modu
 
 ### Nasıl çalışır
