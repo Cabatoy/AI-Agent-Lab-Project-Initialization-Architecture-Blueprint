@@ -6,12 +6,43 @@
 
 Mevcut ack relay'ini, `HIC-Developer-Relay-Ack-OptIn` görevini ve `AckWatch` davranışını değiştirmez. Varsayılan olarak kapalıdır.
 
+## Yerel durum ve gözetimli başlangıç
+
+Chat Relay, operatörün ön planda çalıştırdığı bir komuttur. `ChatForwardWatchLoop`
+otomatik başlamaz; operatör elle çalıştırır ve Ctrl+C ile durdurur. İsteğe bağlı
+Windows oturum açma görevi yalnızca eski sentetik `AckWatch` akışına aittir.
+
+Repo kökünden salt okunur yerel tanı çalıştırın:
+
+```powershell
+powershell -NoProfile -File .\tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1 -Mode Status
+```
+
+`Status` redakte edilmiş JSON verir. Süreç taraması yalnızca mevcut Windows
+oturumundaki bilinen Node Relay döngülerini kapsar; `running` süreç
+gözlemlendiğini, `stopped` eşleşme bulunmadığını, `unknown` ise tarama veya
+kimlik doğrulanamadığını belirtir. Scheduled Task envanterini sorgulamaz.
+Tanı GitHub'a bağlanmaz, credential okumaz, Copilot çalıştırmaz veya state
+yazmaz. Polling, CLI sürümü ve canlı execution ayrıca doğrulanmış sayılmaz.
+Coding Agent kapalı kalır.
+
+Watch config gözden geçirilip güncellendikten sonra güvenli, ön planda tek
+polling kontrolü:
+
+```powershell
+powershell -NoProfile -File .\tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1 -Mode ChatForwardWatchCheck
+```
+
+Bu komut bir kez GitHub polling yapıp çıkar; issue iletmez, Chat açmaz ve
+coding Agent çalıştırmaz.
+
 ## Phase B coding planı (yalnızca offline, çalıştırma yok)
 
 **Yönetici özeti:** Ayrı `copilot-coding-plan-cli.mjs` yalnızca tek seferlik
-operator incelemesi ve dry-run yapar. Coding Agent backend'i **uygulanmış veya
-çalıştırılabilir değildir**: CLI'nin dar dosya ve test izinlerini zorladığı
-doğrulanmadığından `execution.status` her zaman `BLOCKED` olur. Ön kontroller
+operator incelemesi ve dry-run yapar. Phase C için sınırlı coding runner
+eklenmiştir; gerçek CLI yürütümü **kapalıdır**. CLI'nin dar dosya ve test
+izinlerini zorladığı doğrulanmadığından dry-run `execution.status` her zaman
+`BLOCKED` olur. Ön kontroller
 geçerse üst düzey `status: "PASS"` ve exit code `0`, geçmezse `BLOCKED` ve
 exit code `1` döner. `PASS` çalıştırma onayı veya güvenlik sınırının
 uygulandığı anlamına gelmez. Mevcut read-only ve Chat backend'leri değişmez.
@@ -21,7 +52,7 @@ yerel bir dosyaya kaydedin; gerçek task metnini ve izinleri operator inceler.
 `data`, güvenilmeyen veridir; prompt olarak kullanılmaz, sonuçta gösterilmez.
 Listelediğiniz yol ve komutlar yalnızca beyandır: bunlar güvenlik enforcement'ı
 değildir. `writePaths` repo köküne göre tekil dosya yolları, `testCommands`
-ise `["npm","run","<script>"]` veya `["dotnet","test"]` dizileridir. Test
+ise `["npm","run","check"]` veya `["dotnet","test"]` dizileridir. Test
 scriptleri kendileri keyfi işlem yapabilir; hiçbir komut çalıştırılmaz.
 
 ```json
@@ -59,10 +90,32 @@ node tools\dev-handoff\zero-prompt-relay\src\copilot-coding-plan-cli.mjs --enabl
 
 İki onay da eşleşirse üst düzey `status: "PASS"` ile birlikte
 `execution.status: "BLOCKED"` ve `execution.reason: "agent-execution-unavailable"`
-döner. Uygulama CLI veya test komutu
-başlatmaz, issue çekmez, prompt oluşturmaz, kayıt yazmaz. Gelecekte canlı
-çalıştırma için ayrıca doğrulanabilir izolasyon, izin enforcement'ı ve insan
-onayı gerekir.
+döner. Plan CLI issue çekmez, prompt oluşturmaz veya test çalıştırmaz. Gelecekte canlı çalıştırma için ayrıca doğrulanabilir izolasyon, izin
+enforcement'ı ve insan onayı gerekir.
+
+### Phase C bounded runner
+
+`src/copilot-coding-runner.mjs`, onaylı scope'u tekrar doğrular, Copilot CLI'yi
+`spawn` ile `shell: false`, explicit `cwd`, timeout ve bounded stdout/stderr ile
+başlatır; JSONL session cwd/repository/branch/HEAD ve assistant/result
+olaylarını denetler. Ön/son Git durumları karşılaştırılır; yalnızca onaylı
+`writePaths` değişebilir. Runner, onaylı test komutlarını ayrıca çalıştırır ve
+sonucu ham prompt/CLI çıktısı olmadan JSON olarak döndürür.
+
+Operator giriş noktası:
+
+```powershell
+powershell -NoProfile -File .\tools\dev-handoff\zero-prompt-relay\scripts\Run-DevRelay.ps1 `
+  -Mode CodingOnce -CodingConfigPath C:\path\to\coding-plan.json `
+  -CopilotPath C:\path\to\copilot.exe
+```
+
+Komut şu an `coding-live-execution-disabled` ile fail-closed durur; runner
+yalnızca offline fake CLI testlerinden geçirildi. Bu gate, Copilot CLI'nin
+gerçek tool adları ve write-path kısıtlamalarını sürüme özgü doğrulama,
+MCP'in kapatılması ve dosya izinlerinin gerçek execution sırasında
+zorlandığının kanıtı bulunana kadar kapalıdır. Fake executable testi
+gerçek Agent/model çalıştırmaz. Watcher bu coding entry point'i çağıramaz.
 
 ## Copilot CLI salt okunur modu (yalnızca operator)
 

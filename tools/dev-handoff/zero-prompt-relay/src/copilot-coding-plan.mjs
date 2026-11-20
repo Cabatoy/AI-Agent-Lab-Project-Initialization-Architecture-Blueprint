@@ -60,8 +60,7 @@ function validatePermissions(permissions) {
     new Set(paths.map(path=>path.toLowerCase())).size!==paths.length) fail('unsafe-coding-permissions');
   const commands=permissions.testCommands;
   if(commands.some(command=>!Array.isArray(command)||
-    !((command.length===3&&command[0]==='npm'&&command[1]==='run'&&
-       typeof command[2]==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(command[2]))||
+    !((command.length===3&&command[0]==='npm'&&command[1]==='run'&&command[2]==='check')||
       (command.length===2&&command[0]==='dotnet'&&command[1]==='test')))||
     new Set(commands.map(command=>JSON.stringify(command))).size!==commands.length) fail('unsafe-coding-permissions');
 }

@@ -3,6 +3,7 @@
 Developer-only HIC relay bootstrap. Never runs automatically.
 Modes:
  Plan (default): no mutations
+ Status: read-only local process and readiness diagnostics; no polling
  SetupAck: one-time DPAPI secret, typed locally, never log or commit it
  ReadOnlyOnce, ReadOnlyWatch: public GET only
  AckOnce, AckWatch: opt-in public GET + POST synthetic receipt to Issue #97
@@ -13,10 +14,11 @@ Modes:
  ChatForwardWatchCheck: polling-only verification; never forwards or opens Chat
  ChatForwardWatchOnce: poll once for issues with label; Chat delivery is blocked until exact window binding is supported
  ChatForwardWatchLoop: poll in a loop every 60 seconds; gracefully shut down with Ctrl+C
+ CodingOnce: one explicitly invoked coding run; currently blocked pending verified permission enforcement
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Plan','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchCheck','ChatForwardWatchOnce','ChatForwardWatchLoop')]
+  [ValidateSet('Plan','Status','CodingOnce','SetupAck','ReadOnlyOnce','ReadOnlyWatch','AckOnce','AckWatch','InstallAutostart','ChatForwardSetup','ChatForwardOnce','ChatForwardWatchSetup','ChatForwardWatchCheck','ChatForwardWatchOnce','ChatForwardWatchLoop')]
   [string]$Mode='Plan',
   [string]$Repository='',
   [int]$IssueNumber=0,
@@ -29,6 +31,8 @@ param(
   [ValidateSet('none','gcm','env')]
   [string]$GitHubAuth='none',
   [string]$GitHubLogin='',
+  [string]$CodingConfigPath='',
+  [string]$CopilotPath='',
   [switch]$ReplaceConfig
 )
 Set-StrictMode -Version Latest
@@ -56,6 +60,7 @@ function Get-WorkspaceBinding {
 }
 switch ($Mode) {
  'Plan' {
+   Write-Host 'Status: local read-only diagnostics; does not launch Relay or contact GitHub.'
    Write-Host 'ReadOnlyOnce/Watch: anonymous GitHub GET; no execution.'
    Write-Host 'SetupAck: asks for a fine-grained PAT with Issues read/write ONLY on the single personal repository, DPAPI per user.'
    Write-Host 'AckOnce/Watch: explicitly publishes only synthetic seen-untrusted receipts to Issue #97.'
@@ -66,6 +71,19 @@ switch ($Mode) {
    Write-Host 'Agent execution is disabled. Existing version-1 chat configs must be recreated.'
    Write-Host 'ChatForwardWatchCheck: polling-only verification; lists issues that would be forwarded; never forwards, opens Chat or writes the dedup DB.'
    Write-Host 'ChatForwardWatchLoop: poll every 60 seconds with bounded rate-limit backoff; stops on auth/permission errors; Ctrl+C to stop.'
+   break
+ }
+ 'Status' {
+   & $nodeExe (Join-Path $toolRoot 'src/status-cli.mjs')
+   if($LASTEXITCODE -ne 0){throw 'Relay status failed.'}
+   break
+ }
+ 'CodingOnce' {
+   if([string]::IsNullOrWhiteSpace($CodingConfigPath) -or [string]::IsNullOrWhiteSpace($CopilotPath)) {
+     throw 'CodingOnce requires -CodingConfigPath and -CopilotPath. It never uses GitHub Issue content.'
+   }
+   & $nodeExe (Join-Path $toolRoot 'src/copilot-coding-cli.mjs') '--enable-coding-agent' '--once' '--config' $CodingConfigPath '--copilot-path' $CopilotPath
+   if($LASTEXITCODE -ne 0){throw 'Coding runner blocked or failed; see the structured status above.'}
    break
  }
  'ChatForwardSetup' {

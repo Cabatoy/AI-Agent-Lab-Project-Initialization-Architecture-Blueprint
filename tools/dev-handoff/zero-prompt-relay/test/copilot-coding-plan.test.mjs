@@ -82,7 +82,7 @@ test('disabled, malformed, oversized and unsafe declarations fail closed',t=>{
   for(const path of ['../outside','C:\\outside','src/*','src/.git/config','src/file:stream','src/file.']) {
     assert.equal(planCodingDryRun({...config,permissions:{...config.permissions,writePaths:[path]}}).reason,'unsafe-coding-permissions',path);
   }
-  for(const command of [['powershell','-Command','anything'],['npm','run','check;evil'],['npm','run','check','extra'],['dotnet','test','--filter=x']]) {
+  for(const command of [['powershell','-Command','anything'],['npm','run','test'],['npm','run','check;evil'],['npm','run','check','extra'],['dotnet','test','--filter=x']]) {
     assert.equal(planCodingDryRun({...config,permissions:{...config.permissions,testCommands:[command]}}).reason,'unsafe-coding-permissions');
   }
 });
