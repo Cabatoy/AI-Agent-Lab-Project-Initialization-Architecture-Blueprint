@@ -1,5 +1,10 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Dapper;
 using Npgsql;
 
@@ -149,5 +154,32 @@ public sealed class LocalHealthRunnerSecurityTests
     public void InvalidRegistrationConfiguration_DisablesLocalSessions(string? token, string actorId)
     {
         Assert.Null(LocalOperatorSessions.Create(token, actorId));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("******")]
+    public async Task RunRead_RejectsMissingOrInvalidSessionBeforeLoadingActorResource(string? authorization)
+    {
+        var bootstrap = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var sessions = LocalOperatorSessions.Create(bootstrap, Guid.NewGuid().ToString());
+        Assert.NotNull(sessions);
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var app = builder.Build();
+        LocalHealthRunnerEndpoints.Map(app, "invalid-connection-string", null!, sessions);
+        await app.StartAsync();
+
+        var server = app.Services.GetRequiredService<IServer>();
+        var address = server.Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        using var client = new HttpClient { BaseAddress = new Uri(address) };
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/local-runner/runs/{Guid.NewGuid()}");
+        if (authorization is not null)
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }
