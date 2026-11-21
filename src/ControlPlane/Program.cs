@@ -2,11 +2,32 @@ using Dapper;
 using Microsoft.OpenApi.Models;
 using Npgsql;
 using StackExchange.Redis;
+using ControlPlane.Api.TransactionalMail;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "Control Plane API", Version = "v1" }));
+
+var captureMailEnabled = string.Equals(
+    builder.Configuration["HIC_MAIL_CAPTURE_ENABLED"],
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+if (captureMailEnabled && builder.Environment.IsProduction())
+{
+    throw new InvalidOperationException(
+        "The non-production transactional mail capture sink is forbidden in Production.");
+}
+if (captureMailEnabled)
+{
+    builder.Services.AddSingleton<ITransactionalMailSender>(
+        new CaptureTransactionalMailSink(builder.Environment.EnvironmentName, explicitlyEnabled: true));
+}
+else
+{
+    builder.Services.AddSingleton<ITransactionalMailSender, UnconfiguredTransactionalMailSender>();
+}
 
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? "Host=localhost;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab";
