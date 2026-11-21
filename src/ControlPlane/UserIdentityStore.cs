@@ -92,6 +92,7 @@ internal static class UserIdentityStore
             return false;
 
         return domain.Split('.').All(label => label.Length > 0 &&
+            label.Length <= 63 &&
             char.IsLetterOrDigit(label[0]) && char.IsLetterOrDigit(label[^1]) &&
             label.All(character => char.IsLetterOrDigit(character) || character == '-'));
     }

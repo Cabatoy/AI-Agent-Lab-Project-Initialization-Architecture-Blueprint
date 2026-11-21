@@ -34,4 +34,15 @@ public class UserIdentityStoreTests
         Assert.Equal(UserIdentityCreateOutcome.InvalidIdentifier, result.Outcome);
         Assert.Null(result.Identity);
     }
+
+    [Fact]
+    public async Task DomainLabelLongerThanDnsLimit_IsRejectedBeforeDatabaseAccess()
+    {
+        var email = $"alice@{new string('a', 64)}.example.test";
+
+        var result = await UserIdentityStore.CreateAsync("invalid-connection-string", email, "alice");
+
+        Assert.Equal(UserIdentityCreateOutcome.InvalidIdentifier, result.Outcome);
+        Assert.Null(result.Identity);
+    }
 }
