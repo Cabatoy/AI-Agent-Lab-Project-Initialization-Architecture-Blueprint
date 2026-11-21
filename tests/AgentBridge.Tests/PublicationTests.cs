@@ -8,7 +8,7 @@ public sealed class PublicationTests : IDisposable
 {
     private const string SourceRepository = "synthetic-owner/source";
     private static readonly PublicationTarget Destination = new("synthetic-owner/destination", "handoffs/synthetic");
-    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-06T12:00:00Z");
+    private readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
     private readonly string root = Path.Combine(Path.GetTempPath(), "hic-publication-tests-" + Guid.NewGuid().ToString("N"));
     private readonly string source;
     private readonly string remote;
