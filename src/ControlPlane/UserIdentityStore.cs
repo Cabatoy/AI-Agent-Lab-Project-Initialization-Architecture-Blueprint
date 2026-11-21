@@ -55,6 +55,25 @@ internal static class UserIdentityStore
         CancellationToken cancellationToken = default) =>
         FindAsync(connectionString, NormalizeUsername(username), "normalized_username", cancellationToken);
 
+    internal static Task<UserIdentity?> FindByIdentifierAsync(string connectionString, string? identifier,
+        CancellationToken cancellationToken = default) =>
+        identifier?.Contains('@', StringComparison.Ordinal) == true
+            ? FindByEmailAsync(connectionString, identifier, cancellationToken)
+            : FindByUsernameAsync(connectionString, identifier, cancellationToken);
+
+    internal static async Task<UserIdentity?> FindByIdAsync(string connectionString, Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<UserIdentity>(new CommandDefinition(@"
+            select id, normalized_email as NormalizedEmail,
+                   normalized_username as NormalizedUsername, created_at_utc as CreatedAtUtc
+            from user_identities
+            where id = @Id;",
+            new { Id = id }, cancellationToken: cancellationToken));
+    }
+
     private static async Task<UserIdentity?> FindAsync(string connectionString, string? identifier,
         string column, CancellationToken cancellationToken)
     {

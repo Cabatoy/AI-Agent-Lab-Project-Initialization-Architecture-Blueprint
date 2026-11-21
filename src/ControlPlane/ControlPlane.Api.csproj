@@ -17,6 +17,7 @@
     <EmbeddedResource Include="Migrations\002-execution-ownership.sql" LogicalName="ExecutionOwnershipMigration" />
     <EmbeddedResource Include="Migrations\010-user-identities.sql" LogicalName="UserIdentityMigration" />
     <EmbeddedResource Include="Migrations\011-local-credentials.sql" LogicalName="LocalCredentialMigration" />
+    <EmbeddedResource Include="Migrations\012-hic-user-sessions.sql" LogicalName="HicUserSessionMigration" />
   </ItemGroup>
 
   <ItemGroup>
