@@ -1,3 +1,8 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Mvc;
 using Dapper;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -11,6 +16,77 @@ builder.Services.AddSwaggerGen(options =>
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? "Host=localhost;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab";
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+var trustedAuthOrigin = HicAuthRequestGuard.NormalizeTrustedOrigin(
+    builder.Configuration["HIC_AUTH_TRUSTED_ORIGIN"], builder.Environment.IsDevelopment());
+var userSessionStore = new HicUserSessionStore(postgresConnectionString);
+var cookieSecurePolicy = !builder.Environment.IsDevelopment() ||
+    trustedAuthOrigin?.StartsWith("https://", StringComparison.OrdinalIgnoreCase) == true
+    ? CookieSecurePolicy.Always
+    : CookieSecurePolicy.SameAsRequest;
+
+builder.Services.AddSingleton(userSessionStore);
+builder.Services.AddAuthentication(HicUserSession.Scheme)
+    .AddCookie(HicUserSession.Scheme, options =>
+    {
+        options.Cookie.Name = HicUserSession.CookieName;
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.SecurePolicy = cookieSecurePolicy;
+        options.Cookie.Path = "/";
+        options.Cookie.IsEssential = true;
+        options.ExpireTimeSpan = HicUserSessionStore.Lifetime;
+        options.SlidingExpiration = false;
+        options.Events.OnValidatePrincipal = async context =>
+        {
+            if (!HicUserSessionStore.TryGetSession(context.Principal!, out var sessionId, out var userId))
+            {
+                context.RejectPrincipal();
+                return;
+            }
+
+            try
+            {
+                if (!await userSessionStore.IsActiveAsync(sessionId, userId, context.HttpContext.RequestAborted))
+                    context.RejectPrincipal();
+            }
+            catch
+            {
+                context.RejectPrincipal();
+            }
+        };
+        options.Events.OnRedirectToLogin = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    });
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy("HicUser", policy =>
+        policy.AddAuthenticationSchemes(HicUserSession.Scheme).RequireAuthenticatedUser()));
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = HicUserSession.CsrfHeaderName;
+    options.Cookie.Name = HicUserSession.AntiforgeryCookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = cookieSecurePolicy;
+    options.Cookie.Path = "/";
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("hic-user-login", HicLoginRateLimit.ForRequest);
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(new { error = "Too many login attempts." }, cancellationToken);
+    };
+});
+
 var localOperatorSessions = LocalOperatorSessions.Create(
     builder.Configuration["HIC_LOCAL_OPERATOR_TOKEN"],
     builder.Configuration["HIC_LOCAL_OPERATOR_ID"]);
@@ -25,11 +101,16 @@ if (app.Environment.IsDevelopment())
 
 app.Use(async (context, next) =>
 {
-    if (!context.Request.Path.StartsWithSegments("/local-runner"))
+    var isLocalRunner = context.Request.Path.StartsWithSegments("/local-runner");
+    var isUserAuthentication = context.Request.Path.StartsWithSegments("/auth") ||
+        context.Request.Path.StartsWithSegments("/account");
+    if (!isLocalRunner && !isUserAuthentication)
     {
         await next();
         return;
     }
+    if (isUserAuthentication)
+        context.Response.Headers.CacheControl = "no-store";
 
     try
     {
@@ -37,10 +118,14 @@ app.Use(async (context, next) =>
     }
     catch (Exception) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
     {
-        app.Logger.LogError("Local runner request failed; exception details withheld.");
+        app.Logger.LogError(isLocalRunner
+            ? "Local runner request failed; exception details withheld."
+            : "HIC authentication request failed; exception details withheld.");
         context.Response.Clear();
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-        await context.Response.WriteAsJsonAsync(new { error = "Local runner is unavailable." }, CancellationToken.None);
+        await context.Response.WriteAsJsonAsync(
+            new { error = isLocalRunner ? "Local runner is unavailable." : "Authentication is unavailable." },
+            CancellationToken.None);
     }
 });
 
@@ -55,6 +140,127 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "control-p
     .WithSummary("Check Control Plane health")
     .WithDescription("Returns the current health status of the Control Plane API.")
     .Produces(StatusCodes.Status200OK);
+
+app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseRateLimiter();
+
+app.MapGet("/auth/csrf", (HttpContext context, IAntiforgery antiforgery) =>
+{
+    var tokens = antiforgery.GetAndStoreTokens(context);
+    return Results.Ok(new { requestToken = tokens.RequestToken });
+})
+    .AllowAnonymous()
+    .Produces(StatusCodes.Status200OK);
+
+app.MapGet("/auth/session", async (HttpContext context, CancellationToken cancellationToken) =>
+{
+    var identity = context.User.Identity?.IsAuthenticated == true
+        ? await HicUserSession.GetCurrentIdentityAsync(postgresConnectionString, context.User, cancellationToken)
+        : null;
+    return Results.Ok(identity is null
+        ? new { authenticated = false, user = (object?)null }
+        : new
+        {
+            authenticated = true,
+            user = new { id = identity.Id, email = identity.NormalizedEmail, username = identity.NormalizedUsername }
+        });
+})
+    .AllowAnonymous()
+    .Produces(StatusCodes.Status200OK);
+
+app.MapPost("/auth/login", async (HttpContext context, HicUserLoginRequest request,
+    IAntiforgery antiforgery, CancellationToken cancellationToken) =>
+{
+    if (trustedAuthOrigin is null)
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Authentication is not configured.");
+    if (!HicAuthRequestGuard.HasTrustedOrigin(context.Request, trustedAuthOrigin))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!await HicAuthRequestGuard.HasValidCsrfAsync(context, antiforgery))
+        return Results.StatusCode(StatusCodes.Status400BadRequest);
+
+    var identity = await HicUserAuthenticator.AuthenticateAsync(
+        postgresConnectionString, request.Identifier, request.Password, cancellationToken);
+    if (identity is null)
+        return Results.Json(new { error = "Invalid credentials." }, statusCode: StatusCodes.Status401Unauthorized);
+
+    if (HicUserSessionStore.TryGetSession(context.User, out var oldSessionId, out _))
+    {
+        await userSessionStore.RevokeAsync(oldSessionId, cancellationToken);
+        await context.SignOutAsync(HicUserSession.Scheme);
+    }
+
+    var now = DateTime.UtcNow;
+    var sessionId = Guid.NewGuid();
+    var expiresAt = now.Add(HicUserSessionStore.Lifetime);
+    await userSessionStore.CreateAsync(sessionId, identity.Id, expiresAt, cancellationToken);
+    var claims = new[]
+    {
+        new Claim(ClaimTypes.NameIdentifier, identity.Id.ToString()),
+        new Claim(ClaimTypes.Name, identity.NormalizedUsername),
+        new Claim(ClaimTypes.Email, identity.NormalizedEmail),
+        new Claim(HicUserSession.SessionClaim, sessionId.ToString())
+    };
+    var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, HicUserSession.Scheme));
+    await context.SignInAsync(HicUserSession.Scheme, principal, new AuthenticationProperties
+    {
+        IsPersistent = false,
+        AllowRefresh = false,
+        IssuedUtc = now,
+        ExpiresUtc = expiresAt
+    });
+
+    return Results.Ok(new
+    {
+        authenticated = true,
+        user = new { id = identity.Id, email = identity.NormalizedEmail, username = identity.NormalizedUsername }
+    });
+})
+    .AllowAnonymous()
+    .RequireRateLimiting("hic-user-login")
+    .WithMetadata(new RequestSizeLimitAttribute(4096))
+    .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status403Forbidden)
+    .Produces(StatusCodes.Status429TooManyRequests);
+
+app.MapPost("/auth/logout", async (HttpContext context, IAntiforgery antiforgery,
+    CancellationToken cancellationToken) =>
+{
+    if (context.Request.ContentLength is > 0 ||
+        context.Request.Headers.ContainsKey("Transfer-Encoding"))
+        return Results.BadRequest(new { error = "Logout does not accept a request body." });
+    if (trustedAuthOrigin is null)
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Authentication is not configured.");
+    if (!HicAuthRequestGuard.HasTrustedOrigin(context.Request, trustedAuthOrigin))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!await HicAuthRequestGuard.HasValidCsrfAsync(context, antiforgery))
+        return Results.StatusCode(StatusCodes.Status400BadRequest);
+    if (HicUserSessionStore.TryGetSession(context.User, out var sessionId, out _))
+        await userSessionStore.RevokeAsync(sessionId, cancellationToken);
+
+    await context.SignOutAsync(HicUserSession.Scheme);
+    return Results.NoContent();
+})
+    .AllowAnonymous()
+    .WithMetadata(new RequestSizeLimitAttribute(1024))
+    .Produces(StatusCodes.Status204NoContent)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status403Forbidden);
+
+app.MapGet("/account/me", async (HttpContext context, CancellationToken cancellationToken) =>
+{
+    var identity = await HicUserSession.GetCurrentIdentityAsync(
+        postgresConnectionString, context.User, cancellationToken);
+    return identity is null
+        ? Results.Unauthorized()
+        : Results.Ok(new { id = identity.Id, email = identity.NormalizedEmail, username = identity.NormalizedUsername });
+})
+    .RequireAuthorization("HicUser")
+    .Produces(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status401Unauthorized);
 
 // Explicit, read-only, allowlisted diagnostics. Not a task approval or execution API.
 app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>

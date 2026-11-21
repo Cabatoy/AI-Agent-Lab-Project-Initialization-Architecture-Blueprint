@@ -57,14 +57,17 @@ Vite geliştirme sürecinde kullanılır, browser bundle'ına konmaz. Podman
 machine IP'si veya uzak bir API bu sürümde desteklenmez; güvenli bir loopback
 erişimi ayrıca mevcut değilse altyapıyı değiştirmeden API erişimi kullanılamaz.
 
-Geliştirme proxy'si yalnız şu GET isteklerini iletir: `/health`, `/tasks`,
-`/tasks/{guid}` ve `/plans`. `POST /api/tasks` yalnız Draft oluşturur. Local
-Runner için yalnız session açma, capability/intent/run okuma, exact intent
-onayı ve allowlist edilmiş run başlatma yolları eklenmiştir. Diğer yöntemler,
-yollar (ör. Worker `/approve` ve `/retry`) ve query string'ler reddedilir;
-cookie ve istenmeyen istemci başlıkları upstream'e aktarılmaz. Tüm `/api`
-isteklerinde `Host` başlığı `127.0.0.1:<port>` olmalıdır (DNS rebinding
-koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
+Geliştirme proxy'si yalnız allowlist edilmiş GET yollarını (`/health`, `/tasks`,
+`/tasks/{guid}`, `/plans`, `/auth/csrf`, `/auth/session`, `/account/me`) ve
+`POST /api/tasks` yolunu iletir. Local Runner için yalnız session açma,
+capability/intent/run okuma, exact intent onayı ve allowlist edilmiş run
+başlatma yolları eklenmiştir. HIC user session akışı yalnız `/auth` ve
+`/account/me` için ayrıca allowlist edilmiştir; bu akışta yalnız
+`hic-user-session` ve `hic-antiforgery` cookie'leri iletilir. Local Runner'a ve
+diğer yollara cookie aktarılmaz. Diğer yöntemler, yollar (ör. Worker
+`/approve` ve `/retry`) ve query string'ler reddedilir. Tüm `/api` isteklerinde
+`Host` başlığı `127.0.0.1:<port>` olmalıdır (DNS rebinding koruması); başka bir
+`Origin` ile gelen GET'ler reddedilir.
 
 `POST /api/tasks` yalnız şu koşullarda iletilir:
 
@@ -81,10 +84,38 @@ koruması); başka bir `Origin` ile gelen GET'ler reddedilir.
 
 Upstream ve gövde okuma zaman aşımı 8 saniyedir; bağlantı kurulamazsa 502
 (`unreachable`), bağlantı yarıda kesilirse 502 (`interrupted`), zaman aşımında
-504 döner. Bu proxy genel bir authentication veya authorization mekanizması
-değildir; Control Plane'i doğrudan erişime karşı korumaz. Genel Control Plane
-API'si kimlik doğrulamasızdır; API ve UI loopback dışına açılmamalıdır. Local
-Runner'a özel API ayrıca `HIC_LOCAL_OPERATOR_TOKEN` ile açılan 15 dakikalık
+504 döner. `/auth/csrf` sunucu antiforgery request token'ı ve HttpOnly cookie
+sağlar. Login ve logout, yapılandırılmış origin, aynı-origin fetch sinyali ve
+CSRF cookie/header çifti olmadan proxy'den geçirilmez. Login kimlik bilgileri
+yalnız normalize edilmiş e-posta/kullanıcı adı ve parola alanlarıdır; istek
+4 KiB ile sınırlıdır. Yanlış parola ve bilinmeyen hesap aynı genel 401
+yanıtını alır; login denemeleri IP başına 15 dakikada beş istekle sınırlıdır.
+User session ASP.NET Core korumalı, HttpOnly, SameSite=Strict cookie kullanır;
+oturum 15 dakika sabit ömürlüdür, DB'de kullanıcı UUID'sine bağlanır ve logout
+ile revoke edilir. Login throttling mevcut uygulama process'inde tutulur; çoklu
+instance dağıtımında bu koruma global değildir ve ayrıca dağıtık/edge rate limit
+gerekir. HTTPS dışı Secure cookie yalnız Development ortamında
+loopback geliştirme akışı için devre dışıdır; diğer ortamlarda Secure zorunludur.
+
+Control Plane için `HIC_AUTH_TRUSTED_ORIGIN` tam UI origin'ine ayarlanmalıdır
+(ör. Development'ta `http://127.0.0.1:19482` — `HIC_WEB_PORT` değiştirilirse o
+port; diğer ortamlarda HTTPS). Local Compose bunu `.env` dosyasındaki
+`HIC_AUTH_TRUSTED_ORIGIN` ile Control Plane'e aktarır; UI portu değiştirilirse
+bu değeri de güncelleyin.
+Değer eksik veya geçersizse login/logout fail-closed olarak devre dışıdır.
+`012-hic-user-sessions.sql`, `010-user-identities.sql` ve
+`011-local-credentials.sql` sonrasında yalnız elle uygulanacak additive
+migration'dır; Control Plane başlangıcında otomatik çalışmaz. Bu login
+kontratı için henüz Web UI login ekranı/entegrasyonu yoktur.
+
+Bu sınırlı auth işi genel authentication veya authorization tamamlandı demek
+değildir ve Control Plane'i doğrudan erişime karşı korumaz. `/account/me`
+yalnız sunucunun cookie principal'ından gelen HIC UUID'sine bağlanır. `/health`,
+`/diagnostics/local`, `/tasks` altındaki listeleme/oluşturma/okuma/onay/retry/
+status/execution işlemleri ve `/plans` altındaki listeleme/oluşturma/onay
+işlemleri hâlâ bu user policy ile korunmuyor; Worker çağrıları da aynı yüzeyin
+parçasıdır. Local Runner'a özel API ayrı olarak `HIC_LOCAL_OPERATOR_TOKEN` ile
+açılan 15 dakikalık
 operator session'ı ister ve actor kimliğini `HIC_LOCAL_OPERATOR_ID` üzerinden
 bağlar. Bootstrap token yalnız yerel proxy üzerinden gönderilir, browser
 storage'a veya task/audit kayıtlarına yazılmaz. Session token yalnız sayfa
@@ -119,8 +150,9 @@ ağ erişiminden korunmuş olması gerekir. Depodaki genel Compose port mapping'
 bu güvenceyi tek başına sağlamayabilir; bu UI onu değiştirmez. Geliştirme
 sunucusunu `--host 0.0.0.0` ile açmayın, ters proxy ile internete sunmayın ve
 tarayıcıya secret koymayın. Güvenilmeyen yerel kullanıcılar ve tarayıcı
-eklentileri de yerel verilere erişebilir. Production için kimlik doğrulama,
-yetkilendirme, TLS, izolasyon ve audit ayrıca tasarlanmalıdır.
+eklentileri de yerel verilere erişebilir. Production veya geniş kapsamlı kullanım için kalan route'larda authentication,
+kaynak sahipliği/tenant authorization, TLS, izolasyon ve audit ayrıca
+tasarlanmalıdır.
 
 ### Kontroller
 

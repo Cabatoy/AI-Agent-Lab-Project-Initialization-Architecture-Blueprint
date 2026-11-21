@@ -3,10 +3,12 @@ import type { Plugin } from 'vite';
 import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, validateCreateTask } from './src/limits';
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const userAuthPath = /^\/api\/(?:auth\/(?:csrf|session|login|logout)|account\/me)$/;
 const createPath = '/api/tasks';
 const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const BODY_TIMEOUT_MS = 8000;
+const MAX_AUTH_REQUEST_BYTES = 4096;
 
 export function apiTarget(value = process.env.HIC_API_URL ?? 'http://127.0.0.1:19480'): URL {
   let url: URL;
@@ -38,11 +40,14 @@ const header = (req: http.IncomingMessage, name: string) => {
   return Array.isArray(value) ? value.join(',') : value;
 };
 
-function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string) {
+function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string, cookies?: string, origin?: string, csrfToken?: string, forwardResponseCookies = false) {
   let timedOut = false;
   let connected = false;
   const headers: http.OutgoingHttpHeaders = { accept: 'application/json' };
   if (authorization) headers.authorization = authorization;
+  if (cookies) headers.cookie = cookies;
+  if (origin) headers.origin = origin;
+  if (csrfToken) headers['x-hic-csrf'] = csrfToken;
   if (body !== undefined) {
     headers['content-type'] = 'application/json; charset=utf-8';
     headers['content-length'] = Buffer.byteLength(body);
@@ -52,6 +57,9 @@ function forward(req: http.IncomingMessage, res: http.ServerResponse, target: UR
       'Content-Type': response.headers['content-type'] ?? 'application/octet-stream',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      ...(forwardResponseCookies && response.headers['set-cookie']
+        ? { 'Set-Cookie': response.headers['set-cookie'] }
+        : {}),
     });
     response.pipe(res);
   });
@@ -77,7 +85,7 @@ function forward(req: http.IncomingMessage, res: http.ServerResponse, target: UR
   upstream.end(body);
 }
 
-function readBody(req: http.IncomingMessage, timeoutMs: number): Promise<{ ok: true; body: Buffer } | { ok: false; status: number; message: string }> {
+function readBody(req: http.IncomingMessage, timeoutMs: number, maxBytes = MAX_REQUEST_BYTES): Promise<{ ok: true; body: Buffer } | { ok: false; status: number; message: string }> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -95,7 +103,7 @@ function readBody(req: http.IncomingMessage, timeoutMs: number): Promise<{ ok: t
     req.on('data', (chunk: Buffer) => {
       if (settled) return;
       size += chunk.length;
-      if (size > MAX_REQUEST_BYTES) {
+      if (size > maxBytes) {
         chunks.length = 0;
         finish({ ok: false, status: 413, message: 'Request body is too large.' });
         return;
@@ -105,6 +113,90 @@ function readBody(req: http.IncomingMessage, timeoutMs: number): Promise<{ ok: t
     req.on('end', () => finish({ ok: true, body: Buffer.concat(chunks) }));
     req.on('error', () => finish({ ok: false, status: 400, message: 'Request body could not be read.' }));
   });
+}
+
+function userAuthCookies(req: http.IncomingMessage): string | undefined {
+  const raw = header(req, 'cookie');
+  if (!raw) return undefined;
+  const allowed = new Set(['hic-user-session', 'hic-antiforgery']);
+  const cookies = raw.split(';').map(part => part.trim()).filter(part => {
+    const separator = part.indexOf('=');
+    return separator > 0 && allowed.has(part.slice(0, separator));
+  });
+  return cookies.length ? cookies.join('; ') : undefined;
+}
+
+async function userAuthRequest(
+  req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string,
+  path: string, timeouts: Required<ProxyOptions>,
+) {
+  const isGet = req.method === 'GET';
+  const isLogin = req.method === 'POST' && path === '/api/auth/login';
+  const isLogout = req.method === 'POST' && path === '/api/auth/logout';
+  if (!isGet && !isLogin && !isLogout) return reject(res, 403, 'Authentication endpoint is not allowlisted.', true);
+  if (header(req, 'proxy-authorization') !== undefined || header(req, 'authorization') !== undefined)
+    return reject(res, 403, 'Authentication credentials were rejected.', true);
+
+  const requestOrigin = header(req, 'origin');
+  const site = header(req, 'sec-fetch-site');
+  if (site !== undefined && site !== 'same-origin')
+    return reject(res, 403, 'Cross-site requests are not accepted.', true);
+  if (isGet) {
+    if (requestOrigin !== undefined && requestOrigin !== origin)
+      return reject(res, 403, 'Cross-origin requests are not accepted.', true);
+    if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
+      return reject(res, 400, 'Read requests must not include a body.', true);
+    forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs,
+      undefined, undefined, userAuthCookies(req), undefined, undefined, true);
+    return;
+  }
+
+  if (requestOrigin !== origin)
+    return reject(res, 403, 'Requests must originate from the HIC dashboard.', true);
+  const csrfToken = header(req, 'x-hic-csrf');
+  if (!csrfToken || csrfToken.length > 4096)
+    return reject(res, 403, 'Authentication request was rejected.', true);
+
+  if (isLogout) {
+    if ((header(req, 'content-length') !== undefined && header(req, 'content-length') !== '0') ||
+        header(req, 'transfer-encoding') !== undefined || header(req, 'content-type') !== undefined)
+      return reject(res, 400, 'Logout does not accept a request body.', true);
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+      undefined, undefined, userAuthCookies(req), origin, csrfToken, true);
+    return;
+  }
+
+  const [mediaType, ...parameters] = (header(req, 'content-type') ?? '').split(';').map(part => part.trim().toLowerCase());
+  if (mediaType !== 'application/json' || parameters.some(part => part !== '' && part !== 'charset=utf-8'))
+    return reject(res, 415, 'Content-Type must be application/json.', true);
+  const encoding = header(req, 'content-encoding');
+  if (encoding !== undefined && encoding.toLowerCase() !== 'identity')
+    return reject(res, 415, 'Encoded request bodies are not accepted.', true);
+  const declared = Number(header(req, 'content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > MAX_AUTH_REQUEST_BYTES)
+    return reject(res, 413, 'Request body is too large.', true);
+
+  const received = await readBody(req, timeouts.bodyTimeoutMs, MAX_AUTH_REQUEST_BYTES);
+  if (!received.ok) return reject(res, received.status, received.message, true);
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(received.body)); }
+  catch { return reject(res, 400, 'Request body must be valid UTF-8 JSON.'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 2 ||
+      typeof (parsed as Record<string, unknown>).identifier !== 'string' ||
+      (parsed as Record<string, string>).identifier.length < 1 ||
+      (parsed as Record<string, string>).identifier.length > 320 ||
+      typeof (parsed as Record<string, unknown>).password !== 'string' ||
+      (parsed as Record<string, string>).password.length < 1 ||
+      (parsed as Record<string, string>).password.length > 1024)
+    return reject(res, 400, 'Invalid login request.');
+
+  const body = JSON.stringify({
+    identifier: (parsed as Record<string, string>).identifier,
+    password: (parsed as Record<string, string>).password,
+  });
+  forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+    body, undefined, userAuthCookies(req), origin, csrfToken, true);
 }
 
 async function createTask(req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string, timeouts: Required<ProxyOptions>) {
@@ -235,6 +327,10 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
         // Host check blocks DNS-rebinding; Origin checks block hostile pages from reading or writing.
         if (!port || header(req, 'host') !== `127.0.0.1:${port}`) return reject(res, 403, 'Unexpected host.');
         const requestOrigin = header(req, 'origin');
+        if (userAuthPath.test(path)) {
+          void userAuthRequest(req, res, target, origin, path, timeouts);
+          return;
+        }
         if (req.method === 'GET' && readPath.test(path)) {
           if (requestOrigin !== undefined && requestOrigin !== origin) return reject(res, 403, 'Cross-origin requests are not accepted.');
           forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs);
