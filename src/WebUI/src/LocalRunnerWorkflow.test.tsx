@@ -135,6 +135,29 @@ describe('Local Runner workflow', () => {
     expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
   });
 
+  it('clears the authenticated workflow when the local session is rejected', async () => {
+    vi.mocked(api.localHealthIntent).mockRejectedValueOnce(
+      Object.assign(new Error('The local runner session is invalid or expired.'), { status: 401 }),
+    );
+    render(<LocalRunnerWorkflow />);
+    fireEvent.change(screen.getByLabelText('Local operator bootstrap token'), {
+      target: { value: 'R'.repeat(44) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Authenticate local operator' }));
+    await screen.findByText(/Authenticated local actor/);
+    expect(await screen.findByRole('option', { name: task.title })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Draft task'), { target: { value: task.id } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('invalid or expired');
+    expect(screen.queryByText(/Authenticated local actor/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: task.title })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and run system.health' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run status:/)).not.toBeInTheDocument();
+    expect(api.approveLocalHealthRun).not.toHaveBeenCalled();
+    expect(api.executeLocalHealthRun).not.toHaveBeenCalled();
+  });
+
   it('shows a real conflict instead of retrying an already claimed run', async () => {
     vi.mocked(api.localHealthRun).mockReset().mockResolvedValue(completed);
     render(<LocalRunnerWorkflow />);

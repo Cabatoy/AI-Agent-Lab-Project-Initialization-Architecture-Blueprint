@@ -3,6 +3,8 @@ import { api, type LocalHealthIntent, type LocalHealthRunSnapshot, type LocalRun
 
 const delay = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'Unexpected local runner error.';
+const isUnauthorized = (reason: unknown) =>
+  typeof reason === 'object' && reason !== null && 'status' in reason && reason.status === 401;
 
 export function LocalRunnerWorkflow() {
   const [bootstrapToken, setBootstrapToken] = useState('');
@@ -20,6 +22,20 @@ export function LocalRunnerWorkflow() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  function clearSession() {
+    setSessionToken('');
+    setCapability(null);
+    setTasks([]);
+    setTaskId('');
+    setIntent(null);
+    setRun(null);
+  }
+
+  function handleError(reason: unknown) {
+    if (isUnauthorized(reason)) clearSession();
+    setError(errorMessage(reason));
+  }
+
   async function connect() {
     setConnecting(true);
     setError(null);
@@ -35,7 +51,7 @@ export function LocalRunnerWorkflow() {
       setRun(null);
       setTasks((await api.tasks()).filter(task => task.status === 'Draft'));
     } catch (reason) {
-      setError(errorMessage(reason));
+      handleError(reason);
     } finally {
       setConnecting(false);
     }
@@ -64,7 +80,7 @@ export function LocalRunnerWorkflow() {
     try {
       setIntent(await api.localHealthIntent(id, sessionToken));
     } catch (reason) {
-      setError(errorMessage(reason));
+      handleError(reason);
     } finally {
       setLoadingIntent(false);
     }
@@ -97,8 +113,11 @@ export function LocalRunnerWorkflow() {
       else
         setNotice('This approval expired before it could be claimed. It cannot be replayed.');
     } catch (reason) {
-      setError(errorMessage(reason));
-      try { setRun(await api.localHealthRun(runId, sessionToken)); } catch { /* The original error remains visible. */ }
+      handleError(reason);
+      if (!isUnauthorized(reason)) {
+        try { setRun(await api.localHealthRun(runId, sessionToken)); }
+        catch (statusError) { handleError(statusError); }
+      }
     } finally {
       setExecuting(false);
     }
@@ -120,7 +139,7 @@ export function LocalRunnerWorkflow() {
       else if (snapshot.status === 'invalidated') setNotice('The task changed after approval. This run cannot be executed.');
       else setNotice('This exact task intent is already approved and running.');
     } catch (reason) {
-      setError(errorMessage(reason));
+      handleError(reason);
     } finally {
       setApproving(false);
     }
@@ -150,12 +169,7 @@ export function LocalRunnerWorkflow() {
           <span className="label">Authenticated local actor</span>
           <p>{capability?.actorId ?? 'Loading…'} · session expires after 15 minutes</p>
           <button className="text-button" type="button" onClick={() => {
-            setSessionToken('');
-            setCapability(null);
-            setTasks([]);
-            setTaskId('');
-            setIntent(null);
-            setRun(null);
+            clearSession();
             setNotice(null);
             setError(null);
           }}>End local session</button>
