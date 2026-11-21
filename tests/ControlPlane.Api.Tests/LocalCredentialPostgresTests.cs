@@ -130,6 +130,32 @@ public class LocalCredentialPostgresTests
     }
 
     [PostgresFact]
+    public async Task ConcurrentVerificationOfObsoleteHash_SucceedsForBoth()
+    {
+        await WithCredentialTable(async (cs, db) =>
+        {
+            var user = await CreateUser(cs);
+            var password = Guid.NewGuid().ToString();
+            var legacyHasher = new PasswordHasher<object>(Options.Create(new PasswordHasherOptions
+                { CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV2 }));
+            var legacyHash = legacyHasher.HashPassword(new object(), password);
+            await db.ExecuteAsync("insert into local_password_credentials (user_id, password_hash) values (@user, @legacyHash)",
+                new { user, legacyHash });
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task<bool> Verify()
+            {
+                await start.Task;
+                return await LocalCredentialStore.VerifyAsync(cs, user, password);
+            }
+            var first = Verify();
+            var second = Verify();
+            start.SetResult();
+            Assert.All(await Task.WhenAll(first, second), Assert.True);
+            Assert.NotEqual(legacyHash, await ReadHash(db, user));
+        });
+    }
+
+    [PostgresFact]
     public async Task InvalidStoredHash_FailsClosedAndDeletingIdentityDeletesCredential()
     {
         await WithCredentialTable(async (cs, db) =>

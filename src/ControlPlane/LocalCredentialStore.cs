@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Dapper;
 using Microsoft.AspNetCore.Identity;
@@ -38,8 +39,13 @@ internal static class LocalCredentialStore
             return false;
 
         if (result == PasswordVerificationResult.SuccessRehashNeeded)
-            return await ReplaceHashAsync(connection, userId, hash!, Hasher.HashPassword(HashUser, password!),
-                cancellationToken);
+        {
+            if (await ReplaceHashAsync(connection, userId, hash!, Hasher.HashPassword(HashUser, password!),
+                cancellationToken))
+                return true;
+            return VerifyHash(await ReadHashAsync(connection, userId, cancellationToken), password) !=
+                PasswordVerificationResult.Failed;
+        }
         return true;
     }
 
@@ -60,6 +66,11 @@ internal static class LocalCredentialStore
     internal static PasswordVerificationResult VerifyHash(string? hash, string? password)
     {
         var validInput = hash is not null && !string.IsNullOrEmpty(password);
+        if (hash is not null && !HasSafeHashCost(hash))
+        {
+            Hasher.VerifyHashedPassword(HashUser, DummyHash, password ?? "");
+            return PasswordVerificationResult.Failed;
+        }
         try
         {
             var result = Hasher.VerifyHashedPassword(HashUser, hash ?? DummyHash, password ?? "");
@@ -70,6 +81,18 @@ internal static class LocalCredentialStore
             Hasher.VerifyHashedPassword(HashUser, DummyHash, password ?? "");
             return PasswordVerificationResult.Failed;
         }
+    }
+
+    private static bool HasSafeHashCost(string hash)
+    {
+        // Identity V3 embeds the PBKDF2 iteration count in its header; bound corrupted input.
+        if (hash.Length > 1024)
+            return false;
+        Span<byte> decoded = stackalloc byte[768];
+        if (!Convert.TryFromBase64String(hash, decoded, out var length))
+            return false;
+        return length < 9 || decoded[0] != 1 ||
+            BinaryPrimitives.ReadUInt32BigEndian(decoded.Slice(5, 4)) <= 1_000_000;
     }
 
     private static Task<string?> ReadHashAsync(NpgsqlConnection connection, Guid userId,
