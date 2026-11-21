@@ -19,9 +19,10 @@ var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?
 var trustedAuthOrigin = HicAuthRequestGuard.NormalizeTrustedOrigin(
     builder.Configuration["HIC_AUTH_TRUSTED_ORIGIN"], builder.Environment.IsDevelopment());
 var userSessionStore = new HicUserSessionStore(postgresConnectionString);
-var cookieSecurePolicy = builder.Environment.IsDevelopment()
-    ? CookieSecurePolicy.SameAsRequest
-    : CookieSecurePolicy.Always;
+var cookieSecurePolicy = !builder.Environment.IsDevelopment() ||
+    trustedAuthOrigin?.StartsWith("https://", StringComparison.OrdinalIgnoreCase) == true
+    ? CookieSecurePolicy.Always
+    : CookieSecurePolicy.SameAsRequest;
 
 builder.Services.AddSingleton(userSessionStore);
 builder.Services.AddAuthentication(HicUserSession.Scheme)
@@ -108,6 +109,8 @@ app.Use(async (context, next) =>
         await next();
         return;
     }
+    if (isUserAuthentication)
+        context.Response.Headers.CacheControl = "no-store";
 
     try
     {
@@ -226,6 +229,9 @@ app.MapPost("/auth/login", async (HttpContext context, HicUserLoginRequest reque
 app.MapPost("/auth/logout", async (HttpContext context, IAntiforgery antiforgery,
     CancellationToken cancellationToken) =>
 {
+    if (context.Request.ContentLength is > 0 ||
+        context.Request.Headers.ContainsKey("Transfer-Encoding"))
+        return Results.BadRequest(new { error = "Logout does not accept a request body." });
     if (trustedAuthOrigin is null)
         return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Authentication is not configured.");
     if (!HicAuthRequestGuard.HasTrustedOrigin(context.Request, trustedAuthOrigin))

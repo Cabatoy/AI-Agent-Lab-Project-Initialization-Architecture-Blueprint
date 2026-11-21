@@ -28,6 +28,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8080
+      HIC_AUTH_TRUSTED_ORIGIN: ${HIC_AUTH_TRUSTED_ORIGIN:-http://127.0.0.1:19482}
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=agentlab;Username=agentlab;Password=agentlab
       ConnectionStrings__Redis: redis:6379
     ports:

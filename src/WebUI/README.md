@@ -99,7 +99,9 @@ loopback geliştirme akışı için devre dışıdır; diğer ortamlarda Secure 
 
 Control Plane için `HIC_AUTH_TRUSTED_ORIGIN` tam UI origin'ine ayarlanmalıdır
 (ör. Development'ta `http://127.0.0.1:19482` — `HIC_WEB_PORT` değiştirilirse o
-port; diğer ortamlarda HTTPS).
+port; diğer ortamlarda HTTPS). Local Compose bunu `.env` dosyasındaki
+`HIC_AUTH_TRUSTED_ORIGIN` ile Control Plane'e aktarır; UI portu değiştirilirse
+bu değeri de güncelleyin.
 Değer eksik veya geçersizse login/logout fail-closed olarak devre dışıdır.
 `012-hic-user-sessions.sql`, `010-user-identities.sql` ve
 `011-local-credentials.sql` sonrasında yalnız elle uygulanacak additive

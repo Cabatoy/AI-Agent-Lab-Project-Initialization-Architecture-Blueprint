@@ -100,18 +100,18 @@ public class UserAuthenticationPostgresTests
     private static Task WithAuthTables(Func<string, NpgsqlConnection, Task> test) =>
         TaskTransitionPostgresTests.WithDatabase(async (connectionString, connection, _) =>
         {
-            await connection.ExecuteAsync(UserIdentitySchema.MigrationSql);
-            await connection.ExecuteAsync(LocalCredentialSchema.MigrationSql);
-            await connection.ExecuteAsync(HicUserSessionSchema.MigrationSql);
             try
             {
+                await connection.ExecuteAsync(UserIdentitySchema.MigrationSql);
+                await connection.ExecuteAsync(LocalCredentialSchema.MigrationSql);
+                await connection.ExecuteAsync(HicUserSessionSchema.MigrationSql);
                 await test(connectionString, connection);
             }
             finally
             {
-                await connection.ExecuteAsync("drop table hic_user_sessions restrict;");
-                await connection.ExecuteAsync("drop table local_password_credentials restrict;");
-                await connection.ExecuteAsync("drop table user_identities restrict;");
+                await connection.ExecuteAsync("drop table if exists hic_user_sessions restrict;");
+                await connection.ExecuteAsync("drop table if exists local_password_credentials restrict;");
+                await connection.ExecuteAsync("drop table if exists user_identities restrict;");
             }
         });
 }
