@@ -24,11 +24,7 @@ internal static class UserIdentityStore
     {
         var normalizedEmail = NormalizeEmail(email);
         var normalizedUsername = NormalizeUsername(username);
-        if (normalizedEmail is null || normalizedUsername is null ||
-            normalizedEmail.IndexOf('@') <= 0 ||
-            normalizedEmail.LastIndexOf('@') != normalizedEmail.IndexOf('@') ||
-            normalizedEmail.LastIndexOf('@') == normalizedEmail.Length - 1 ||
-            normalizedEmail.Any(char.IsWhiteSpace))
+        if (normalizedEmail is null || normalizedUsername is null || !IsValidEmail(normalizedEmail))
             return new(UserIdentityCreateOutcome.InvalidIdentifier);
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -79,6 +75,25 @@ internal static class UserIdentityStore
     {
         var normalized = identifier?.Trim().ToLowerInvariant();
         return string.IsNullOrEmpty(normalized) || normalized.Length > maxLength ? null : normalized;
+    }
+
+    private static bool IsValidEmail(string email)
+    {
+        var at = email.IndexOf('@');
+        if (at <= 0 || at != email.LastIndexOf('@') || at == email.Length - 1 ||
+            email.Any(char.IsWhiteSpace))
+            return false;
+
+        var local = email[..at];
+        var domain = email[(at + 1)..];
+        const string localSpecialCharacters = "!#$%&'*+/=?^_`{|}~.-";
+        if (local.Length > 64 || local.StartsWith('.') || local.EndsWith('.') || local.Contains("..") ||
+            !local.All(character => char.IsLetterOrDigit(character) || localSpecialCharacters.Contains(character)))
+            return false;
+
+        return domain.Split('.').All(label => label.Length > 0 &&
+            char.IsLetterOrDigit(label[0]) && char.IsLetterOrDigit(label[^1]) &&
+            label.All(character => char.IsLetterOrDigit(character) || character == '-'));
     }
 }
 

@@ -12,6 +12,12 @@ CREATE TABLE user_identities (
   CONSTRAINT ck_user_identities_normalized_email CHECK (
     normalized_email = lower(btrim(normalized_email)) AND
     normalized_email !~ '[[:space:]]' AND
+    length(normalized_email) - length(replace(normalized_email, '@', '')) = 1 AND
+    length(split_part(normalized_email, '@', 1)) BETWEEN 1 AND 64 AND
+    split_part(normalized_email, '@', 1) ~ '^[[:alnum:]!#$%&''*+/=?^_`{|}~.-]+$' AND
+    split_part(normalized_email, '@', 1) !~ '(^[.]|[.]$|[.][.])' AND
+    split_part(normalized_email, '@', 2) ~ '^[[:alnum:]]([[:alnum:].-]*[[:alnum:]])?$' AND
+    split_part(normalized_email, '@', 2) !~ '([.][.]|(^|[.])-|-[.]|-$)' AND
     length(normalized_email) BETWEEN 3 AND 320
   ),
   CONSTRAINT ck_user_identities_normalized_username CHECK (

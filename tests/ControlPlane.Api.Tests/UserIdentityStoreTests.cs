@@ -24,6 +24,9 @@ public class UserIdentityStoreTests
     [InlineData("alice@@example.test")]
     [InlineData("alice @example.test")]
     [InlineData("alice@example .test")]
+    [InlineData("alice@.example.test")]
+    [InlineData("alice@exa_mple.test")]
+    [InlineData("alice@-example.test")]
     public async Task InvalidEmail_FailsBeforeDatabaseAccess(string? email)
     {
         var result = await UserIdentityStore.CreateAsync("invalid-connection-string", email, "alice");
