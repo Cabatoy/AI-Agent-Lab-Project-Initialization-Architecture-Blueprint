@@ -120,6 +120,20 @@ public sealed class TransactionalMailValidationException : ArgumentException
 
 public sealed class TransactionalMailTemplateRenderer
 {
+    private readonly Uri? _trustedResetOrigin;
+
+    public TransactionalMailTemplateRenderer(string? trustedResetOrigin = null)
+    {
+        // Without a configured HTTPS origin, reset mail must fail closed.
+        if (Uri.TryCreate(trustedResetOrigin, UriKind.Absolute, out var origin) &&
+            origin.Scheme == Uri.UriSchemeHttps &&
+            string.IsNullOrEmpty(origin.UserInfo) &&
+            origin.AbsolutePath == "/" &&
+            string.IsNullOrEmpty(origin.Query) &&
+            string.IsNullOrEmpty(origin.Fragment))
+            _trustedResetOrigin = origin;
+    }
+
     private static readonly Regex EmailPattern =
         new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.CultureInvariant);
     private static readonly Regex IdempotencyPattern =
@@ -231,8 +245,12 @@ public sealed class TransactionalMailTemplateRenderer
             !Uri.TryCreate(resetUrl, UriKind.Absolute, out var uri) ||
             uri.Scheme != Uri.UriSchemeHttps ||
             !string.IsNullOrEmpty(uri.UserInfo) ||
-            !string.IsNullOrEmpty(uri.Fragment))
-            throw new TransactionalMailValidationException("Reset URL must be a bounded HTTPS URL without credentials or fragments.");
+            !string.IsNullOrEmpty(uri.Fragment) ||
+            _trustedResetOrigin is null ||
+            !string.Equals(uri.GetLeftPart(UriPartial.Authority),
+                _trustedResetOrigin.GetLeftPart(UriPartial.Authority),
+                StringComparison.OrdinalIgnoreCase))
+            throw new TransactionalMailValidationException("Reset URL must use the configured trusted HTTPS origin.");
         ParseRequiredDate(intent.Placeholders["resetExpiresAtUtc"], "resetExpiresAtUtc");
     }
 
@@ -277,13 +295,14 @@ public sealed class CaptureTransactionalMailSink : ITransactionalMailSender
     private readonly ConcurrentDictionary<string, CapturedMail> _captures = new(StringComparer.Ordinal);
     private readonly TransactionalMailTemplateRenderer _renderer;
 
-    public CaptureTransactionalMailSink(string environmentName, bool explicitlyEnabled)
+    public CaptureTransactionalMailSink(
+        string environmentName, bool explicitlyEnabled, string? trustedResetOrigin = null)
     {
         if (explicitlyEnabled != true)
             throw new InvalidOperationException("Development capture sink requires explicit enablement.");
         if (string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Development capture sink is forbidden in Production.");
-        _renderer = new TransactionalMailTemplateRenderer();
+        _renderer = new TransactionalMailTemplateRenderer(trustedResetOrigin);
     }
 
     public IReadOnlyCollection<CapturedMail> Captures =>
