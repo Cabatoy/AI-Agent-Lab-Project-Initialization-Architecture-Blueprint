@@ -59,6 +59,20 @@ describe('local development proxy', () => {
         if (mode === 'reset') { req.socket.destroy(); return; }
         if (mode === 'error') { res.writeHead(500, { 'content-type': 'application/json' }).end('{"error":"boom"}'); return; }
         if (mode === 'malformed') { res.writeHead(201, { 'content-type': 'application/json' }).end('{not json'); return; }
+        if (req.url === '/auth/csrf') {
+          res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'hic-antiforgery=synthetic; HttpOnly; SameSite=Strict; Path=/' })
+            .end('{"requestToken":"synthetic-csrf-token"}');
+          return;
+        }
+        if (req.url === '/auth/login') {
+          res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'hic-user-session=synthetic; HttpOnly; SameSite=Strict; Path=/' })
+            .end('{"authenticated":true}');
+          return;
+        }
+        if (req.url === '/auth/logout') {
+          res.writeHead(204, { 'set-cookie': 'hic-user-session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' }).end();
+          return;
+        }
         if (req.method === 'POST') res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify(created));
         else res.writeHead(200, { 'content-type': 'application/json' }).end('[]');
       });
@@ -93,6 +107,62 @@ describe('local development proxy', () => {
         body: method === 'GET' ? undefined : valid });
       expect(response.status, `${method} ${path}`).toBe(403);
     }
+    expect(received).toEqual([]);
+  });
+
+  it('proxies the HIC cookie-session contract while forwarding only its cookies and CSRF header', async () => {
+    const csrf = await fetch(`${origin}/api/auth/csrf`, { headers: { origin } });
+    expect(csrf.status).toBe(200);
+    expect(csrf.headers.get('set-cookie')).toContain('hic-antiforgery=synthetic');
+    const login = await fetch(`${origin}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        origin, 'content-type': 'application/json', 'x-hic-csrf': 'synthetic-csrf-token',
+        cookie: 'hic-antiforgery=synthetic; unrelated=private',
+      },
+      body: JSON.stringify({ identifier: 'alice@example.test', password: 'synthetic-password' }),
+    });
+    expect(login.status).toBe(200);
+    expect(login.headers.get('set-cookie')).toContain('hic-user-session=synthetic');
+    expect(JSON.parse(received[1].body)).toEqual({ identifier: 'alice@example.test', password: 'synthetic-password' });
+    expect(received[1].headers.origin).toBe(origin);
+    expect(received[1].headers['x-hic-csrf']).toBe('synthetic-csrf-token');
+    expect(received[1].headers.cookie).toBe('hic-antiforgery=synthetic');
+    for (const name of ['authorization', 'proxy-authorization', 'x-forwarded-for', 'unrelated']) {
+      expect(received[1].headers[name], name).toBeUndefined();
+    }
+
+    expect((await fetch(`${origin}/api/account/me`, {
+      headers: { origin, cookie: 'hic-user-session=synthetic; unrelated=private' },
+    })).status).toBe(200);
+    expect(received[2].headers.cookie).toBe('hic-user-session=synthetic');
+
+    const logout = await fetch(`${origin}/api/auth/logout`, {
+      method: 'POST',
+      headers: {
+        origin, 'x-hic-csrf': 'synthetic-csrf-token',
+        cookie: 'hic-user-session=synthetic; hic-antiforgery=synthetic; unrelated=private',
+      },
+    });
+    expect(logout.status).toBe(204);
+    expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(received[3].headers.cookie).toBe('hic-user-session=synthetic; hic-antiforgery=synthetic');
+    expect(received.map(item => `${item.method} ${item.url}`)).toEqual([
+      'GET /auth/csrf', 'POST /auth/login', 'GET /account/me', 'POST /auth/logout',
+    ]);
+  });
+
+  it('rejects login/logout requests without same-origin CSRF proof and unknown auth paths', async () => {
+    const headers = { origin, 'content-type': 'application/json', 'x-hic-csrf': 'synthetic-csrf-token' };
+    expect((await fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { ...headers, origin: 'https://attacker.example' },
+      body: JSON.stringify({ identifier: 'alice', password: 'password' }),
+    })).status).toBe(403);
+    expect((await fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'alice', password: 'password' }),
+    })).status).toBe(403);
+    expect((await fetch(`${origin}/api/auth/other`, { headers: { origin } })).status).toBe(403);
     expect(received).toEqual([]);
   });
 
