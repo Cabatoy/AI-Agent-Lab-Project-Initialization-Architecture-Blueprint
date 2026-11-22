@@ -6,6 +6,7 @@ import { LocalDiagnosticsPanel } from './LocalDiagnosticsPanel';
 import { NativeWorkspacePanel } from './NativeWorkspacePanel';
 import { PlanningWorkflow } from './PlanningWorkflow';
 import { Status } from './components';
+import { AuthExperience } from './AuthExperience';
 
 type Page = 'Command Center' | 'Planning' | 'Local Runner' | 'Overview' | 'Tasks' | 'Plans' | 'Agents' | 'Models & Providers' | 'Approvals';
 type Resource<T> = { data: T | null; error: string | null };
@@ -95,7 +96,7 @@ function Planned({ page }: { page: Page }) {
     <span className="outline-badge">Not implemented</span></section>;
 }
 
-export default function App() {
+export function DeveloperPreview({ onBack }: { onBack?: () => void } = {}) {
   const [page, setPage] = useState<Page>('Overview');
   const [health, setHealth] = useState<Resource<Health>>(initial);
   const [tasks, setTasks] = useState<Resource<Task[]>>(initial);
@@ -118,7 +119,15 @@ export default function App() {
     acc[item.status] = (acc[item.status] ?? 0) + 1; return acc;
   }, {});
   const connected = health.data?.status === 'ok' && health.data.service === 'control-plane';
-  return <div className="shell">
+  return <div className="preview-shell">
+    <aside className="preview-boundary" role="note" aria-label="Developer preview boundary">
+      <div>
+        <strong>Developer preview — not a private user workspace.</strong>
+        <p>Tasks, plans, Command Center, Planning and Local Runner are unprotected local preview features and are not scoped to your account.</p>
+      </div>
+      {onBack && <button className="secondary" onClick={onBack}>Return to sign in or account</button>}
+    </aside>
+    <div className="shell">
     <a className="skip-link" href="#main">Skip to content</a>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">H</div><div><strong>HIC</strong><span>CONTROL PLANE</span></div></div>
@@ -178,5 +187,13 @@ export default function App() {
       <footer>HIC LOCAL DASHBOARD <span>·</span> CONTROL PLANE IS THE SOURCE OF TRUTH</footer>
       </div>
     </main>
+    </div>
   </div>;
+}
+
+export default function App() {
+  const [developerPreview, setDeveloperPreview] = useState(false);
+  return developerPreview
+    ? <DeveloperPreview onBack={() => setDeveloperPreview(false)} />
+    : <AuthExperience onOpenPreview={() => setDeveloperPreview(true)} />;
 }
