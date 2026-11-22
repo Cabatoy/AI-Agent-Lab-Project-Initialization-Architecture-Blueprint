@@ -268,3 +268,115 @@ describe('title derivation', () => {
     expect(deriveTitle('   ')).toBe('');
   });
 });
+
+describe('HIC user authentication API', () => {
+  const account = {
+    id: '01234567-89ab-cdef-0123-456789abcdef',
+    email: 'alex@example.test',
+    username: 'alex',
+  };
+  const authenticated = { authenticated: true, user: account };
+
+  it('verifies a cookie session and account identity on the server', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json(authenticated))
+      .mockResolvedValueOnce(Response.json(account));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.currentUser()).resolves.toEqual(account);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/auth/session', '/api/account/me']);
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options).toMatchObject({ method: 'GET', credentials: 'include', cache: 'no-store' });
+    }
+  });
+
+  it('does not request account data for a signed-out session and rejects mismatched identities', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ authenticated: false, user: null }))
+      .mockResolvedValueOnce(Response.json(authenticated))
+      .mockResolvedValueOnce(Response.json({ ...account, id: '11111111-2222-3333-4444-555555555555' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.currentUser()).resolves.toBeNull();
+    await expect(api.currentUser()).rejects.toMatchObject({ kind: 'invalid' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('fetches a CSRF token before login and sends only the expected credentialed request', async () => {
+    const password = 'not-a-demo-password';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'csrf-token' }))
+      .mockResolvedValueOnce(Response.json(authenticated));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.login('alex', password)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/csrf');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'GET', credentials: 'include' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/login');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-HIC-CSRF': 'csrf-token' },
+      body: JSON.stringify({ identifier: 'alex', password }),
+    });
+    expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('headers.Origin');
+  });
+
+  it('fetches a new CSRF token for a bodyless credentialed logout', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'fresh-token' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.logout()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/logout');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-HIC-CSRF': 'fresh-token' },
+    });
+    expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('body');
+    expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('headers.Content-Type');
+  });
+
+  it.each([400, 401, 429, 503])('preserves login error status %i without echoing credentials', async (status) => {
+    const password = 'must-not-appear-in-error';
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'csrf-token' }))
+      .mockResolvedValueOnce(Response.json({ error: password }, { status })));
+    const error = await api.login('alex', password).then(() => null, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiError);
+    if (!(error instanceof ApiError)) throw new Error('Expected an authentication API error.');
+    expect(error.status).toBe(status);
+    expect(error.message).not.toContain(password);
+  });
+
+  it('rejects malformed CSRF/session responses and reports network failures without sensitive data', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: '' }))
+      .mockResolvedValueOnce(Response.json({ authenticated: true, user: { ...account, id: 'bad' } })));
+    await expect(api.login('alex', 'private')).rejects.toMatchObject({ kind: 'invalid' });
+    await expect(api.currentUser()).rejects.toMatchObject({ kind: 'invalid' });
+
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network')));
+    const error = await api.currentUser().then(() => null, (reason: unknown) => reason);
+    if (!(error instanceof ApiError)) throw new Error('Expected an authentication API error.');
+    expect(error).toMatchObject({ kind: 'network' });
+    expect(error.message).not.toContain('private');
+  });
+
+  it('classifies local proxy upstream failures as network or timeout errors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response('unavailable', {
+        status: 502, headers: { 'X-HIC-Proxy-Error': 'unreachable' },
+      }))
+      .mockResolvedValueOnce(new Response('timed out', {
+        status: 504, headers: { 'X-HIC-Proxy-Error': 'timeout' },
+      })));
+
+    await expect(api.currentUser()).rejects.toMatchObject({ kind: 'network' });
+    await expect(api.currentUser()).rejects.toMatchObject({ kind: 'timeout' });
+  });
+});

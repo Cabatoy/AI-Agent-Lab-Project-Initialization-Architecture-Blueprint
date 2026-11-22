@@ -2,6 +2,7 @@ import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, type CreateTaskInpu
 
 export type { CreateTaskInput } from './limits';
 export interface Health { status: string; service: string }
+export interface HicAccount { id: string; email: string; username: string }
 export interface NativeWorkspaceInspection {
   action: 'workspace.inspect';
   runId: string;
@@ -136,6 +137,15 @@ const plan: Guard<Plan> = (v): v is Plan => object(v) && guid(v.id) && nullable(
   str(v.requestTitle) && nullable(v.requestDescription) && str(v.status) && str(v.planSummary) &&
   date(v.createdAtUtc) && date(v.updatedAtUtc);
 const list = <T>(guard: Guard<T>): Guard<T[]> => (v): v is T[] => Array.isArray(v) && v.every(guard);
+const hicAccount: Guard<HicAccount> = (v): v is HicAccount => object(v) && guid(v.id) &&
+  str(v.email) && v.email.length > 0 && v.email.length <= 320 &&
+  str(v.username) && v.username.length > 0 && v.username.length <= 320;
+type AuthSession = { authenticated: false; user: null } | { authenticated: true; user: HicAccount };
+const authSession: Guard<AuthSession> = (v): v is AuthSession => object(v) &&
+  ((v.authenticated === false && v.user === null) ||
+    (v.authenticated === true && hicAccount(v.user)));
+const csrfResponse: Guard<{ requestToken: string }> = (v): v is { requestToken: string } =>
+  object(v) && str(v.requestToken) && v.requestToken.length > 0 && v.requestToken.length <= 4096;
 
 export class ApiError extends Error {
   constructor(public kind: 'network' | 'timeout' | 'http' | 'invalid', message: string, public status?: number,
@@ -243,6 +253,81 @@ async function get<T>(path: string, guard: Guard<T>, timeoutMs = 8000): Promise<
   }
 }
 
+async function authRequest(path: string, method: 'GET' | 'POST', expectedStatus: number,
+  body?: unknown, csrfToken?: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(`/api${path}`, {
+        method,
+        signal: controller.signal,
+        cache: 'no-store',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(csrfToken ? { 'X-HIC-CSRF': csrfToken } : {}),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch {
+      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network',
+        controller.signal.aborted ? 'Authentication request timed out.' : 'Authentication service is unreachable.');
+    }
+    if (response.status !== expectedStatus) {
+      const proxyError = response.headers.get('X-HIC-Proxy-Error');
+      if (proxyError === 'unreachable')
+        throw new ApiError('network', 'Authentication service is unreachable.', response.status);
+      if (proxyError === 'timeout')
+        throw new ApiError('timeout', 'Authentication request timed out.', response.status);
+      if (proxyError === 'interrupted')
+        throw new ApiError('network', 'Authentication request was interrupted.', response.status);
+      throw new ApiError('http', `Authentication request returned HTTP ${response.status}.`, response.status);
+    }
+    if (expectedStatus === 204) return null;
+    try {
+      return await response.json();
+    } catch {
+      throw new ApiError('invalid', 'Authentication service returned invalid JSON.', response.status);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getCsrfToken(): Promise<string> {
+  const response = await authRequest('/auth/csrf', 'GET', 200);
+  if (!csrfResponse(response)) throw new ApiError('invalid', 'CSRF response did not match its contract.');
+  return response.requestToken;
+}
+
+async function currentUser(): Promise<HicAccount | null> {
+  const session = await authRequest('/auth/session', 'GET', 200);
+  if (!authSession(session)) throw new ApiError('invalid', 'Session response did not match its contract.');
+  if (!session.authenticated) return null;
+
+  const account = await authRequest('/account/me', 'GET', 200);
+  if (!hicAccount(account) || account.id.toLowerCase() !== session.user.id.toLowerCase())
+    throw new ApiError('invalid', 'Account response did not match the current session.');
+  return account;
+}
+
+async function login(identifier: string, password: string): Promise<void> {
+  if (!identifier || identifier.length > 320 || !password || password.length > 1024)
+    throw new ApiError('invalid', 'Enter a valid email or username and password.');
+  const csrfToken = await getCsrfToken();
+  const response = await authRequest('/auth/login', 'POST', 200, { identifier, password }, csrfToken);
+  if (!authSession(response) || !response.authenticated)
+    throw new ApiError('invalid', 'Login response did not match its contract.');
+}
+
+async function logout(): Promise<void> {
+  const csrfToken = await getCsrfToken();
+  await authRequest('/auth/logout', 'POST', 204, undefined, csrfToken);
+}
+
 async function localRunnerRequest<T>(
   path: string, guard: Guard<T>, token: string, method: 'GET' | 'POST',
   body?: unknown, expectedStatus = 200, timeoutMs = 15000,
@@ -330,6 +415,9 @@ async function inspectNativeWorkspace(timeoutMs = 8000): Promise<NativeWorkspace
 }
 
 export const api = {
+  currentUser,
+  login,
+  logout,
   inspectNativeWorkspace,
   createLocalRunnerSession,
   localRunnerCapabilities: (token: string) =>
