@@ -22,7 +22,9 @@ if (captureMailEnabled && builder.Environment.IsProduction())
 if (captureMailEnabled)
 {
     builder.Services.AddSingleton<ITransactionalMailSender>(
-        new CaptureTransactionalMailSink(builder.Environment.EnvironmentName, explicitlyEnabled: true));
+        new CaptureTransactionalMailSink(
+            builder.Environment.EnvironmentName, explicitlyEnabled: true,
+            trustedResetOrigin: builder.Configuration["HIC_MAIL_TRUSTED_RESET_ORIGIN"]));
 }
 else
 {
