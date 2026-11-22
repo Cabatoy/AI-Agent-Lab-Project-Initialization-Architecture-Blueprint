@@ -68,9 +68,15 @@ public class UserAuthenticationPostgresTests
 
             var expiredSession = Guid.NewGuid();
             await sessions.CreateAsync(expiredSession, first.Identity.Id, DateTime.UtcNow.AddMinutes(1));
+            // An expired session must still satisfy expiry > creation at issuance time.
+            // Move both timestamps into the past instead of violating the DB constraint.
             await db.ExecuteAsync(
-                "update hic_user_sessions set expires_at_utc = now() - interval '1 second' where id = @expiredSession",
+                "update hic_user_sessions set created_at_utc = now() - interval '2 hours', " +
+                "expires_at_utc = now() - interval '1 hour' where id = @expiredSession",
                 new { expiredSession });
+            Assert.True(await db.QuerySingleAsync<bool>(
+                "select expires_at_utc > created_at_utc from hic_user_sessions where id = @expiredSession",
+                new { expiredSession }));
             Assert.False(await sessions.IsActiveAsync(expiredSession, first.Identity.Id));
         });
     }
