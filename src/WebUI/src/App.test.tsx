@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import App from './App';
+import { DeveloperPreview as App } from './App';
 import { api, ApiError } from './api';
 import { UNSENT_DRAFT_KEY } from './unsentDraft';
 
