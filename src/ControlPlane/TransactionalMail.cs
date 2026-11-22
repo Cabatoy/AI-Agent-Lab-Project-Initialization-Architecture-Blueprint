@@ -212,7 +212,7 @@ public sealed class TransactionalMailTemplateRenderer
         throw new TransactionalMailValidationException($"Unknown template key.");
     }
 
-    private static void ValidateIntent(MailIntent intent)
+    private void ValidateIntent(MailIntent intent)
     {
         if (intent.Version != MailIntent.ContractVersion)
             throw new TransactionalMailValidationException("Unsupported mail contract version.");
@@ -236,7 +236,7 @@ public sealed class TransactionalMailTemplateRenderer
             throw new TransactionalMailValidationException("Semantic expiry is required.");
     }
 
-    private static void ValidateReset(MailIntent intent)
+    private void ValidateReset(MailIntent intent)
     {
         AssertExactKeys(intent.Placeholders, "displayName", "resetUrl", "resetExpiresAtUtc");
         AssertSafeText(intent.Placeholders["displayName"], "displayName", 100);
