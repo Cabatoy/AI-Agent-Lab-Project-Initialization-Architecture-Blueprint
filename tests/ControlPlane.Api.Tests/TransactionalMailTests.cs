@@ -6,6 +6,7 @@ public sealed class TransactionalMailTests
 {
     private static readonly DateTimeOffset ResetExpiry =
         new(2026, 12, 1, 12, 30, 0, TimeSpan.Zero);
+    private const string TrustedResetOrigin = "https://auth.example.com";
 
     [Theory]
     [InlineData("tr")]
@@ -19,7 +20,7 @@ public sealed class TransactionalMailTests
             ResetExpiry,
             "https://auth.example.com/reset?ticket=future-issued-token",
             "Ada");
-        var mail = new TransactionalMailTemplateRenderer().Render(intent);
+        var mail = new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent);
 
         Assert.Contains(locale == "tr" ? "şifre" : "password", mail.Subject.ToLowerInvariant());
         Assert.Contains(locale == "tr" ? "Merhaba Ada" : "Hello Ada", mail.HtmlBody);
@@ -36,7 +37,7 @@ public sealed class TransactionalMailTests
             "changed-idempotency-0001",
             ResetExpiry,
             "Ada");
-        var mail = new TransactionalMailTemplateRenderer().Render(intent);
+        var mail = new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent);
 
         Assert.Contains("password changed", mail.Subject);
         Assert.Contains("Hello Ada", mail.HtmlBody);
@@ -53,7 +54,7 @@ public sealed class TransactionalMailTests
             ResetExpiry,
             "https://auth.example.com/reset",
             "<b>Attacker</b>&\"");
-        var mail = new TransactionalMailTemplateRenderer().Render(intent);
+        var mail = new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent);
 
         Assert.Contains("&lt;b&gt;Attacker&lt;/b&gt;&amp;&quot;", mail.HtmlBody);
         Assert.DoesNotContain("<b>Attacker</b>", mail.HtmlBody);
@@ -77,7 +78,7 @@ public sealed class TransactionalMailTests
             }
         };
         Assert.Throws<TransactionalMailValidationException>(
-            () => new TransactionalMailTemplateRenderer().Render(missing));
+            () => new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(missing));
 
         var unexpected = MailIntent.CreatePasswordChanged(
             "person@example.com",
@@ -94,7 +95,7 @@ public sealed class TransactionalMailTests
             }
         };
         Assert.Throws<TransactionalMailValidationException>(
-            () => new TransactionalMailTemplateRenderer().Render(unexpected));
+            () => new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(unexpected));
     }
 
     [Theory]
@@ -113,7 +114,60 @@ public sealed class TransactionalMailTests
             "Ada");
 
         Assert.Throws<TransactionalMailValidationException>(
-            () => new TransactionalMailTemplateRenderer().Render(intent));
+            () => new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent));
+    }
+
+    [Theory]
+    [InlineData("https://attacker.example/reset?ticket=stolen")]
+    [InlineData("https://auth.example.com.evil.test/reset")]
+    [InlineData("https://evil.test/auth.example.com/reset")]
+    [InlineData("https://auth.example.com:444/reset")]
+    public void Renderer_RejectsUntrustedHttpsResetTargets(string resetUrl)
+    {
+        var intent = MailIntent.CreatePasswordReset(
+            "person@example.com", "en", "external-idempotency-0001",
+            ResetExpiry, resetUrl, "Ada");
+
+        Assert.Throws<TransactionalMailValidationException>(
+            () => new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("http://auth.example.com")]
+    [InlineData("https://evil.test")]
+    [InlineData("https://auth.example.com/path")]
+    public void Renderer_RejectsResetWithoutValidTrustedOrigin(string? configuredOrigin)
+    {
+        var intent = MailIntent.CreatePasswordReset(
+            "person@example.com", "en", "origin-idempotency-0001",
+            ResetExpiry, "https://auth.example.com/reset", "Ada");
+
+        Assert.Throws<TransactionalMailValidationException>(
+            () => new TransactionalMailTemplateRenderer(configuredOrigin).Render(intent));
+    }
+
+    [Fact]
+    public async Task CaptureSink_EnforcesTrustedOriginForReset()
+    {
+        var sink = new CaptureTransactionalMailSink(
+            "Development", explicitlyEnabled: true, trustedResetOrigin: TrustedResetOrigin);
+        var accepted = MailIntent.CreatePasswordReset(
+            "person@example.com", "tr", "sink-trusted-idempotency-0001",
+            ResetExpiry, "https://auth.example.com/reset?token=fixture", "Ada");
+        var rejected = accepted with
+        {
+            IdempotencyKey = "sink-reject-idempotency-0001",
+            Placeholders = new Dictionary<string, string>(accepted.Placeholders)
+            {
+                ["resetUrl"] = "https://attacker.example/reset"
+            }
+        };
+
+        Assert.Equal(TransactionalMailSendStatus.Captured, (await sink.SendAsync(accepted)).Status);
+        await Assert.ThrowsAsync<TransactionalMailValidationException>(
+            () => sink.SendAsync(rejected));
+        Assert.Single(sink.Captures);
     }
 
     [Fact]
@@ -128,7 +182,7 @@ public sealed class TransactionalMailTests
             "Ada");
 
         Assert.Throws<TransactionalMailValidationException>(
-            () => new TransactionalMailTemplateRenderer().Render(intent));
+            () => new TransactionalMailTemplateRenderer(TrustedResetOrigin).Render(intent));
     }
 
     [Theory]
