@@ -49,6 +49,29 @@ değildir. Mevcut checkout'u değiştirmeden çalışma yürütmek için ayrı b
 worktree kullanılabilir. Native Host yalnız `workspace.inspect` aksiyonuna
 izin verir; task execution bu düzenlemeyle etkinleştirilmez.
 
+## Development-only multi-account provisioning
+
+HIC development ortamı, yerel integration ihtiyaçları için yalnızca açıkça
+etkinleştirildiğinde 3–5 sentetik hesabı idempotent biçimde sağlayabilir.
+Sağlama production ortamında çalışmaz. Parolalar kaynak kodunda, loglarda veya
+commitlerde tutulmaz; ortam değişkeni/sır kasasında ayrı parolalar sağlanır:
+
+```text
+HIC_TEST_USER_PROVISIONING_ENABLED=true
+HIC_TEST_USER_1_EMAIL=...
+HIC_TEST_USER_1_USERNAME=...
+HIC_TEST_USER_1_PASSWORD=...
+# 2–5 slots için aynı `_EMAIL`, `_USERNAME`, `_PASSWORD` biçimini tekrarla
+```
+
+En az 3, en çok 5 hesap yapılandırılmalıdır. E-posta/username değerleri
+normalize edilir ve benzersiz olmalıdır; her parola en az 12 karakterdir.
+Eksik parolalar, weak/boş parolalar, duplicate identifier ve production ortamı
+fail closed davranır. Bu mekanizma sentetik hesapların kalıcı idempotent
+provisioning'i içindir; gerçek credential veya canlı kullanıcı verisi kabul
+etmez. `/tasks`, `/plans` ve legacy developer preview erişimi bu mekanizmayla
+kullanıcıya özel workspace olarak genişletilmez.
+
 Yayımlanmış PDF'ler önceki belge snapshot'ını korur ve eski kaynak yollarını
 gösterebilir. Bu refactor'a üretilmiş PDF çıktıları dahil edilmez; güncel
 yerleşim için bu bölüm ve Markdown kaynakları esas alınmalıdır.

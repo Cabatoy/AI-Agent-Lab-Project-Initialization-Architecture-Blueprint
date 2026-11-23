@@ -96,7 +96,7 @@ internal static class UserIdentityStore
         return string.IsNullOrEmpty(normalized) || normalized.Length > maxLength ? null : normalized;
     }
 
-    private static bool IsValidEmail(string email)
+    internal static bool IsValidEmail(string email)
     {
         var at = email.IndexOf('@');
         if (at <= 0 || at != email.LastIndexOf('@') || at == email.Length - 1 ||
