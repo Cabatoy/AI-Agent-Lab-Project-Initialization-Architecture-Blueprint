@@ -323,6 +323,21 @@ async function login(identifier: string, password: string): Promise<void> {
     throw new ApiError('invalid', 'Login response did not match its contract.');
 }
 
+// API proposal for #148; absent backend routes must never be treated as delivered mail.
+async function requestPasswordReset(identifier: string): Promise<void> {
+  const value = identifier.trim();
+  if (!value || value.length > 320) throw new ApiError('invalid', 'Enter an account email or username.');
+  const csrf = await getCsrfToken();
+  await authRequest('/auth/password/forgot', 'POST', 202, { identifier: value }, csrf);
+}
+
+async function completePasswordReset(token: string, newPassword: string): Promise<void> {
+  if (!/^[A-Za-z0-9+/=_-]{40,256}$/.test(token) || newPassword.length < 12 || newPassword.length > 1024)
+    throw new ApiError('invalid', 'Invalid reset token or password.');
+  const csrf = await getCsrfToken();
+  await authRequest('/auth/password/reset', 'POST', 204, { token, newPassword }, csrf);
+}
+
 async function logout(): Promise<void> {
   const csrfToken = await getCsrfToken();
   await authRequest('/auth/logout', 'POST', 204, undefined, csrfToken);
@@ -418,6 +433,8 @@ export const api = {
   currentUser,
   login,
   logout,
+  requestPasswordReset,
+  completePasswordReset,
   inspectNativeWorkspace,
   createLocalRunnerSession,
   localRunnerCapabilities: (token: string) =>

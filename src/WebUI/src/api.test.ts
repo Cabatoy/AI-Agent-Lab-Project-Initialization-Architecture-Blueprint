@@ -380,3 +380,53 @@ describe('HIC user authentication API', () => {
     await expect(api.currentUser()).rejects.toMatchObject({ kind: 'timeout' });
   });
 });
+
+describe('password recovery typed API contract', () => {
+  it('requests a reset with CSRF and an enumeration-neutral 202 contract', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'csrf-token' }))
+      .mockResolvedValueOnce(Response.json({ accepted: true }, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.requestPasswordReset(' user@example.test ');
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/auth/csrf', '/api/auth/password/forgot']);
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'POST', credentials: 'include',
+      headers: { 'X-HIC-CSRF': 'csrf-token' },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ identifier: 'user@example.test' });
+  });
+
+  it('redeems a reset token with CSRF and never stores the password', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'csrf-token' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const token = 'a'.repeat(43) + '=';
+    await api.completePasswordReset(token, 'new-password-1234');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/password/reset');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST', credentials: 'include' });
+    expect(fetchMock.mock.calls[1][1].headers['X-HIC-CSRF']).toBe('csrf-token');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ token, newPassword: 'new-password-1234' });
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('fails closed on invalid token/password without any network call', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(api.completePasswordReset('bad', 'new-password-1234')).rejects.toMatchObject({ kind: 'invalid' });
+    await expect(api.completePasswordReset('a'.repeat(44), 'weak')).rejects.toMatchObject({ kind: 'invalid' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not expose upstream error body or fabricate success on missing recovery route', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ requestToken: 'csrf-token' }))
+      .mockResolvedValueOnce(Response.json({ error: 'sensitive-do-not-copy' }, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const error = await api.requestPasswordReset('unknown@example.test').then(() => null, e => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 404 });
+    expect((error as ApiError).message).not.toContain('sensitive-do-not-copy');
+  });
+});
