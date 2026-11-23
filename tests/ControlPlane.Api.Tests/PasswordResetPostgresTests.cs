@@ -89,6 +89,37 @@ public class PasswordResetPostgresTests
     }
 
     [PostgresFact]
+    public async Task ConcurrentTokenOnlyRedemptionHasOneWinnerAndKeepsOtherAccountIntact()
+    {
+        await WithTables(async (cs, _) =>
+        {
+            var owner = await CreateUser(cs);
+            var other = await CreateUser(cs);
+            Assert.True(await LocalCredentialStore.SetInitialPasswordAsync(cs, owner, "original"));
+            Assert.True(await LocalCredentialStore.SetInitialPasswordAsync(cs, other, "other-original"));
+            var store = new PasswordResetStore(cs, NewKey());
+            var token = Assert.IsType<string>(await store.IssueAsync(owner));
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task<bool> Redeem(string password)
+            {
+                await start.Task;
+                return await store.ResetPasswordByTokenAsync(token, password);
+            }
+
+            var attempts = new[] { Redeem("new-first"), Redeem("new-second") };
+            start.SetResult();
+            var outcomes = await Task.WhenAll(attempts);
+            Assert.Single(outcomes, succeeded => succeeded);
+            Assert.Single(outcomes, succeeded => !succeeded);
+            Assert.Equal(outcomes[0], await LocalCredentialStore.VerifyAsync(cs, owner, "new-first"));
+            Assert.Equal(outcomes[1], await LocalCredentialStore.VerifyAsync(cs, owner, "new-second"));
+            Assert.False(await LocalCredentialStore.VerifyAsync(cs, owner, "original"));
+            Assert.True(await LocalCredentialStore.VerifyAsync(cs, other, "other-original"));
+            Assert.False(await store.ResetPasswordByTokenAsync(token, "replayed"));
+        });
+    }
+
+    [PostgresFact]
     public async Task ExpiredTamperedCancelledAndWrongKeyTokensFail()
     {
         await WithTables(async (cs, db) =>
