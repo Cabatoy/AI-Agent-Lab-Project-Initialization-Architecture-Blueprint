@@ -156,6 +156,11 @@ var redisDb = redis.GetDatabase();
 const string queueKey = "agentlab:task-queue";
 
 await InitializeSchemaWithRetryAsync(postgresConnectionString, app.Logger);
+await HicTestUserProvisioner.ProvisionAsync(
+    postgresConnectionString,
+    builder.Configuration,
+    app.Environment.EnvironmentName,
+    app.Lifetime.ApplicationStopping);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "control-plane" }))
     .WithName("GetHealth")
