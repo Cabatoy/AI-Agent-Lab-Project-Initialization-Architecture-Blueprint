@@ -58,4 +58,47 @@ describe('Password recovery UI', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('must match');
     expect(api.completePasswordReset).not.toHaveBeenCalled();
   });
+  it.each([
+    [429, 'Too many requests'],
+    [503, 'not available on this server'],
+    [400, 'was rejected'],
+    [401, 'was rejected'],
+    [403, 'was rejected'],
+  ])('handles recovery HTTP %i without inventing a successful request', async (status, message) => {
+    vi.mocked(api.requestPasswordReset).mockRejectedValue(new ApiError('http', 'private upstream response', status));
+    render(<PasswordRecovery onBack={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Account email or username' }),
+      { target: { value: 'hidden@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Request recovery link' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText(/If an account exists/)).not.toBeInTheDocument();
+    expect(screen.queryByText('private upstream response')).not.toBeInTheDocument();
+  });
+
+  it('guards double submissions while the first server response is pending', async () => {
+    let finish!: () => void;
+    vi.mocked(api.requestPasswordReset).mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    render(<PasswordRecovery onBack={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Account email or username' }),
+      { target: { value: 'user@example.test' } });
+    fireEvent.submit(screen.getByRole('form', { name: 'Password recovery form' }));
+    fireEvent.submit(screen.getByRole('form', { name: 'Password recovery form' }));
+    expect(api.requestPasswordReset).toHaveBeenCalledTimes(1);
+    finish();
+    expect(await screen.findByRole('status')).toHaveTextContent('If an account exists');
+  });
+
+  it('rejects an expired reset response and never exposes the bearer token', async () => {
+    const token = 'b'.repeat(43) + '=';
+    window.history.replaceState(null, '', '/?reset_token=' + encodeURIComponent(token));
+    vi.mocked(api.completePasswordReset).mockRejectedValue(new ApiError('http', 'sensitive server detail', 400));
+    render(<PasswordRecovery onBack={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'new-password-1234' } });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'new-password-1234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('was rejected');
+    expect(document.body.textContent).not.toContain(token);
+    expect(window.location.search).not.toContain('reset_token');
+  });
+
 });

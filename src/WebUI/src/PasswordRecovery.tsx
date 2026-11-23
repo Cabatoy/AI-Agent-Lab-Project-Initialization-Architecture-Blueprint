@@ -26,6 +26,7 @@ export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void;
   const mounted = useRef(true);
 
   useLayoutEffect(() => {
+    mounted.current = true;
     // A reset token is a bearer secret: remove it from history before showing the form.
     const url = new URL(window.location.href);
     if (url.searchParams.has('reset_token')) {
