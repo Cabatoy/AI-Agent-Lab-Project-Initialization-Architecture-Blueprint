@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, ApiError, type HicAccount } from './api';
 import { PasswordRecovery } from './PasswordRecovery';
 
@@ -24,7 +24,17 @@ function authError(reason: unknown, operation: 'login' | 'session'): string {
 
 export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void }) {
   const [status, setStatus] = useState<AuthStatus>('checking');
-  const [recovering, setRecovering] = useState(() => new URLSearchParams(window.location.search).has('reset_token'));
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') ?? '');
+  const [recovering, setRecovering] = useState(() => Boolean(resetToken));
+  // Scrub bearer token before passive effects can start authentication HTTP requests.
+  useLayoutEffect(() => {
+    if (!resetToken) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('reset_token')) {
+      url.searchParams.delete('reset_token');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+  }, [resetToken]);
   const [operation, setOperation] = useState<AuthOperation>('checking');
   const [account, setAccount] = useState<HicAccount | null>(null);
   const [identifier, setIdentifier] = useState('');
@@ -113,7 +123,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
       {status === 'checking' ? <>
         <h1 id="auth-title">Checking your session</h1>
         <p className="auth-subtitle" role="status">Verifying your current account with the server…</p>
-      </> : recovering ? <PasswordRecovery onBack={() => setRecovering(false)} /> : status === 'signed-in' && account ? <>
+      </> : recovering ? <PasswordRecovery initialToken={resetToken} onBack={() => { setRecovering(false); setResetToken(''); }} /> : status === 'signed-in' && account ? <>
         <p className="eyebrow">PERSONAL ACCOUNT</p>
         <h1 id="auth-title">You are signed in</h1>
         <p className="auth-subtitle">This identity is verified by the current server session.</p>

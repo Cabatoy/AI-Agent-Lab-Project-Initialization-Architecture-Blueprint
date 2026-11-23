@@ -34,6 +34,7 @@ afterEach(() => {
   cleanup();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  window.history.replaceState(null, '', '/');
 });
 
 describe('HIC browser sign-in and account session', () => {
@@ -170,4 +171,18 @@ describe('HIC browser sign-in and account session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to sign in' }));
     expect(await screen.findByRole('heading', { name: 'Sign in to HIC' })).toBeInTheDocument();
   });
+  it('scrubs the reset token before requesting the current session', async () => {
+    const token = 'a'.repeat(43) + '=';
+    window.history.replaceState(null, '', '/?reset_token=' + encodeURIComponent(token));
+    vi.mocked(api.currentUser).mockImplementation(async () => {
+      expect(window.location.search).not.toContain('reset_token');
+      return null;
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Reset your password' })).toBeInTheDocument();
+    expect(window.location.search).toBe('');
+    expect(screen.getByLabelText('New password')).toBeInTheDocument();
+  });
+
 });

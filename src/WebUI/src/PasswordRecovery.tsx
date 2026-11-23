@@ -14,8 +14,8 @@ function errorFor(reason: unknown): string {
   return 'Password recovery was not confirmed. Try again.';
 }
 
-export function PasswordRecovery({ onBack }: { onBack: () => void }) {
-  const [token, setToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') ?? '');
+export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void; initialToken?: string }) {
+  const [token, setToken] = useState(() => initialToken ?? new URLSearchParams(window.location.search).get('reset_token') ?? '');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
