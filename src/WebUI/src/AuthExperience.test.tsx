@@ -161,11 +161,13 @@ describe('HIC browser sign-in and account session', () => {
     await waitFor(() => expect(api.currentUser).toHaveBeenCalledTimes(2));
   });
 
-  it('makes password recovery a truthful inactive placeholder', async () => {
+  it('opens recovery without pretending an email was sent', async () => {
     render(<App />);
     await screen.findByRole('heading', { name: 'Sign in to HIC' });
     fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Password recovery is not active yet');
-    expect(screen.getByRole('status')).toHaveTextContent('No recovery email was sent');
+    expect(await screen.findByRole('heading', { name: 'Reset your password' })).toBeInTheDocument();
+    expect(screen.queryByText(/If an account exists/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to sign in' }));
+    expect(await screen.findByRole('heading', { name: 'Sign in to HIC' })).toBeInTheDocument();
   });
 });

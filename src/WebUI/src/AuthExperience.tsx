@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type HicAccount } from './api';
+import { PasswordRecovery } from './PasswordRecovery';
 
 type AuthStatus = 'checking' | 'signed-out' | 'signed-in';
 type AuthOperation = 'checking' | 'login' | 'logout' | null;
@@ -23,6 +24,7 @@ function authError(reason: unknown, operation: 'login' | 'session'): string {
 
 export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void }) {
   const [status, setStatus] = useState<AuthStatus>('checking');
+  const [recovering, setRecovering] = useState(() => new URLSearchParams(window.location.search).has('reset_token'));
   const [operation, setOperation] = useState<AuthOperation>('checking');
   const [account, setAccount] = useState<HicAccount | null>(null);
   const [identifier, setIdentifier] = useState('');
@@ -111,7 +113,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
       {status === 'checking' ? <>
         <h1 id="auth-title">Checking your session</h1>
         <p className="auth-subtitle" role="status">Verifying your current account with the server…</p>
-      </> : status === 'signed-in' && account ? <>
+      </> : recovering ? <PasswordRecovery onBack={() => setRecovering(false)} /> : status === 'signed-in' && account ? <>
         <p className="eyebrow">PERSONAL ACCOUNT</p>
         <h1 id="auth-title">You are signed in</h1>
         <p className="auth-subtitle">This identity is verified by the current server session.</p>
@@ -165,7 +167,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
           </button>
         </form>
         <button className="text-button forgot-password" type="button"
-          onClick={() => setNotice('Password recovery is not active yet. No recovery email was sent.')}>
+          onClick={() => { setError(null); setNotice(null); setRecovering(true); }}>
           Forgot password?
         </button>
       </>}
