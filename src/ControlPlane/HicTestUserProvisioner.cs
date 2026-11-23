@@ -23,7 +23,20 @@ internal static class HicTestUserProvisioner
             if (string.IsNullOrWhiteSpace(email) &&
                 string.IsNullOrWhiteSpace(username) &&
                 string.IsNullOrWhiteSpace(password))
+            {
+                // A gap must not silently drop a configured later account.
+                for (var laterSlot = number + 1; laterSlot <= 5; laterSlot++)
+                {
+                    var laterPrefix = $"HIC_TEST_USER_{laterSlot}";
+                    if (!string.IsNullOrWhiteSpace(configuration[$"{laterPrefix}_EMAIL"]) ||
+                        !string.IsNullOrWhiteSpace(configuration[$"{laterPrefix}_USERNAME"]) ||
+                        !string.IsNullOrWhiteSpace(configuration[$"{laterPrefix}_PASSWORD"]))
+                        throw new InvalidOperationException(
+                            $"Non-contiguous test-user configuration: empty slot {number} has a later configured slot.");
+                }
+
                 break;
+            }
 
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(username) ||
                 string.IsNullOrEmpty(password))
