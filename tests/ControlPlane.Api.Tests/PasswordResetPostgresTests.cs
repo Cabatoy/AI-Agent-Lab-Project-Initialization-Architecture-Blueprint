@@ -61,6 +61,34 @@ public class PasswordResetPostgresTests
     }
 
     [PostgresFact]
+    public async Task TokenOnlyResetResolvesOwnerAndRejectsReplayAndCrossUserMutation()
+    {
+        await WithTables(async (cs, _) =>
+        {
+            var owner = await CreateUser(cs);
+            var other = await CreateUser(cs);
+            Assert.True(await LocalCredentialStore.SetInitialPasswordAsync(cs, owner, "owner-old"));
+            Assert.True(await LocalCredentialStore.SetInitialPasswordAsync(cs, other, "other-old"));
+            var sessions = new HicUserSessionStore(cs);
+            var ownerSession = Guid.NewGuid();
+            var otherSession = Guid.NewGuid();
+            await sessions.CreateAsync(ownerSession, owner, DateTime.UtcNow.AddMinutes(10));
+            await sessions.CreateAsync(otherSession, other, DateTime.UtcNow.AddMinutes(10));
+            var store = new PasswordResetStore(cs, NewKey());
+            var token = Assert.IsType<string>(await store.IssueAsync(owner));
+            Assert.False(await store.ResetPasswordByTokenAsync("invalid", "owner-new"));
+            Assert.False(await store.ResetPasswordByTokenAsync(token, ""));
+            Assert.True(await store.ResetPasswordByTokenAsync(token, "owner-new"));
+            Assert.False(await store.ResetPasswordByTokenAsync(token, "replay"));
+            Assert.False(await LocalCredentialStore.VerifyAsync(cs, owner, "owner-old"));
+            Assert.True(await LocalCredentialStore.VerifyAsync(cs, owner, "owner-new"));
+            Assert.True(await LocalCredentialStore.VerifyAsync(cs, other, "other-old"));
+            Assert.False(await sessions.IsActiveAsync(ownerSession, owner));
+            Assert.True(await sessions.IsActiveAsync(otherSession, other));
+        });
+    }
+
+    [PostgresFact]
     public async Task ExpiredTamperedCancelledAndWrongKeyTokensFail()
     {
         await WithTables(async (cs, db) =>
