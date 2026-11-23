@@ -56,6 +56,26 @@ internal sealed class PasswordResetStore
         return token;
     }
 
+    // Resolve the account exclusively from the keyed verifier; never trust a browser-supplied user ID.
+    // ResetPasswordAsync still locks the credential and atomically consumes the token, so
+    // concurrent requests cannot redeem the same token twice.
+    internal async Task<bool> ResetPasswordByTokenAsync(string? token, string? newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryVerifier(token, out var verifier) || string.IsNullOrEmpty(newPassword) ||
+            newPassword.Length > 1024)
+            return false;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        var userId = await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(@"
+            select user_id from hic_password_reset_tokens
+            where verifier = @verifier and invalidated_at_utc is null
+              and expires_at_utc > clock_timestamp();",
+            new { verifier }, cancellationToken: cancellationToken));
+        return userId.HasValue &&
+            await ResetPasswordAsync(userId.Value, token, newPassword, cancellationToken);
+    }
+
     internal async Task<bool> ResetPasswordAsync(Guid userId, string? token, string? newPassword,
         CancellationToken cancellationToken = default)
     {
