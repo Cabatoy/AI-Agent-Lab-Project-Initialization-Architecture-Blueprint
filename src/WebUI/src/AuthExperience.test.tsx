@@ -136,15 +136,21 @@ describe('HIC browser sign-in and account session', () => {
     expect(screen.getByRole('heading', { name: 'Sign in to HIC' })).toBeInTheDocument();
   });
 
-  it('clears the account view if logout cannot be confirmed', async () => {
+  it('hides the account and allows retry when logout cannot be confirmed', async () => {
     vi.mocked(api.currentUser).mockResolvedValue(users[0]);
-    vi.mocked(api.logout).mockRejectedValue(new ApiError('network', 'Offline.'));
+    vi.mocked(api.logout).mockRejectedValueOnce(new ApiError('network', 'Offline.'));
     render(<App />);
     expect(await screen.findByText(users[0].email)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('server session may still be active');
     expect(screen.queryByText(users[0].email)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open developer preview' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sign out' }));
+    expect(await screen.findByText('You have signed out.')).toBeInTheDocument();
+    expect(api.logout).toHaveBeenCalledTimes(2);
   });
 
   it('keeps developer preview visibly separate and ignores a stale session response after leaving sign-in', async () => {
