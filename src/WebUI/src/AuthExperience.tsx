@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { api, ApiError, type HicAccount } from './api';
 import { PasswordRecovery } from './PasswordRecovery';
 
-type AuthStatus = 'checking' | 'signed-out' | 'signed-in';
+type AuthStatus = 'checking' | 'signed-out' | 'signed-in' | 'logout-unconfirmed';
 type AuthOperation = 'checking' | 'login' | 'logout' | null;
 
 function authError(reason: unknown, operation: 'login' | 'session'): string {
@@ -110,7 +110,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
       setNotice('You have signed out.');
     } catch (reason) {
       if (requestId !== requestSequence.current) return;
-      setStatus('signed-out');
+      setStatus('logout-unconfirmed');
       setError(`Sign-out could not be confirmed, so the server session may still be active. ${authError(reason, 'session')}`);
     } finally {
       if (requestId === requestSequence.current) setOperation(null);
@@ -123,6 +123,10 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
       {status === 'checking' ? <>
         <h1 id="auth-title">Checking your session</h1>
         <p className="auth-subtitle" role="status">Verifying your current account with the server…</p>
+      </> : status === 'logout-unconfirmed' ? <>
+        <h1 id="auth-title">Sign-out needs confirmation</h1>
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        <button className="primary" type="button" onClick={signOut}>Retry sign out</button>
       </> : recovering ? <PasswordRecovery initialToken={resetToken} onBack={() => { setRecovering(false); setResetToken(''); }} /> : status === 'signed-in' && account ? <>
         <p className="eyebrow">PERSONAL ACCOUNT</p>
         <h1 id="auth-title">You are signed in</h1>
@@ -181,11 +185,11 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
           Forgot password?
         </button>
       </>}
-      <aside className="auth-preview-note" aria-label="Developer preview boundary">
+      {status !== 'logout-unconfirmed' && operation !== 'logout' && <aside className="auth-preview-note" aria-label="Developer preview boundary">
         <strong>Developer preview is separate and not private.</strong>
         <p>Legacy tasks, plans, Command Center and local tools are unprotected and not scoped to user accounts.</p>
         <button className="text-button" type="button" onClick={onOpenPreview}>Open developer preview</button>
-      </aside>
+      </aside>}
       <p className="auth-footer">Signing in does not make legacy preview routes user-scoped.</p>
     </section>
   </main>;
