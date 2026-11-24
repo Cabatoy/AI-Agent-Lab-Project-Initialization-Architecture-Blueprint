@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Health, type Plan, type Task } from './api';
 import { CommandCenter } from './CommandCenter';
 import { LocalRunnerWorkflow } from './LocalRunnerWorkflow';
@@ -65,9 +65,11 @@ function Detail({ id, onClose }: { id: string, onClose: () => void }) {
     ).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [id, retry]);
+  const title = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { title.current?.focus(); }, []);
   const task = detail.data;
   return <section className="panel detail" aria-labelledby="detail-title">
-    <div className="panel-heading"><div><p className="eyebrow">TASK DETAIL</p><h2 id="detail-title">{task?.title ?? 'Task detail'}</h2></div>
+    <div className="panel-heading"><div><p className="eyebrow">TASK DETAIL</p><h2 id="detail-title" ref={title} tabIndex={-1}>{task?.title ?? 'Task detail'}</h2></div>
       <button className="secondary" onClick={onClose}>Close detail</button></div>
     {loading && <div className="notice" role="status">Loading task detail…</div>}
     {detail.error && <div className="notice error" role="alert">{detail.error} <button className="text-button" onClick={() => setRetry(n => n + 1)}>Retry</button></div>}
@@ -104,6 +106,7 @@ export function DeveloperPreview({ onBack }: { onBack?: () => void } = {}) {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const pageTitle = useRef<HTMLHeadingElement>(null);
   const refresh = useCallback(async () => {
     setLoading(true);
     const [h, t, p] = await Promise.allSettled([api.health(), api.tasks(), api.plans()]);
@@ -145,7 +148,7 @@ export function DeveloperPreview({ onBack }: { onBack?: () => void } = {}) {
           {page !== 'Command Center' && <button className="secondary" onClick={() => navigate('Command Center')}>＋ New task</button>}
           <button className="refresh" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : '↻  Refresh'}</button></div></header>
       <div className="content"><div className="page-heading"><div><p className="eyebrow">HUMAN IN CONTROL</p>
-        <h1>{page}</h1><p className="subtitle">{subtitles[page] ?? 'A clear view of what comes next.'}</p></div>
+        <h1 ref={pageTitle} tabIndex={-1}>{page}</h1><p className="subtitle">{subtitles[page] ?? 'A clear view of what comes next.'}</p></div>
         <div className="last-refresh"><span>LAST SUCCESSFUL REFRESH</span><strong>{lastRefresh ? displayDate(lastRefresh.toISOString()) : 'Not yet available'}</strong></div></div>
       {loading && <div className="refresh-state" role="status">Refreshing Control Plane data…</div>}
       <CommandCenter hidden={page !== 'Command Center'} onCreated={() => void refresh()} onViewTask={selectTask} onCheckTasks={refresh} />
@@ -174,7 +177,7 @@ export function DeveloperPreview({ onBack }: { onBack?: () => void } = {}) {
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">LATEST ACTIVITY</p><h2>Recent tasks</h2></div><button className="text-button" onClick={() => setPage('Tasks')}>View all →</button></div>
           <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data.slice(0, 5)} onSelect={selectTask} />}</State></section>
       </>}
-      {page === 'Tasks' && <>{selected && <Detail id={selected} onClose={() => setSelected(null)} />}<section className="panel">
+      {page === 'Tasks' && <>{selected && <Detail key={selected} id={selected} onClose={() => { setSelected(null); pageTitle.current?.focus(); }} />}<section className="panel">
         <div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>All tasks</h2></div><span className="outline-badge">{tasks.data ? `${tasks.data.length} TASKS` : 'UNAVAILABLE'}</span></div>
         <State resource={tasks} loading={loading} empty="No tasks yet.">{data => <TaskTable tasks={data} onSelect={selectTask} />}</State></section></>}
       {page === 'Plans' && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROL PLANE</p><h2>Execution plans</h2></div><span className="outline-badge">READ ONLY</span></div>
