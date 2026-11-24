@@ -47,6 +47,10 @@ describe('dashboard', () => {
     expect(await screen.findByText('Actual result')).toBeInTheDocument();
     expect(api.task).toHaveBeenCalledWith(item.id);
     expect(screen.getByText(/Execution history and audit events are not exposed/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Actual task' })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Tasks' })).toHaveFocus();
   });
   it('shows actual plans and read-only placeholders without action buttons', async () => {
     vi.mocked(api.plans).mockResolvedValue([{ id: item.id, projectKey: null, requestTitle: 'Actual plan',
