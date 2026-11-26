@@ -2,6 +2,42 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { api, ApiError, type HicAccount } from './api';
 import { PasswordRecovery } from './PasswordRecovery';
 
+const signInLocales = {
+  en: {
+    language: 'Sign-in language',
+    heading: 'Sign in to HIC',
+    description: 'Use your HIC account credentials to verify your personal account session.',
+    form: 'Sign-in form',
+    identifier: 'Email or username',
+    password: 'Password',
+    signIn: 'Sign in',
+    signingIn: 'Signing in…',
+    forgot: 'Forgot password?',
+  },
+  tr: {
+    language: 'Giriş dili',
+    heading: 'HIC’e giriş yap',
+    description: 'Hesabını doğrulamak için HIC giriş bilgilerini kullan.',
+    form: 'Giriş formu',
+    identifier: 'E-posta veya kullanıcı adı',
+    password: 'Şifre',
+    signIn: 'Giriş yap',
+    signingIn: 'Giriş yapılıyor…',
+    forgot: 'Şifremi unuttum',
+  },
+} as const;
+
+type SignInLocale = keyof typeof signInLocales;
+const SIGN_IN_LOCALE_KEY = 'hic.sign-in.locale';
+
+function readSignInLocale(): SignInLocale {
+  try {
+    return window.localStorage.getItem(SIGN_IN_LOCALE_KEY) === 'tr' ? 'tr' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 type AuthStatus = 'checking' | 'signed-out' | 'signed-in';
 type AuthOperation = 'checking' | 'login' | 'logout' | null;
 
@@ -23,6 +59,19 @@ function authError(reason: unknown, operation: 'login' | 'session'): string {
 }
 
 export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void }) {
+  const [locale, setLocale] = useState(readSignInLocale);
+  const copy = signInLocales[locale];
+
+  const changeLocale = (value: string) => {
+    const next = value === 'tr' ? 'tr' : 'en';
+    setLocale(next);
+    try {
+      window.localStorage.setItem(SIGN_IN_LOCALE_KEY, next);
+    } catch {
+      // The current selection still works when browser storage is unavailable.
+    }
+  };
+
   const [status, setStatus] = useState<AuthStatus>('checking');
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') ?? '');
   const [recovering, setRecovering] = useState(() => Boolean(resetToken));
@@ -132,7 +181,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
           <div><dt>Email</dt><dd>{account.email}</dd></div>
           <div><dt>Account ID</dt><dd className="account-id">{account.id}</dd></div>
         </dl>
-        {error && <p className="auth-error" role="alert">{error}</p>}
+        {error && <p className="auth-error" role="alert" lang="en">{error}</p>}
         <div className="auth-actions">
           <button className="primary" type="button" onClick={signOut} disabled={operation !== null}>
             {operation === 'logout' ? 'Signing out…' : 'Sign out'}
@@ -141,12 +190,17 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
             {operation === 'checking' ? 'Checking…' : 'Refresh session'}
           </button>
         </div>
-      </> : <>
-        <p className="eyebrow">HUMAN IN CONTROL</p>
-        <h1 id="auth-title">Sign in to HIC</h1>
-        <p className="auth-subtitle">Use your HIC account credentials to verify your personal account session.</p>
-        <form className="auth-form" aria-label="Sign-in form" onSubmit={submitLogin} autoComplete="off">
-          <label htmlFor="hic-identifier">Email or username</label>
+      </> : <div lang={locale}>
+        <label htmlFor="hic-sign-in-language">{copy.language}</label>{' '}
+        <select id="hic-sign-in-language" value={locale} onChange={event => changeLocale(event.target.value)}>
+          <option value="en" lang="en">English</option>
+          <option value="tr" lang="tr">Türkçe</option>
+        </select>
+        <p className="eyebrow" lang="en">HUMAN IN CONTROL</p>
+        <h1 id="auth-title">{copy.heading}</h1>
+        <p className="auth-subtitle">{copy.description}</p>
+        <form className="auth-form" aria-label={copy.form} onSubmit={submitLogin} autoComplete="off">
+          <label htmlFor="hic-identifier">{copy.identifier}</label>
           <input
             id="hic-identifier"
             name="identifier"
@@ -158,7 +212,7 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
             onChange={event => setIdentifier(event.target.value)}
             disabled={operation !== null}
           />
-          <label htmlFor="hic-password">Password</label>
+          <label htmlFor="hic-password">{copy.password}</label>
           <input
             id="hic-password"
             name="password"
@@ -170,17 +224,17 @@ export function AuthExperience({ onOpenPreview }: { onOpenPreview: () => void })
             onChange={event => setPassword(event.target.value)}
             disabled={operation !== null}
           />
-          {error && <p className="auth-error" role="alert">{error}</p>}
-          {notice && <p className="auth-notice" role="status">{notice}</p>}
+          {error && <p className="auth-error" role="alert" lang="en">{error}</p>}
+          {notice && <p className="auth-notice" role="status" lang="en">{notice}</p>}
           <button className="primary auth-submit" type="submit" disabled={operation !== null}>
-            {operation === 'login' ? 'Signing in…' : 'Sign in'}
+            {operation === 'login' ? copy.signingIn : copy.signIn}
           </button>
         </form>
         <button className="text-button forgot-password" type="button"
           onClick={() => { setError(null); setNotice(null); setRecovering(true); }}>
-          Forgot password?
+          {copy.forgot}
         </button>
-      </>}
+      </div>}
       <aside className="auth-preview-note" aria-label="Developer preview boundary">
         <strong>Developer preview is separate and not private.</strong>
         <p>Legacy tasks, plans, Command Center and local tools are unprotected and not scoped to user accounts.</p>
