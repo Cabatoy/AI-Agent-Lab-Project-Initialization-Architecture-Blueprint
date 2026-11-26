@@ -162,6 +162,22 @@ describe('HIC browser sign-in and account session', () => {
     await waitFor(() => expect(api.currentUser).toHaveBeenCalledTimes(2));
   });
 
+  it('switches sign-in language without clearing input and remembers the choice on reload', async () => {
+    const view = render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in to HIC' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email or username' }), { target: { value: 'alex' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sign-in language' }), { target: { value: 'tr' } });
+
+    expect(screen.getByRole('heading', { name: 'HIC’e giriş yap' }).closest('[lang]')).toHaveAttribute('lang', 'tr');
+    expect(screen.getByRole('textbox', { name: 'E-posta veya kullanıcı adı' })).toHaveValue('alex');
+    view.unmount();
+
+    render(<App />);
+    await screen.findByRole('heading', { name: 'HIC’e giriş yap' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Giriş dili' }), { target: { value: 'en' } });
+    expect(screen.getByRole('heading', { name: 'Sign in to HIC' })).toBeInTheDocument();
+  });
+
   it('opens recovery without pretending an email was sent', async () => {
     render(<App />);
     await screen.findByRole('heading', { name: 'Sign in to HIC' });
