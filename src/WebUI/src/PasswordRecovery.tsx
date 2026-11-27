@@ -19,7 +19,7 @@ export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void;
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; passwordFields: boolean } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -40,7 +40,7 @@ export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void;
     event.preventDefault();
     if (pending.current || notice) return;
     if (token && (password !== confirmation || password.length < 12 || password.length > 1024)) {
-      setError('The passwords must match and contain at least 12 characters.');
+      setError({ message: 'The passwords must match and contain between 12 and 1024 characters.', passwordFields: true });
       return;
     }
     const submittedPassword = password;
@@ -62,7 +62,7 @@ export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void;
           setNotice('If an account exists, follow the instructions sent to its registered email address.');
       }
     } catch (reason) {
-      if (mounted.current) setError(errorFor(reason));
+      if (mounted.current) setError({ message: errorFor(reason), passwordFields: false });
     } finally {
       pending.current = false;
       if (mounted.current) setBusy(false);
@@ -79,16 +79,18 @@ export function PasswordRecovery({ onBack, initialToken }: { onBack: () => void;
       {token ? <>
         <label htmlFor="recovery-password">New password</label>
         <input id="recovery-password" type="password" autoComplete="new-password" minLength={12} maxLength={1024}
+          aria-invalid={error?.passwordFields || undefined} aria-describedby={error?.passwordFields ? 'recovery-error' : undefined}
           value={password} onChange={event => setPassword(event.target.value)} disabled={busy} required />
         <label htmlFor="recovery-confirm">Confirm new password</label>
         <input id="recovery-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={1024}
+          aria-invalid={error?.passwordFields || undefined} aria-describedby={error?.passwordFields ? 'recovery-error' : undefined}
           value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} required />
       </> : <>
         <label htmlFor="recovery-identifier">Account email or username</label>
         <input id="recovery-identifier" type="text" autoComplete="username" maxLength={320}
           value={identifier} onChange={event => setIdentifier(event.target.value)} disabled={busy} required />
       </>}
-      {error && <p className="auth-error" role="alert">{error}</p>}
+      {error && <p id="recovery-error" className="auth-error" role="alert">{error.message}</p>}
       <button className="primary auth-submit" type="submit" disabled={busy}>
         {busy ? 'Contacting server…' : token ? 'Change password' : 'Request recovery link'}
       </button>
