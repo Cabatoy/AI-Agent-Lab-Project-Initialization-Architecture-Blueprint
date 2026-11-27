@@ -71,6 +71,7 @@ internal static class LocalCredentialStore
             Hasher.VerifyHashedPassword(HashUser, DummyHash, password ?? "");
             return PasswordVerificationResult.Failed;
         }
+
         try
         {
             var result = Hasher.VerifyHashedPassword(HashUser, hash ?? DummyHash, password ?? "");
@@ -82,6 +83,8 @@ internal static class LocalCredentialStore
             return PasswordVerificationResult.Failed;
         }
     }
+
+    internal static string HashPassword(string password) => Hasher.HashPassword(HashUser, password);
 
     private static bool HasSafeHashCost(string hash)
     {

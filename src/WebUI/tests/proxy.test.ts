@@ -166,6 +166,39 @@ describe('local development proxy', () => {
     expect(received).toEqual([]);
   });
 
+  it('only forwards bounded password recovery POSTs with origin, CSRF, and allowed cookies', async () => {
+    const headers = { origin, 'content-type': 'application/json', 'x-hic-csrf': 'synthetic-csrf-token',
+      cookie: 'hic-antiforgery=synthetic; unrelated=private' };
+    const token = 'A'.repeat(43) + '=';
+    const cases = [
+      ['/api/auth/password/forgot', { identifier: 'alice@example.test' }],
+      ['/api/auth/password/reset', { token, newPassword: 'a-valid-synthetic-password' }],
+    ] as const;
+    for (const [path, body] of cases) {
+      expect((await fetch(`${origin}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(201);
+      const request = received.at(-1)!;
+      expect(request.url).toBe(path.slice(4));
+      expect(JSON.parse(request.body)).toEqual(body);
+      expect(request.headers.cookie).toBe('hic-antiforgery=synthetic');
+      expect(request.headers['x-hic-csrf']).toBe('synthetic-csrf-token');
+      expect(request.headers.authorization).toBeUndefined();
+    }
+    received.length = 0;
+    const denied = [
+      ['/api/auth/password/forgot', { identifier: 'alice', extra: 'unexpected' }, headers],
+      ['/api/auth/password/reset', { token: 'bad', newPassword: 'a-valid-synthetic-password' }, headers],
+      ['/api/auth/password/reset', { token, newPassword: 'short' }, headers],
+      ['/api/auth/password/forgot', { identifier: 'alice' }, { ...headers, origin: 'https://attacker.example' }],
+      ['/api/auth/password/forgot', { identifier: 'alice' }, { ...headers, 'x-hic-csrf': '' }],
+    ] as const;
+    for (const [path, body, requestHeaders] of denied) {
+      const response = await fetch(`${origin}${path}`, { method: 'POST', headers: requestHeaders, body: JSON.stringify(body) });
+      expect([400, 403]).toContain(response.status);
+    }
+    expect((await fetch(`${origin}/api/auth/password/forgot`, { headers: { origin } })).status).toBe(403);
+    expect(received).toEqual([]);
+  });
+
   it('proxies only the authenticated local runner allowlist and never forwards unrelated headers', async () => {
     const token = 'Bearer ' + 'S'.repeat(44);
     const session = await fetch(`${origin}/api/local-runner/session`, {

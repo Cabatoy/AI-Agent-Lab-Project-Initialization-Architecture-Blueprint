@@ -102,6 +102,7 @@ builder.Services.AddAntiforgery(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.AddPolicy("hic-user-login", HicLoginRateLimit.ForRequest);
+    options.AddPolicy("hic-password-recovery", HicLoginRateLimit.ForRequest);
     options.OnRejected = async (context, cancellationToken) =>
     {
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
@@ -114,6 +115,16 @@ var localOperatorSessions = LocalOperatorSessions.Create(
     builder.Configuration["HIC_LOCAL_OPERATOR_ID"]);
 
 var app = builder.Build();
+
+PasswordResetStore? passwordResetStore = null;
+try
+{
+    passwordResetStore = new PasswordResetStore(postgresConnectionString, builder.Configuration["HIC_PASSWORD_RESET_KEY"]);
+}
+catch (ArgumentException)
+{
+    app.Logger.LogWarning("Password recovery is not configured; reset operations are unavailable.");
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -207,8 +218,11 @@ app.MapPost("/auth/login", async (HttpContext context, HicUserLoginRequest reque
     if (!await HicAuthRequestGuard.HasValidCsrfAsync(context, antiforgery))
         return Results.StatusCode(StatusCodes.Status400BadRequest);
 
-    var identity = await HicUserAuthenticator.AuthenticateAsync(
-        postgresConnectionString, request.Identifier, request.Password, cancellationToken);
+    var now = DateTime.UtcNow;
+    var sessionId = Guid.NewGuid();
+    var expiresAt = now.Add(HicUserSessionStore.Lifetime);
+    var identity = await HicUserAuthenticator.AuthenticateAndCreateSessionAsync(
+        postgresConnectionString, request.Identifier, request.Password, sessionId, expiresAt, cancellationToken);
     if (identity is null)
         return Results.Json(new { error = "Invalid credentials." }, statusCode: StatusCodes.Status401Unauthorized);
 
@@ -218,10 +232,6 @@ app.MapPost("/auth/login", async (HttpContext context, HicUserLoginRequest reque
         await context.SignOutAsync(HicUserSession.Scheme);
     }
 
-    var now = DateTime.UtcNow;
-    var sessionId = Guid.NewGuid();
-    var expiresAt = now.Add(HicUserSessionStore.Lifetime);
-    await userSessionStore.CreateAsync(sessionId, identity.Id, expiresAt, cancellationToken);
     var claims = new[]
     {
         new Claim(ClaimTypes.NameIdentifier, identity.Id.ToString()),
@@ -288,6 +298,9 @@ app.MapGet("/account/me", async (HttpContext context, CancellationToken cancella
     .RequireAuthorization("HicUser")
     .Produces(StatusCodes.Status200OK)
     .Produces(StatusCodes.Status401Unauthorized);
+
+PasswordRecoveryEndpoints.Map(app, postgresConnectionString, trustedAuthOrigin,
+    builder.Configuration["HIC_MAIL_TRUSTED_RESET_ORIGIN"], passwordResetStore);
 
 // Explicit, read-only, allowlisted diagnostics. Not a task approval or execution API.
 app.MapGet("/diagnostics/local", async (CancellationToken cancellationToken) =>

@@ -120,6 +120,38 @@ public class PasswordResetPostgresTests
     }
 
     [PostgresFact]
+    public async Task ConcurrentLoginAndResetCannotLeaveOldPasswordSessionActive()
+    {
+        await WithTables(async (cs, _) =>
+        {
+            var user = await CreateUser(cs);
+            Assert.True(await LocalCredentialStore.SetInitialPasswordAsync(cs, user, "original-password"));
+            var store = new PasswordResetStore(cs, NewKey());
+            var token = Assert.IsType<string>(await store.IssueAsync(user));
+            var session = Guid.NewGuid();
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var identity = Assert.IsType<UserIdentity>(await UserIdentityStore.FindByIdAsync(cs, user));
+            async Task<UserIdentity?> Login()
+            {
+                await gate.Task;
+                return await HicUserAuthenticator.AuthenticateAndCreateSessionAsync(
+                    cs, identity.NormalizedEmail, "original-password", session, DateTime.UtcNow.AddMinutes(10));
+            }
+            async Task<bool> Reset()
+            {
+                await gate.Task;
+                return await store.ResetPasswordByTokenAsync(token, "replacement-password");
+            }
+            var login = Login();
+            var reset = Reset();
+            gate.SetResult();
+            Assert.True(await reset);
+            await login;
+            Assert.False(await new HicUserSessionStore(cs).IsActiveAsync(session, user));
+        });
+    }
+
+    [PostgresFact]
     public async Task ExpiredTamperedCancelledAndWrongKeyTokensFail()
     {
         await WithTables(async (cs, db) =>
@@ -224,7 +256,7 @@ public class PasswordResetPostgresTests
         return Assert.IsType<UserIdentity>(result.Identity).Id;
     }
 
-    private static Task WithTables(Func<string, NpgsqlConnection, Task> test) =>
+    internal static Task WithTables(Func<string, NpgsqlConnection, Task> test) =>
         TaskTransitionPostgresTests.WithDatabase(async (cs, db, _) =>
         {
             await db.ExecuteAsync(UserIdentitySchema.MigrationSql);
