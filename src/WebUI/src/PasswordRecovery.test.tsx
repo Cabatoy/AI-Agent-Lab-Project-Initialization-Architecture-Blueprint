@@ -56,7 +56,16 @@ describe('Password recovery UI', () => {
     fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'not-the-same-password' } });
     fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('must match');
+    expect(screen.getByLabelText('New password')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Confirm new password')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('New password')).toHaveAccessibleDescription(/passwords must match/i);
+    expect(screen.getByLabelText('Confirm new password')).toHaveAccessibleDescription(/passwords must match/i);
     expect(api.completePasswordReset).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'new-password-1234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Password changed');
+    expect(api.completePasswordReset).toHaveBeenCalledTimes(1);
   });
   it.each([
     [429, 'Too many requests'],
@@ -97,6 +106,8 @@ describe('Password recovery UI', () => {
     fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'new-password-1234' } });
     fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('was rejected');
+    expect(screen.getByLabelText('New password')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Confirm new password')).not.toHaveAttribute('aria-invalid');
     expect(document.body.textContent).not.toContain(token);
     expect(window.location.search).not.toContain('reset_token');
   });
