@@ -45,7 +45,9 @@ describe('human-controlled planning preview', () => {
     expect(api.inspectNativeWorkspace).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Discover configured repository' }));
-    expect(await screen.findByRole('option', { name: 'Configured local workspace (read-only)' })).toBeInTheDocument();
+    const repository = await screen.findByRole('combobox', { name: 'Repository' });
+    expect(repository).toHaveValue('configured-workspace');
+    expect(screen.getByRole('option', { name: 'Local workspace · read-only' })).toBeInTheDocument();
     expect(api.inspectNativeWorkspace).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: 'Fix search validation' } });
@@ -66,7 +68,7 @@ describe('human-controlled planning preview', () => {
   it('marks a preview stale when inputs change and gives the revised preview a new version and hash', async () => {
     render(<PlanningWorkflow />);
     fireEvent.click(screen.getByRole('button', { name: 'Discover configured repository' }));
-    await screen.findByRole('option', { name: 'Configured local workspace (read-only)' });
+    await screen.findByRole('option', { name: 'Local workspace · read-only' });
     fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: 'Plan one' } });
     fireEvent.change(screen.getByLabelText(/Task description/), { target: { value: 'First description' } });
     fireEvent.click(screen.getByRole('button', { name: 'Generate plan preview' }));
@@ -91,6 +93,16 @@ describe('human-controlled planning preview', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('did not confirm an authorized repository');
     expect(screen.queryByLabelText('Repository')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate plan preview' })).toBeDisabled();
+  });
+
+  it('keeps planning unavailable when the configured workspace is not a Git checkout', async () => {
+    vi.mocked(api.inspectNativeWorkspace).mockResolvedValue({ ...inspectedRepository, gitCheckoutFound: false });
+    render(<PlanningWorkflow />);
+    fireEvent.click(screen.getByRole('button', { name: 'Discover configured repository' }));
+
+    expect(await screen.findByRole('option', { name: 'No authorized workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Generate plan preview' })).toBeDisabled();
   });
 });
