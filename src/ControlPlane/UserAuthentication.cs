@@ -1,11 +1,25 @@
 using System.Security.Claims;
+using System.Net;
 using System.Threading.RateLimiting;
 using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
 
 internal sealed record HicUserLoginRequest(string? Identifier, string? Password);
+
+internal static class HicForwardedHeaders
+{
+    internal static void Configure(ForwardedHeadersOptions options)
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+        options.KnownProxies.Add(IPAddress.Loopback);
+        options.KnownProxies.Add(IPAddress.IPv6Loopback);
+    }
+}
 
 internal static class HicUserAuthenticator
 {

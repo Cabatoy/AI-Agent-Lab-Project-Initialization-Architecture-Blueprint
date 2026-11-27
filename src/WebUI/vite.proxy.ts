@@ -40,7 +40,7 @@ const header = (req: http.IncomingMessage, name: string) => {
   return Array.isArray(value) ? value.join(',') : value;
 };
 
-function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string, cookies?: string, origin?: string, csrfToken?: string, forwardResponseCookies = false) {
+function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string, cookies?: string, origin?: string, csrfToken?: string, forwardResponseCookies = false, forwardedProto?: 'http' | 'https') {
   let timedOut = false;
   let connected = false;
   const headers: http.OutgoingHttpHeaders = { accept: 'application/json' };
@@ -48,6 +48,7 @@ function forward(req: http.IncomingMessage, res: http.ServerResponse, target: UR
   if (cookies) headers.cookie = cookies;
   if (origin) headers.origin = origin;
   if (csrfToken) headers['x-hic-csrf'] = csrfToken;
+  if (forwardedProto) headers['x-forwarded-proto'] = forwardedProto;
   if (body !== undefined) {
     headers['content-type'] = 'application/json; charset=utf-8';
     headers['content-length'] = Buffer.byteLength(body);
@@ -135,6 +136,7 @@ async function userAuthRequest(
   const isLogout = req.method === 'POST' && path === '/api/auth/logout';
   const isForgot = req.method === 'POST' && path === '/api/auth/password/forgot';
   const isReset = req.method === 'POST' && path === '/api/auth/password/reset';
+  const forwardedProto = origin.startsWith('https://') ? 'https' : 'http';
   if ((!isGet && !isLogin && !isLogout && !isForgot && !isReset) ||
       (isGet && (path === '/api/auth/password/forgot' || path === '/api/auth/password/reset')))
     return reject(res, 403, 'Authentication endpoint is not allowlisted.', true);
@@ -151,7 +153,7 @@ async function userAuthRequest(
     if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
       return reject(res, 400, 'Read requests must not include a body.', true);
     forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs,
-      undefined, undefined, userAuthCookies(req), undefined, undefined, true);
+      undefined, undefined, userAuthCookies(req), undefined, undefined, true, forwardedProto);
     return;
   }
 
@@ -166,7 +168,7 @@ async function userAuthRequest(
         header(req, 'transfer-encoding') !== undefined || header(req, 'content-type') !== undefined)
       return reject(res, 400, 'Logout does not accept a request body.', true);
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
-      undefined, undefined, userAuthCookies(req), origin, csrfToken, true);
+      undefined, undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
     return;
   }
 
@@ -193,7 +195,7 @@ async function userAuthRequest(
         fields.identifier.trim().length < 1 || fields.identifier.length > 320)
       return reject(res, 400, 'Invalid recovery request.');
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
-      JSON.stringify({ identifier: fields.identifier }), undefined, userAuthCookies(req), origin, csrfToken, true);
+      JSON.stringify({ identifier: fields.identifier }), undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
     return;
   }
   if (isReset) {
@@ -203,7 +205,7 @@ async function userAuthRequest(
       return reject(res, 400, 'Invalid recovery request.');
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
       JSON.stringify({ token: fields.token, newPassword: fields.newPassword }),
-      undefined, userAuthCookies(req), origin, csrfToken, true);
+      undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
     return;
   }
   if (
@@ -221,7 +223,7 @@ async function userAuthRequest(
     password: (parsed as Record<string, string>).password,
   });
   forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
-    body, undefined, userAuthCookies(req), origin, csrfToken, true);
+    body, undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
 }
 
 async function createTask(req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string, timeouts: Required<ProxyOptions>) {
@@ -348,9 +350,13 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
       server.middlewares.use('/api', (req, res) => {
         const path = `/api${req.url ?? ''}`;
         const port = req.socket.localPort;
-        const origin = `http://127.0.0.1:${port}`;
+        const origin = `${server.config.server.https ? 'https' : 'http'}://127.0.0.1:${port}`;
         // Host check blocks DNS-rebinding; Origin checks block hostile pages from reading or writing.
-        if (!port || header(req, 'host') !== `127.0.0.1:${port}`) return reject(res, 403, 'Unexpected host.');
+        const host = header(req, 'host');
+        const authority = header(req, ':authority');
+        if (!port || (host ?? authority) !== `127.0.0.1:${port}` ||
+            (authority !== undefined && authority !== `127.0.0.1:${port}`))
+          return reject(res, 403, 'Unexpected host.');
         const requestOrigin = header(req, 'origin');
         if (userAuthPath.test(path)) {
           void userAuthRequest(req, res, target, origin, path, timeouts);

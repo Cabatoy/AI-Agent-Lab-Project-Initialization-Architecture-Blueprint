@@ -118,7 +118,7 @@ describe('local development proxy', () => {
       method: 'POST',
       headers: {
         origin, 'content-type': 'application/json', 'x-hic-csrf': 'synthetic-csrf-token',
-        cookie: 'hic-antiforgery=synthetic; unrelated=private',
+        cookie: 'hic-antiforgery=synthetic; unrelated=private', 'x-forwarded-proto': 'https',
       },
       body: JSON.stringify({ identifier: 'alice@example.test', password: 'synthetic-password' }),
     });
@@ -126,6 +126,7 @@ describe('local development proxy', () => {
     expect(login.headers.get('set-cookie')).toContain('hic-user-session=synthetic');
     expect(JSON.parse(received[1].body)).toEqual({ identifier: 'alice@example.test', password: 'synthetic-password' });
     expect(received[1].headers.origin).toBe(origin);
+    expect(received[1].headers['x-forwarded-proto']).toBe('http');
     expect(received[1].headers['x-hic-csrf']).toBe('synthetic-csrf-token');
     expect(received[1].headers.cookie).toBe('hic-antiforgery=synthetic');
     for (const name of ['authorization', 'proxy-authorization', 'x-forwarded-for', 'unrelated']) {

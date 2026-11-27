@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.HttpOverrides;
 using Dapper;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -10,6 +11,7 @@ using StackExchange.Redis;
 using ControlPlane.Api.TransactionalMail;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.Configure<ForwardedHeadersOptions>(HicForwardedHeaders.Configure);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "Control Plane API", Version = "v1" }));
@@ -115,6 +117,9 @@ var localOperatorSessions = LocalOperatorSessions.Create(
     builder.Configuration["HIC_LOCAL_OPERATOR_ID"]);
 
 var app = builder.Build();
+app.UseWhen(context => context.Request.Path.StartsWithSegments("/auth") ||
+    context.Request.Path.StartsWithSegments("/account"),
+    branch => branch.UseForwardedHeaders());
 
 PasswordResetStore? passwordResetStore = null;
 try

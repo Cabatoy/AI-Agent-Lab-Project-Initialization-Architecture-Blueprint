@@ -39,6 +39,62 @@ permissions:
   contents: read
 
 jobs:
+  password-recovery-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/WebUI/package-lock.json
+      - name: Install UI dependencies and build browser fixture
+        run: |
+          npm ci --prefix src/WebUI
+          dotnet build tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release
+      - name: Install Chromium for browser fixture
+        run: pwsh tests/ControlPlane.Api.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - name: Start disposable PostgreSQL and Redis on loopback
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name hic215-ci-pg --publish 127.0.0.1:25444:5432 \
+            --tmpfs /var/lib/postgresql/data:rw,size=512m \
+            --env POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine
+          docker run -d --rm --name hic215-ci-redis --publish 127.0.0.1:26379:6379 \
+            redis:7-alpine redis-server --save "" --appendonly no
+          ready=0
+          for i in $(seq 1 60); do
+            if docker logs hic215-ci-pg 2>&1 | grep -q 'PostgreSQL init process complete' &&
+               docker exec hic215-ci-pg psql -U postgres -tAc 'select 1' 2>/dev/null | grep -qx '1' &&
+               docker exec hic215-ci-redis redis-cli ping 2>/dev/null | grep -qx 'PONG'; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then echo 'Disposable services failed readiness'; exit 1; fi
+          docker exec hic215-ci-pg psql -U postgres -v ON_ERROR_STOP=1 \
+            -c 'CREATE ROLE hic_r1_test_runner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;' \
+            -c 'CREATE DATABASE hic_r1_tests OWNER hic_r1_test_runner;' \
+            -c "COMMENT ON DATABASE hic_r1_tests IS 'HIC:R1:dedicated-integration:v1';"
+      - name: Verify real browser password recovery
+        env:
+          HIC_BROWSER_ACCEPTANCE: '1'
+          HIC_BROWSER_TEST_REDIS: '127.0.0.1:26379'
+          HIC_R1_TEST_POSTGRES: 'Host=127.0.0.1;Port=25444;Database=hic_r1_tests;Username=hic_r1_test_runner'
+        run: dotnet test tests/ControlPlane.Api.Tests/ControlPlane.Api.Tests.csproj -c Release --no-build --filter FullyQualifiedName~BrowserResetRevokesOwnerSessionAndPreservesSecondAccount
+      - name: Stop only disposable browser fixture services
+        if: always()
+        run: |
+          for name in hic215-ci-pg hic215-ci-redis; do
+            if docker inspect "$name" >/dev/null 2>&1; then docker stop "$name"; fi
+          done
+
   isolated-health-runner:
     runs-on: ubuntu-latest
     timeout-minutes: 10
