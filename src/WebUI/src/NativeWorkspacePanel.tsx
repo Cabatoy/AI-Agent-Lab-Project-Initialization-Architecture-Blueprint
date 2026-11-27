@@ -32,10 +32,12 @@ export function NativeWorkspacePanel() {
     <button className="secondary" type="button" disabled={running} onClick={() => void run()}>
       {running ? 'Inspecting…' : 'Inspect local workspace'}
     </button>
-    {running && <p role="status" className="muted small">Contacting local native host…</p>}
+    <div role="status">
+      {running && <p className="muted small">Contacting local native host…</p>}
+      {result && <p className="muted small">Native action completed · {new Date(result.checkedAtUtc).toLocaleString()}</p>}
+    </div>
     {failure && <p role="alert" className="notice error">{failure}</p>}
-    {result && <div role="status">
-      <p className="muted small">Native action completed · {new Date(result.checkedAtUtc).toLocaleString()}</p>
+    {result && <div>
       <div className="boundary"><span>Configured workspace</span><strong>{result.workspaceAvailable ? 'Found' : 'Not found'}</strong></div>
       <div className="boundary"><span>Git checkout</span><strong>{result.gitCheckoutFound ? 'Found' : 'Not found'}</strong></div>
       <div className="boundary"><span>HumanInControl.sln</span><strong>{result.solutionFound ? 'Found' : 'Not found'}</strong></div>
