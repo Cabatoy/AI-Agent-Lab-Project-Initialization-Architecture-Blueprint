@@ -1,10 +1,25 @@
 using System.Security.Claims;
+using System.Net;
 using System.Threading.RateLimiting;
 using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
 
 internal sealed record HicUserLoginRequest(string? Identifier, string? Password);
+
+internal static class HicForwardedHeaders
+{
+    internal static void Configure(ForwardedHeadersOptions options)
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+        options.KnownProxies.Add(IPAddress.Loopback);
+        options.KnownProxies.Add(IPAddress.IPv6Loopback);
+    }
+}
 
 internal static class HicUserAuthenticator
 {
@@ -22,6 +37,35 @@ internal static class HicUserAuthenticator
             password, cancellationToken)
             ? identity
             : null;
+    }
+
+    internal static async Task<UserIdentity?> AuthenticateAndCreateSessionAsync(
+        string connectionString, string? identifier, string? password, Guid sessionId, DateTime expiresAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        var identity = await UserIdentityStore.FindByIdentifierAsync(connectionString, identifier, cancellationToken);
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var hash = await connection.QuerySingleOrDefaultAsync<string>(new CommandDefinition(
+            "select password_hash from local_password_credentials where user_id = @userId for update;",
+            new { userId = identity?.Id ?? Guid.Empty }, transaction, cancellationToken: cancellationToken));
+        var verified = LocalCredentialStore.VerifyHash(hash, password is { Length: <= 1024 } ? password : null);
+        if (verified == PasswordVerificationResult.Failed || identity is null)
+            return null;
+
+        if (verified == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "update local_password_credentials set password_hash = @hash, updated_at_utc = now() where user_id = @userId;",
+                new { hash = LocalCredentialStore.HashPassword(password!), userId = identity.Id }, transaction,
+                cancellationToken: cancellationToken));
+        }
+        await connection.ExecuteAsync(new CommandDefinition(
+            "insert into hic_user_sessions (id, user_id, expires_at_utc) values (@sessionId, @userId, @expiresAtUtc);",
+            new { sessionId, userId = identity.Id, expiresAtUtc }, transaction, cancellationToken: cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
+        return identity;
     }
 }
 

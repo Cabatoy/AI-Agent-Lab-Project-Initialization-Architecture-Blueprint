@@ -1,14 +1,36 @@
 using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace ControlPlane.Api.Tests;
 
 public class UserAuthenticationTests
 {
+    [Theory]
+    [InlineData("127.0.0.1", "https")]
+    [InlineData("::1", "https")]
+    [InlineData("192.0.2.1", "http")]
+    public async Task ForwardedProto_IsAcceptedOnlyFromLoopback(string address, string expectedScheme)
+    {
+        var options = new ForwardedHeadersOptions();
+        HicForwardedHeaders.Configure(options);
+        var middleware = new ForwardedHeadersMiddleware(_ => Task.CompletedTask,
+            NullLoggerFactory.Instance, Options.Create(options));
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse(address);
+        context.Request.Scheme = "http";
+        context.Request.Headers["X-Forwarded-Proto"] = "https";
+        await middleware.Invoke(context);
+        Assert.Equal(expectedScheme, context.Request.Scheme);
+    }
+
     [Fact]
     public void TrustedOrigin_RequiresExactConfiguredOriginAndSameOriginFetch()
     {

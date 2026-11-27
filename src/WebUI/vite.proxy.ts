@@ -3,7 +3,7 @@ import type { Plugin } from 'vite';
 import { COMMAND_CENTER_HEADER, COMMAND_CENTER_HEADER_VALUE, MAX_REQUEST_BYTES, validateCreateTask } from './src/limits';
 
 const readPath = /^\/api\/(?:health|tasks|plans|diagnostics\/local|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-const userAuthPath = /^\/api\/(?:auth\/(?:csrf|session|login|logout)|account\/me)$/;
+const userAuthPath = /^\/api\/(?:auth\/(?:csrf|session|login|logout|password\/(?:forgot|reset))|account\/me)$/;
 const createPath = '/api/tasks';
 const localRunnerPath = /^\/api\/local-runner\/(?:session|capabilities|tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:intent|approve)|runs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/execute)?)$/i;
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -40,7 +40,7 @@ const header = (req: http.IncomingMessage, name: string) => {
   return Array.isArray(value) ? value.join(',') : value;
 };
 
-function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string, cookies?: string, origin?: string, csrfToken?: string, forwardResponseCookies = false) {
+function forward(req: http.IncomingMessage, res: http.ServerResponse, target: URL, method: 'GET' | 'POST', path: string, timeoutMs: number, body?: string, authorization?: string, cookies?: string, origin?: string, csrfToken?: string, forwardResponseCookies = false, forwardedProto?: 'http' | 'https') {
   let timedOut = false;
   let connected = false;
   const headers: http.OutgoingHttpHeaders = { accept: 'application/json' };
@@ -48,6 +48,7 @@ function forward(req: http.IncomingMessage, res: http.ServerResponse, target: UR
   if (cookies) headers.cookie = cookies;
   if (origin) headers.origin = origin;
   if (csrfToken) headers['x-hic-csrf'] = csrfToken;
+  if (forwardedProto) headers['x-forwarded-proto'] = forwardedProto;
   if (body !== undefined) {
     headers['content-type'] = 'application/json; charset=utf-8';
     headers['content-length'] = Buffer.byteLength(body);
@@ -133,7 +134,12 @@ async function userAuthRequest(
   const isGet = req.method === 'GET';
   const isLogin = req.method === 'POST' && path === '/api/auth/login';
   const isLogout = req.method === 'POST' && path === '/api/auth/logout';
-  if (!isGet && !isLogin && !isLogout) return reject(res, 403, 'Authentication endpoint is not allowlisted.', true);
+  const isForgot = req.method === 'POST' && path === '/api/auth/password/forgot';
+  const isReset = req.method === 'POST' && path === '/api/auth/password/reset';
+  const forwardedProto = origin.startsWith('https://') ? 'https' : 'http';
+  if ((!isGet && !isLogin && !isLogout && !isForgot && !isReset) ||
+      (isGet && (path === '/api/auth/password/forgot' || path === '/api/auth/password/reset')))
+    return reject(res, 403, 'Authentication endpoint is not allowlisted.', true);
   if (header(req, 'proxy-authorization') !== undefined || header(req, 'authorization') !== undefined)
     return reject(res, 403, 'Authentication credentials were rejected.', true);
 
@@ -147,7 +153,7 @@ async function userAuthRequest(
     if (header(req, 'content-length') !== undefined || header(req, 'transfer-encoding') !== undefined)
       return reject(res, 400, 'Read requests must not include a body.', true);
     forward(req, res, target, 'GET', path.slice(4), timeouts.upstreamTimeoutMs,
-      undefined, undefined, userAuthCookies(req), undefined, undefined, true);
+      undefined, undefined, userAuthCookies(req), undefined, undefined, true, forwardedProto);
     return;
   }
 
@@ -162,7 +168,7 @@ async function userAuthRequest(
         header(req, 'transfer-encoding') !== undefined || header(req, 'content-type') !== undefined)
       return reject(res, 400, 'Logout does not accept a request body.', true);
     forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
-      undefined, undefined, userAuthCookies(req), origin, csrfToken, true);
+      undefined, undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
     return;
   }
 
@@ -181,7 +187,28 @@ async function userAuthRequest(
   let parsed: unknown;
   try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(received.body)); }
   catch { return reject(res, 400, 'Request body must be valid UTF-8 JSON.'); }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return reject(res, 400, 'Invalid authentication request.');
+  const fields = parsed as Record<string, unknown>;
+  if (isForgot) {
+    if (Object.keys(fields).length !== 1 || typeof fields.identifier !== 'string' ||
+        fields.identifier.trim().length < 1 || fields.identifier.length > 320)
+      return reject(res, 400, 'Invalid recovery request.');
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+      JSON.stringify({ identifier: fields.identifier }), undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
+    return;
+  }
+  if (isReset) {
+    if (Object.keys(fields).length !== 2 || typeof fields.token !== 'string' ||
+        !/^[A-Za-z0-9+/]{43}=$/.test(fields.token) || typeof fields.newPassword !== 'string' ||
+        fields.newPassword.length < 12 || fields.newPassword.length > 1024)
+      return reject(res, 400, 'Invalid recovery request.');
+    forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
+      JSON.stringify({ token: fields.token, newPassword: fields.newPassword }),
+      undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
+    return;
+  }
+  if (
       Object.keys(parsed).length !== 2 ||
       typeof (parsed as Record<string, unknown>).identifier !== 'string' ||
       (parsed as Record<string, string>).identifier.length < 1 ||
@@ -196,7 +223,7 @@ async function userAuthRequest(
     password: (parsed as Record<string, string>).password,
   });
   forward(req, res, target, 'POST', path.slice(4), timeouts.upstreamTimeoutMs,
-    body, undefined, userAuthCookies(req), origin, csrfToken, true);
+    body, undefined, userAuthCookies(req), origin, csrfToken, true, forwardedProto);
 }
 
 async function createTask(req: http.IncomingMessage, res: http.ServerResponse, target: URL, origin: string, timeouts: Required<ProxyOptions>) {
@@ -323,9 +350,13 @@ export function localApiProxy(value?: string, options: ProxyOptions = {}): Plugi
       server.middlewares.use('/api', (req, res) => {
         const path = `/api${req.url ?? ''}`;
         const port = req.socket.localPort;
-        const origin = `http://127.0.0.1:${port}`;
+        const origin = `${server.config.server.https ? 'https' : 'http'}://127.0.0.1:${port}`;
         // Host check blocks DNS-rebinding; Origin checks block hostile pages from reading or writing.
-        if (!port || header(req, 'host') !== `127.0.0.1:${port}`) return reject(res, 403, 'Unexpected host.');
+        const host = header(req, 'host');
+        const authority = header(req, ':authority');
+        if (!port || (host ?? authority) !== `127.0.0.1:${port}` ||
+            (authority !== undefined && authority !== `127.0.0.1:${port}`))
+          return reject(res, 403, 'Unexpected host.');
         const requestOrigin = header(req, 'origin');
         if (userAuthPath.test(path)) {
           void userAuthRequest(req, res, target, origin, path, timeouts);
