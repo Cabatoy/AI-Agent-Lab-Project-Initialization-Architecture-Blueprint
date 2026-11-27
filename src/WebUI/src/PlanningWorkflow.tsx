@@ -172,8 +172,8 @@ export function PlanningWorkflow() {
         <select id="planning-repository" className="command-title" value={repository}
           onChange={event => setRepository(event.target.value)}>
           {inspection.workspaceAvailable && inspection.gitCheckoutFound
-            ? <option value={REPOSITORY_ID}>Configured local workspace (read-only)</option>
-            : <option value="">No authorized repository available</option>}
+            ? <option value={REPOSITORY_ID}>Local workspace · read-only</option>
+            : <option value="">No authorized workspace</option>}
         </select>
       </label>}
       {inspection && <p className="muted small" role="status">
